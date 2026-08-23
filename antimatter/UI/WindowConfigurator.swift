@@ -1,0 +1,49 @@
+import SwiftUI
+import AppKit
+
+/// Applies the floating-pane window settings once the hosting window exists.
+struct WindowConfigurator: NSViewRepresentable {
+    private static let configuredWindows = NSHashTable<NSWindow>.weakObjects()
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { configure(view.window) }
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        if let window = view.window, Self.configuredWindows.contains(window) { return }
+        DispatchQueue.main.async { configure(view.window) }
+    }
+
+    private func configure(_ window: NSWindow?) {
+        guard let window, !Self.configuredWindows.contains(window) else { return }
+        Self.configuredWindows.add(window)
+        let maxSize = NSSize(width: PaneStyle.maxWidth, height: PaneStyle.maxHeight)
+        window.contentMaxSize = maxSize
+        if window.frame.width > maxSize.width || window.frame.height > maxSize.height {
+            window.setContentSize(NSSize(
+                width: min(window.frame.width, maxSize.width),
+                height: min(window.frame.height, maxSize.height)
+            ))
+        }
+        window.identifier = NSUserInterfaceItemIdentifier(PaneStyle.windowIdentifier)
+        if PaneStyle.floatsAboveOtherApps {
+            window.level = .floating
+        }
+        window.tabbingMode = .disallowed
+        window.collectionBehavior = [.fullScreenAuxiliary]
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.alphaValue = PaneStyle.windowAlpha
+        window.hasShadow = PaneStyle.hasShadow
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = true
+        window.contentView?.wantsLayer = true
+        window.contentView?.layer?.cornerRadius = PaneStyle.cornerRadius
+        window.contentView?.layer?.cornerCurve = .continuous
+        window.contentView?.layer?.masksToBounds = true
+        window.invalidateShadow()
+    }
+}

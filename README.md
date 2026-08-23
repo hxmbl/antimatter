@@ -1,0 +1,306 @@
+# Antimatter
+
+> A tiny, local, command-aware scratchpad for macOS.
+
+Antimatter is **not a traditional notes app**.
+
+It is a place to quickly put whatever is currently in your head — text, calculations, timers, temporary information, commands — and let the app figure out what to do with it.
+
+# Antimatter stack — straight up
+Language: Swift
+UI: SwiftUI
+Platform: macOS initially
+Persistence: SQLite
+Concurrency: Swift Concurrency (async/await, Task, actors where useful)
+Database layer: GRDB.swift or raw SQLite
+Parsing: Swift, deterministic parser first
+Timers: Swift Concurrency / Foundation
+Global hotkey: macOS Carbon/AppKit API or a tiny library
+Calculations: your own parser initially / Foundation where appropriate
+ML later: Core ML
+Build: Xcode + Swift Package Manager
+Tests: XCTest / Swift Testing
+
+
+## Philosophy
+
+Antimatter should feel like an extension of the user's thought process, not another productivity system.
+
+The user should be able to:
+
+```text
+timer 5
+```
+
+and get a five-minute timer.
+
+Or:
+
+```text
+384 * 27
+```
+
+and get the result.
+
+Or simply:
+
+```text
+remember to fix Relay tomorrow
+```
+
+and have it remain ordinary text.
+
+**Typing should be the interface.**
+
+Do not force the user to choose a mode before entering something.
+
+Do not turn every piece of text into a "note".
+
+Do not add complexity merely because the app can support it.
+
+## Core Principles
+
+### Instant
+
+Opening Antimatter should feel instantaneous.
+
+Typing must never feel delayed because of parsing, persistence, networking, or machine learning.
+
+### Local
+
+Antimatter should work without an account or internet connection.
+
+User data belongs to the user.
+
+Prefer local storage and system APIs.
+
+### Lightweight
+
+Keep CPU, memory, battery, and disk usage low.
+
+Do not introduce heavyweight dependencies unless there is a compelling reason.
+
+### Deterministic First
+
+Simple operations should use deterministic code.
+
+For example:
+
+* timers → timer implementation
+* arithmetic → calculator/parser
+* dates → date parser
+* text → plain text
+
+Machine learning should only be used where deterministic rules stop being sufficient.
+
+### Progressive Intelligence
+
+Antimatter may become more intelligent over time, but intelligence must remain unobtrusive.
+
+A model should help interpret ambiguous input, not control the application.
+
+Prefer:
+
+```text
+input
+ ↓
+deterministic parser
+ ↓
+known intent?
+ ├── yes → execute
+ └── no  → optional intelligent interpretation
+```
+
+rather than sending every keystroke through an LLM.
+
+## Initial Feature Set
+
+The first version should remain deliberately small.
+
+### Required
+
+* macOS native application
+* Swift / SwiftUI
+* global keyboard shortcut
+* lightweight floating window
+* text input
+* local persistence
+* automatic saving
+* command detection
+* timers
+* basic calculations
+* instant dismissal/reopening
+
+### Example Inputs
+
+```text
+timer 5
+timer 5 laundry
+25 * 48
+2026-08-22
+hello world
+TODO: investigate this
+```
+
+Only recognized commands should produce special behaviour.
+
+Everything else should remain valid text.
+
+## Architecture
+
+Keep the architecture modular without prematurely building a framework.
+
+The current structure:
+
+```text
+Antimatter
+├── App        app entry, window scene, hotkey wiring
+├── UI         pane editor (NSTextView), chips, styling
+├── Parser     Markdown, expression evaluator, intent detection
+├── Storage    autosaved scratchpad
+├── Services   timers, global hot key
+└── Tests      Swift Testing
+```
+
+The exact structure may change as the project develops.
+
+Avoid creating abstractions until they solve an actual problem.
+
+## Implemented so far
+
+* plain-text Markdown editing with Notion-style syntax collapsing
+* autosave to `Application Support/Antimatter/scratchpad.md` — type → quit → relaunch → the text is still there
+* floating pane: stays above other windows, hides on Escape or ⌃⌥Space, reopens with the same chord
+* calculations: type `384 * 27 =` for an instant answer, or press return on a pure-arithmetic line to rewrite it to `384 * 27 = 10368` (date-shaped lines like `2026-08-22` are left alone)
+* timers: `timer 5`, `timer 90s`, `timer 1h 20m stand up` — countdown chips float in the corner, a sound plays on completion, and unfinished timers survive relaunches
+
+## Command System
+
+Commands should be extensible.
+
+Conceptually:
+
+```text
+Input
+  ↓
+Parser
+  ↓
+Intent
+  ↓
+Handler
+  ↓
+Result
+```
+
+For example:
+
+```text
+"timer 5"
+      ↓
+TimerIntent(duration: 300)
+      ↓
+TimerHandler
+      ↓
+5:00 countdown
+```
+
+A command should not need to know about the UI that invoked it.
+
+## Future Possibilities
+
+These are deliberately **not requirements for the first version**:
+
+* richer natural-language commands
+* clipboard operations
+* unit conversion
+* date calculations
+* Markdown
+* plugins/extensions
+* Shortcuts integration
+* Raycast integration
+* cross-platform clients
+* lightweight local ML
+* learned personal command interpretation
+* synchronization
+
+Build the useful core before building these.
+
+## Non-Goals
+
+Antimatter is not intended to become:
+
+* a Notion replacement
+* a full knowledge-management system
+* a project-management application
+* a cloud service
+* an AI chatbot
+* an Electron application
+* a giant plugin framework
+
+If a feature requires significant complexity, ask whether it improves the fundamental interaction:
+
+> **Open → type → get something useful → leave.**
+
+If it does not, it probably does not belong in the core application.
+
+## Development
+
+Build and test the smallest useful behaviour first.
+
+The first meaningful milestone is:
+
+```text
+Open Antimatter
+      ↓
+Type text
+      ↓
+Close Antimatter
+      ↓
+Open it again
+      ↓
+Text is still there
+```
+
+Then:
+
+```text
+timer 5
+```
+
+should actually create a timer.
+
+Then:
+
+```text
+384 * 27
+```
+
+should actually calculate.
+
+Everything else can come later.
+
+## Design
+
+Antimatter should feel:
+
+* minimal
+* fast
+* native
+* quiet
+* slightly unconventional
+* responsive
+* useful without explanation
+
+Avoid unnecessary UI.
+
+The interface should disappear into the user's workflow rather than becoming another place they have to manage.
+
+## The Name
+
+**Antimatter** is intentionally contrasted with conventional "matter" — and with conventional notes applications.
+
+Traditional notes encourage storing and organizing information.
+
+Antimatter is about **transforming thoughts into actions**.
+
+> **Don't organize your thoughts. Interact with them.**
