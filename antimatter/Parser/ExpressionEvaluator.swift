@@ -17,18 +17,43 @@ nonisolated enum ExpressionEvaluator {
         return value
     }
 
-    /// The numeric literals of an arithmetic line, in order — or nil when
-    /// the line is not pure arithmetic (prose, timers, dates with letters).
-    /// Aggregation uses this to collect "the numbers in the note".
+    /// The numeric literals of an arithmetic line, in order, signed —
+    /// `-5` collects as -5 — or nil when the line is not pure arithmetic
+    /// (prose, timers, dates with letters). Aggregation uses this to collect
+    /// "the numbers in the note". Negation of a parenthesised group is not a
+    /// literal; only signs attached directly to numbers count.
     static func numericLiterals(_ input: String) -> [Double]? {
         let tokens = tokenize(input)
         guard !tokens.isEmpty else { return nil }
         var cursor = 0
         guard expression(tokens, &cursor, [:]) != nil, cursor == tokens.count else { return nil }
-        return tokens.compactMap {
-            if case .number(let value) = $0 { return value }
-            return nil
+
+        var literals: [Double] = []
+        var sign = 1.0
+        var expectsOperand = true
+        for token in tokens {
+            switch token {
+            case .number(let value):
+                literals.append(sign * value)
+                sign = 1
+                expectsOperand = false
+            case .op(let op) where op == "-" && expectsOperand:
+                sign = -sign // unary minus: stays expecting an operand
+            case .op(let op):
+                // A binary minus subtracts, so the following operand counts
+                // as negative; any other operator starts a positive operand.
+                sign = op == "-" ? -1 : 1
+                expectsOperand = true
+            case .lparen, .comma:
+                sign = 1 // `-(2+3)` negates the group, not its literals
+                expectsOperand = true
+            case .rparen:
+                expectsOperand = false
+            case .name:
+                expectsOperand = false
+            }
         }
+        return literals
     }
 
     // MARK: Tokenizer

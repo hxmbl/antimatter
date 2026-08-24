@@ -126,6 +126,49 @@ struct ReactiveResultTests {
         #expect(first.first?.replacement == "2 + 2 = 4")
         #expect(commits("2 + 2 = 4").isEmpty)
     }
+
+    @Test func rewritesPreserveTheTrailingNewline() throws {
+        // Regression: line ranges used to include the newline, so applying
+        // a commit merged the rewritten line into the next one.
+        let text = "price = 4 * 5 = 48\nkeep me\n"
+        let result = try #require(commits(text).first)
+        let after = (text as NSString).replacingCharacters(in: result.range, with: result.replacement)
+        #expect(after == "price = 4 * 5 = 20\nkeep me\n")
+    }
+
+    @Test func aggregateLinesRecomputeWhenTheNoteChanges() {
+        // The note changed after .sum was committed — it drifts, then rests.
+        #expect(commits("12\n.sum = 99").first?.replacement.hasSuffix("= 12") == true)
+        #expect(commits("12\n34\n.sum = 46").isEmpty)
+
+        #expect(commits("1\n2\n3\n.count = 3").isEmpty) // fresh
+        #expect(commits("1\n2\n3\n4\n.count = 3").first?.replacement.hasSuffix("= 4") == true)
+    }
+}
+
+struct SignedLiteralTests {
+
+    private func literals(_ input: String) -> [Double]? {
+        ExpressionEvaluator.numericLiterals(input)
+    }
+
+    @Test func minusSticksToTheFollowingNumber() {
+        #expect(literals("-5") == [-5])
+        #expect(literals("10 - 5") == [10, -5])
+        #expect(literals("2^-3") == [2, -3])
+        #expect(literals("8 * -2") == [8, -2])
+        #expect(literals("min(-1, 4)") == [-1, 4])
+    }
+
+    @Test func groupNegationIsNotALiteral() {
+        #expect(literals("-(2 + 3)") == [2, 3])
+    }
+
+    @Test func signedLiteralsSumToTheValueOfAdditiveExpressions() {
+        for input in ["-5", "10 - 5", "-1 - 2 - 3"] {
+            #expect(literals(input)!.reduce(0, +) == ExpressionEvaluator.evaluate(input))
+        }
+    }
 }
 
 /// M2: dates and units.

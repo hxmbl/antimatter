@@ -130,7 +130,10 @@ final class TimerCenter: ObservableObject {
         content.title = timer.label.isEmpty ? "Timer finished" : "\(timer.label) — time's up"
         content.body = Self.format(timer.duration) + " elapsed"
         content.userInfo = ["timerID": timer.id.uuidString]
-        content.sound = .default
+        // Silent: the Glass sound on live fire is the audible signal; a
+        // chime + ring together is noise. The banner still reaches the user
+        // when the pane is hidden.
+        content.sound = nil
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(delay, 0.1), repeats: false)
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: timer.id.uuidString, content: content, trigger: trigger))
@@ -165,6 +168,9 @@ final class TimerCenter: ObservableObject {
 
     private func persist() {
         guard let data = try? JSONEncoder().encode(timers) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        // Same backup semantics as the scratchpad; timer state is
+        // regenerable, so failures need no UI surface — but the last good
+        // file still survives as timers.json.bak.
+        Persistence.writeData(data, to: fileURL)
     }
 }

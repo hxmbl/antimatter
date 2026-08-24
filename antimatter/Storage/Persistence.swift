@@ -24,13 +24,19 @@ enum Persistence {
     /// a failed atomic write never touches the previous file.
     @discardableResult
     static func write(_ text: String, to url: URL) -> Error? {
+        writeData(Data(text.utf8), to: url)
+    }
+
+    /// The binary form of `write` (same backup semantics).
+    @discardableResult
+    static func writeData(_ data: Data, to url: URL) -> Error? {
         let backup = backupURL(for: url)
         if FileManager.default.fileExists(atPath: url.path) {
             try? FileManager.default.removeItem(at: backup)
             try? FileManager.default.copyItem(at: url, to: backup)
         }
         do {
-            try text.write(to: url, atomically: true, encoding: .utf8)
+            try data.write(to: url, options: .atomic)
             return nil
         } catch {
             return error

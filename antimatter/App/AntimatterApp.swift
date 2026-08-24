@@ -79,7 +79,8 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([.banner, .sound])
+        // Banner only — the Glass chime on fire is the one audible signal.
+        completionHandler([.banner])
     }
 }
 

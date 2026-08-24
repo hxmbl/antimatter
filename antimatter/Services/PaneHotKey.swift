@@ -40,19 +40,20 @@ final class PaneHotKey {
 
     /// Swaps to whatever chord `PaneStyle` now reports. A chord without any
     /// modifier is refused — registering bare letters system-wide would
-    /// swallow ordinary typing everywhere.
+    /// swallow ordinary typing everywhere — and the previous chord keeps
+    /// working, matching what the UI last showed.
     func reinstall() {
         guard PaneStyle.hotKeyUsesControl || PaneStyle.hotKeyUsesOption
                 || PaneStyle.hotKeyUsesCommand || PaneStyle.hotKeyUsesShift
         else { return }
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-            self.hotKeyRef = nil
-        }
         registerChord()
     }
 
     private func registerChord() {
+        if let hotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
+            self.hotKeyRef = nil
+        }
         var modifiers: UInt32 = 0
         if PaneStyle.hotKeyUsesControl { modifiers |= UInt32(controlKey) }
         if PaneStyle.hotKeyUsesOption { modifiers |= UInt32(optionKey) }

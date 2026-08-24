@@ -113,21 +113,31 @@ nonisolated enum IntentExecution {
 
     /// Committed answer lines whose stored result drifted: `expr = number`
     /// (or `name = expr = number`) where the expression now evaluates to
-    /// something else. Editing a definition lands here, which is what makes
-    /// dependent lines recompute live. Prose, dates, units, and anything
-    /// that does not evaluate are left untouched.
+    /// something else, and aggregate lines (`.sum = 46`) whose note changed.
+    /// Editing a definition lands here, which is what makes dependent lines
+    /// recompute live. Prose, dates, units, and anything that does not
+    /// evaluate are left untouched.
+    ///
+    /// Commit ranges exclude the trailing newline: `lineRange(for:)`
+    /// includes it, and replacing it would merge this line into the next.
     static func staleResultCommits(in text: String) -> [Commit] {
         let variables = VariableTable.scan(text)
         let ns = text as NSString
         var commits: [Commit] = []
-        for lineRange in VariableTable.lineRanges(ns) where lineRange.length > 0 {
+        for fullRange in VariableTable.lineRanges(ns) where fullRange.length > 0 {
+            var lineRange = fullRange
+            if ns.character(at: NSMaxRange(lineRange) - 1) == unichar(10) {
+                lineRange.length -= 1
+            }
+            guard lineRange.length > 0 else { continue }
             let line = ns.substring(with: lineRange)
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             let parts = trimmed.components(separatedBy: " = ")
             guard parts.count >= 2,
                   let storedToken = parts.last,
-                  let stored = Double(storedToken.trimmingCharacters(in: .whitespaces))
+                  Double(storedToken.trimmingCharacters(in: .whitespaces)) != nil
             else { continue }
+            let storedText = storedToken.trimmingCharacters(in: .whitespaces)
 
             var expression = parts.dropLast().joined(separator: " = ")
             if let separator = expression.range(of: "=") {
@@ -138,9 +148,14 @@ nonisolated enum IntentExecution {
                         .trimmingCharacters(in: .whitespaces)
                 }
             }
-            guard let value = ExpressionEvaluator.evaluate(expression, variables: variables),
-                  IntentParser.format(value) != storedToken.trimmingCharacters(in: .whitespaces)
-            else { continue }
+
+            let value: Double?
+            if let kind = AggregateKind(keyword: expression.trimmingCharacters(in: .whitespaces)) {
+                value = kind.value(of: Aggregates.numbers(in: text))
+            } else {
+                value = ExpressionEvaluator.evaluate(expression, variables: variables)
+            }
+            guard let value, IntentParser.format(value) != storedText else { continue }
 
             let indent = String(line.prefix(while: { $0 == " " || $0 == "\t" }))
             let replacement = indent

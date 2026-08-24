@@ -15,7 +15,7 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Hot Key") {
+            Section {
                 HStack {
                     Toggle("⌃ Control", isOn: $usesControl)
                     Toggle("⌥ Option", isOn: $usesOption)
@@ -32,6 +32,10 @@ struct SettingsView: View {
                 .onChange(of: usesCommand) { _, _ in PaneHotKey.shared.reinstall() }
                 .onChange(of: usesShift) { _, _ in PaneHotKey.shared.reinstall() }
                 .onChange(of: keyCode) { _, _ in PaneHotKey.shared.reinstall() }
+            } header: {
+                Text("Hot Key")
+            } footer: {
+                Text("At least one modifier is required; a bare key would swallow typing everywhere, so the old chord keeps working instead.")
             }
             Section("Text") {
                 Slider(value: Binding(
