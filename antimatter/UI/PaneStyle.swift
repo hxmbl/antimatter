@@ -42,7 +42,10 @@ enum PaneStyle {
 
     // MARK: Type
 
-    static let fontSize: CGFloat = 15
+    /// Runtime-adjustable (Settings); falls back to 15 until set.
+    static var fontSize: CGFloat {
+        CGFloat((UserDefaults.standard.object(forKey: "fontSize") as? Int) ?? 15)
+    }
     static let lineSpacing: CGFloat = 4
 
     // MARK: Scroller
@@ -66,10 +69,22 @@ enum PaneStyle {
     /// reopen where the user left it.
     static let frameAutosaveName = "pane-frame"
 
-    // Global hot key: control + option + space. Raw Carbon constants live in
-    // `PaneHotKey`; flip these to change the chord.
-    static let hotKeyUsesControl = true
-    static let hotKeyUsesOption = true
-    static let hotKeyUsesCommand = false
-    static let hotKeyUsesShift = false
+    // Global hot key: control + option + space by default, editable at
+    // runtime in Settings. Raw Carbon key codes live in `PaneHotKey`.
+    static var hotKeyUsesControl: Bool {
+        UserDefaults.standard.object(forKey: "hotKey.control") as? Bool ?? true
+    }
+    static var hotKeyUsesOption: Bool {
+        UserDefaults.standard.object(forKey: "hotKey.option") as? Bool ?? true
+    }
+    static var hotKeyUsesCommand: Bool {
+        UserDefaults.standard.object(forKey: "hotKey.command") as? Bool ?? false
+    }
+    static var hotKeyUsesShift: Bool {
+        UserDefaults.standard.object(forKey: "hotKey.shift") as? Bool ?? false
+    }
+    /// Carbon virtual key code; 49 is Space.
+    static var hotKeyCode: UInt32 {
+        UInt32(UserDefaults.standard.object(forKey: "hotKey.keyCode") as? Int ?? 49)
+    }
 }

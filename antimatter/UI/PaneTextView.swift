@@ -7,10 +7,35 @@ import AppKit
 /// * Escape hides the pane.
 /// * The caret jumps over collapsed syntax markers instead of stepping
 ///   through invisible characters one arrow press at a time.
+/// * Dropping an image captures its text (on-device OCR); ⌘F opens the
+///   system find bar.
 final class PaneTextView: NSTextView {
     var onCancelOperation: (() -> Void)?
+    var onDroppedImage: ((NSImage) -> Void)?
 
     private var pendingClick: (location: NSPoint, modifiers: NSEvent.ModifierFlags)?
+
+    /// The pane always builds its own text view with defaults.
+    convenience init() {
+        self.init(frame: .zero, textContainer: nil)
+    }
+
+    override init(frame frameRect: NSRect, textContainer container: NSTextContainer?) {
+        super.init(frame: frameRect, textContainer: container)
+        commonInit()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        commonInit()
+    }
+
+    private func commonInit() {
+        // The find bar is the platform's; ⌘F just has to reach it.
+        usesFindBar = true
+        isIncrementalSearchingEnabled = true
+        registerForDraggedTypes([.fileURL, .tiff, .png])
+    }
 
     // MARK: Link activation
 
@@ -42,6 +67,36 @@ final class PaneTextView: NSTextView {
             }
         }
         return nil
+    }
+
+    // MARK: Image drops → OCR
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        containsImage(sender.draggingPasteboard) ? [.copy] : super.draggingEntered(sender)
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        let pasteboard = sender.draggingPasteboard
+        let images = imageContents(of: pasteboard)
+        guard !images.isEmpty else { return super.performDragOperation(sender) }
+        images.forEach { onDroppedImage?($0) }
+        return true
+    }
+
+    private func containsImage(_ pasteboard: NSPasteboard) -> Bool {
+        !imageContents(of: pasteboard).isEmpty
+    }
+
+    private func imageContents(of pasteboard: NSPasteboard) -> [NSImage] {
+        var images: [NSImage] = []
+        if let dropped = pasteboard.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage] {
+            images.append(contentsOf: dropped)
+        }
+        if images.isEmpty,
+           let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+            images.append(contentsOf: urls.compactMap { NSImage(contentsOf: $0) })
+        }
+        return images
     }
 
     // MARK: Escape hides the pane

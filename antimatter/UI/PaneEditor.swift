@@ -22,7 +22,7 @@ struct PaneEditor: NSViewRepresentable {
         textView.insertionPointColor = .labelColor
         textView.font = .systemFont(ofSize: PaneStyle.fontSize)
         textView.defaultParagraphStyle = Self.paragraphStyle
-        textView.typingAttributes = Self.typingAttributes
+        textView.typingAttributes = Self.makeTypingAttributes()
         textView.linkTextAttributes = Self.linkTextAttributes
         // Markdown source must survive typing verbatim: smart quotes would
         // curl `"`, smart dashes would turn `--` into an en dash, and
@@ -37,6 +37,9 @@ struct PaneEditor: NSViewRepresentable {
             textView.onCancelOperation = { [weak textView] in
                 textView?.window?.orderOut(nil)
             }
+        }
+        textView.onDroppedImage = { [weak coordinator = context.coordinator] image in
+            coordinator?.recognizeAndInsert(image)
         }
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
@@ -65,8 +68,10 @@ struct PaneEditor: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: OverlayScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? PaneTextView,
-              textView.string != text else { return }
+        guard let textView = scrollView.documentView as? PaneTextView else { return }
+        // A settings-side font change arrives as a plain re-render.
+        context.coordinator.applyFontSizeIfChanged(to: textView)
+        guard textView.string != text else { return }
         let selected = textView.selectedRanges.compactMap { proto -> NSValue? in
             var range = proto.rangeValue
             guard range.location != NSNotFound else { return nil }
@@ -88,9 +93,9 @@ struct PaneEditor: NSViewRepresentable {
         return style
     }
 
-    private static var typingAttributes: [NSAttributedString.Key: Any] {
+    private static func makeTypingAttributes(fontSize: CGFloat = PaneStyle.fontSize) -> [NSAttributedString.Key: Any] {
         [
-            .font: NSFont.systemFont(ofSize: PaneStyle.fontSize),
+            .font: NSFont.systemFont(ofSize: fontSize),
             .foregroundColor: NSColor.labelColor,
             .paragraphStyle: paragraphStyle
         ]
@@ -107,6 +112,8 @@ struct PaneEditor: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var text: Binding<String>
         let highlighter = MarkdownHighlighter()
+        private var deferredPassTask: Task<Void, Never>?
+        private var appliedFontSize: CGFloat = PaneStyle.fontSize
 
         init(text: Binding<String>) {
             self.text = text
@@ -117,6 +124,7 @@ struct PaneEditor: NSViewRepresentable {
             text.wrappedValue = textView.string
             highlighter.refresh(textView)
             schedulePendingCalculation(textView)
+            scheduleReactivePass(textView)
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -138,6 +146,17 @@ struct PaneEditor: NSViewRepresentable {
             return true
         }
 
+        /// A settings-side font change lands here: restyle typing and
+        /// re-render everything at the new size.
+        func applyFontSizeIfChanged(to textView: NSTextView) {
+            let size = PaneStyle.fontSize
+            guard size != appliedFontSize else { return }
+            appliedFontSize = size
+            textView.font = .systemFont(ofSize: size)
+            textView.typingAttributes = PaneEditor.makeTypingAttributes(fontSize: size)
+            highlighter.render(textView)
+        }
+
         // MARK: Intents
 
         /// Typing `=` after a full expression asks for the answer inline:
@@ -155,23 +174,92 @@ struct PaneEditor: NSViewRepresentable {
             }
         }
 
+        /// Reactive results: once typing quiets down, committed lines whose
+        /// stored answers drifted (a definition changed) are recomputed in
+        /// place. Debounced so it never fights an active keystroke.
+        private func scheduleReactivePass(_ textView: NSTextView) {
+            deferredPassTask?.cancel()
+            deferredPassTask = Task { [weak self, weak textView] in
+                try? await Task.sleep(for: .milliseconds(350))
+                guard !Task.isCancelled else { return }
+                self?.runReactivePass(textView)
+            }
+        }
+
+        private func runReactivePass(_ textView: NSTextView?) {
+            guard let textView,
+                  !IntentExecution.isDeferredCommitStale(
+                    viewText: textView.string,
+                    boundText: text.wrappedValue,
+                    viewHasFocus: textView.window?.firstResponder == textView)
+            else { return }
+            applyCommits(IntentExecution.staleResultCommits(in: textView.string), to: textView)
+        }
+
         private func executeLineIntent(_ textView: NSTextView) {
             guard let contentRange = caretLineRange(in: textView) else { return }
             let line = (textView.string as NSString).substring(with: contentRange)
-            switch IntentExecution.action(forLine: line) {
+            switch IntentExecution.action(forLine: line, in: textView.string) {
             case .startTimer(let timer):
                 TimerCenter.shared.start(duration: timer.duration, label: timer.label)
+            case .startPasteStream:
+                PasteStream.shared.startStreaming()
+            case .insertAggregate(let kind):
+                if let commit = IntentExecution.aggregateCommit(kind, keyword: line, in: textView.string, at: contentRange) {
+                    applyCommit(commit, to: textView)
+                }
             case .rewriteCalculation:
                 commitCalculation(textView, in: contentRange)
+            case .rewriteLine(let replacement):
+                textView.breakUndoCoalescing()
+                textView.insertText(replacement, replacementRange: contentRange)
             case .nothing:
                 break
             }
         }
 
+        /// Applies commits bottom-up so earlier ranges survive later
+        /// insertions, keeps one undo step, and restores the caret sensibly
+        /// when it sat inside a rewritten line.
+        private func applyCommits(_ commits: [IntentExecution.Commit], to textView: NSTextView) {
+            guard !commits.isEmpty else { return }
+            let ordered = commits.sorted { $0.range.location > $1.range.location }
+            let selection = textView.selectedRange()
+            let caretHit = ordered.first {
+                NSLocationInRange(selection.location, NSRange(
+                    location: $0.range.location,
+                    length: $0.range.length + 1))
+            }
+            textView.breakUndoCoalescing()
+            for commit in ordered {
+                textView.insertText(commit.replacement, replacementRange: commit.range)
+            }
+            if let caretHit {
+                let offset = max(0, min(
+                    selection.location - caretHit.range.location,
+                    (caretHit.replacement as NSString).length))
+                textView.setSelectedRange(NSRange(location: caretHit.range.location + offset, length: 0))
+            } else {
+                textView.setSelectedRange(selection)
+            }
+        }
+
         private func commitCalculation(_ textView: NSTextView, in contentRange: NSRange?) {
             guard let commit = IntentExecution.calculationCommit(in: textView.string, at: contentRange) else { return }
+            applyCommit(commit, to: textView)
+        }
+
+        private func applyCommit(_ commit: IntentExecution.Commit, to textView: NSTextView) {
             textView.breakUndoCoalescing()
             textView.insertText(commit.replacement, replacementRange: commit.range)
+        }
+
+        /// Screenshot → text: OCR the dropped image on-device and append it.
+        func recognizeAndInsert(_ image: NSImage) {
+            Task {
+                guard let text = await ImageText.recognize(image), !text.isEmpty else { return }
+                self.text.wrappedValue += (self.text.wrappedValue.hasSuffix("\n") || self.text.wrappedValue.isEmpty ? "" : "\n") + text + "\n"
+            }
         }
 
         /// The current line excluding its trailing newline, or nil when the

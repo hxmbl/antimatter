@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import AppKit
+import UserNotifications
 
 struct ActiveTimer: Identifiable, Codable, Equatable {
     let id: UUID
@@ -16,9 +17,10 @@ struct ActiveTimer: Identifiable, Codable, Equatable {
 /// persists everything so relaunches restore unfinished timers (ones that
 /// elapsed while the app was closed come back already marked done, silently).
 ///
-/// Main-actor isolated: the fire tasks mutate `timers` and `fireTasks` after
-/// their sleep, and those collections are also read by the countdown chips —
-/// without isolation a fire landing mid-dismiss would be a data race.
+/// Completion reaches the user twice: the in-pane chip and — since the pane
+/// is usually hidden when a timer ends — a system notification carrying the
+/// timer's name. Clicking the notification reopens the pane and dismisses
+/// the chip. Without authorization the sound alone remains.
 @MainActor
 final class TimerCenter: ObservableObject {
     static let shared = TimerCenter()
@@ -32,6 +34,9 @@ final class TimerCenter: ObservableObject {
     init(fileURL: URL = TimerCenter.defaultFileURL(), now: @escaping () -> Date = Date.init) {
         self.fileURL = fileURL
         self.now = now
+        // Requests scheduled by a previous session are rebuilt below; the
+        // leftovers would double-fire alongside the fresh ones.
+        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
         load()
         for timer in timers {
             scheduleFire(timer, announce: false)
@@ -66,6 +71,7 @@ final class TimerCenter: ObservableObject {
         timers.insert(timer, at: 0)
         scheduleFire(timer, announce: true)
         persist()
+        requestNotificationAuthorizationIfNeeded()
         return true
     }
 
@@ -73,6 +79,7 @@ final class TimerCenter: ObservableObject {
         timers.removeAll { $0.id == id }
         fireTasks[id]?.cancel()
         fireTasks[id] = nil
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [id.uuidString])
         persist()
     }
 
@@ -85,6 +92,7 @@ final class TimerCenter: ObservableObject {
             expire(timer, announce: announce)
             return
         }
+        scheduleNotification(for: timer, delay: delay)
         fireTasks[timer.id]?.cancel()
         fireTasks[timer.id] = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
@@ -103,6 +111,41 @@ final class TimerCenter: ObservableObject {
             NSSound(named: "Glass")?.play()
         }
         persist()
+    }
+
+    // MARK: System notifications
+
+    private func requestNotificationAuthorizationIfNeeded() {
+        let requested = UserDefaults.standard.bool(forKey: "requestedNotifications")
+        guard !requested else { return }
+        UserDefaults.standard.set(true, forKey: "requestedNotifications")
+        Task {
+            _ = try? await UNUserNotificationCenter.current()
+                .requestAuthorization(options: [.alert, .sound])
+        }
+    }
+
+    private func scheduleNotification(for timer: ActiveTimer, delay: TimeInterval) {
+        let content = UNMutableNotificationContent()
+        content.title = timer.label.isEmpty ? "Timer finished" : "\(timer.label) — time's up"
+        content.body = Self.format(timer.duration) + " elapsed"
+        content.userInfo = ["timerID": timer.id.uuidString]
+        content.sound = .default
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(delay, 0.1), repeats: false)
+        UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: timer.id.uuidString, content: content, trigger: trigger))
+    }
+
+    /// `5:00`, `1:20:00` — matches the countdown chips.
+    nonisolated static func format(_ interval: TimeInterval) -> String {
+        let seconds = Int(interval.rounded(.up))
+        let hours = seconds / 3_600
+        let minutes = (seconds % 3_600) / 60
+        let secs = seconds % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, secs)
+        }
+        return String(format: "%d:%02d", minutes, secs)
     }
 
     // MARK: Persistence

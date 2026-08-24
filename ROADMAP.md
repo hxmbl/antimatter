@@ -16,37 +16,37 @@ Positioning in one line: Antinote et al. proved the temp-notes niche; Antimatter
 
 The single biggest functional gap. All deterministic, all local.
 
-- [ ] **Reactive variables.** `price = 4 * 12` defines; later lines use `price / 2`. Editing a definition recomputes dependents live. Turns the scratchpad into a small spreadsheet without becoming one.
-- [ ] **Aggregate intents.** `sum`, `avg`, `count` — operate on the numbers in the note, ignoring prose.
-- [ ] **A few real functions.** `sqrt`, `round`, `min`, `max`, `abs` — nothing more until something is genuinely missing.
+- [x] **Reactive variables.** `price = 4 * 12` defines; later lines use `price / 2`. Editing a definition recomputes dependents live. Turns the scratchpad into a small spreadsheet without becoming one.
+- [x] **Aggregate intents.** `sum`, `avg`, `count` — operate on the numbers in the note, ignoring prose.
+- [x] **A few real functions.** `sqrt`, `round`, `min`, `max`, `abs` — nothing more until something is genuinely missing.
 
 ## M2 — Dates & units
 
 Dates are already parsed-but-rejected; flip that guard into a feature.
 
-- [ ] **Date intents.** `2026-08-22` quietly shows its weekday; `days until 2026-09-01 = 8`.
-- [ ] **Offline unit conversion.** `12 kg → lb`, `3 mi → km` from a built-in table. No network.
-- [ ] **Currency (opt-in network).** Only if M2 lands well: fetch rates on demand, cached, behind an explicit setting. Default remains fully offline.
+- [x] **Date intents.** `2026-08-22` quietly shows its weekday; `days until 2026-09-01 = 8`.
+- [x] **Offline unit conversion.** `12 kg → lb`, `3 mi → km` from a built-in table. No network.
+- [ ] **Currency (opt-in network).** Deliberately deferred: M2's offline pieces landed first; rates-on-demand stays out until it can respect the no-network default.
 
 ## M3 — Capture
 
 Getting content *into* the pane without switching apps.
 
-- [ ] **`paste` intent.** Return on `paste` streams subsequent clipboard copies into the note as plain text until dismissed.
-- [ ] **Screenshot → text.** Drop an image onto the pane; Vision framework OCR, on-device, never uploaded.
+- [x] **`paste` intent.** Return on `paste` streams subsequent clipboard copies into the note as plain text until dismissed.
+- [x] **Screenshot → text.** Drop an image onto the pane; Vision framework OCR, on-device, never uploaded.
 
 ## M4 — Timers that reach you
 
-- [ ] **System notifications on completion**, not just a sound — the pane is usually hidden when a timer ends.
-- [ ] Named timers in the notification, click to reopen the pane.
-- [ ] Stopwatch / pomodoro variants only if they stay this small.
+- [x] **System notifications on completion**, not just a sound — the pane is usually hidden when a timer ends.
+- [x] Named timers in the notification, click to reopen the pane.
+- [ ] Stopwatch / pomodoro variants — deferred; they did not stay this small.
 
 ## M5 — Comfort
 
-- [ ] **Runtime settings:** hotkey chord picker, font size, theme — replacing "edit `PaneStyle.swift`".
-- [ ] **Find bar** (`⌘F`) — nearly free from `NSTextView.performFindPanelAction`.
-- [ ] **Reveal in Finder** — surface the ownership story: the scratchpad is a file.
-- [ ] Menu-bar/accessory mode toggle (Dock icon off) for people who want it invisible.
+- [x] **Runtime settings:** hotkey chord picker, font size, theme — replacing "edit `PaneStyle.swift`".
+- [x] **Find bar** (`⌘F`) — nearly free from `NSTextView.performFindPanelAction`.
+- [x] **Reveal in Finder** — surface the ownership story: the scratchpad is a file.
+- [x] Menu-bar/accessory mode toggle (Dock icon off) for people who want it invisible.
 
 ## Deliberately not planned
 

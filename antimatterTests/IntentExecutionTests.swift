@@ -71,8 +71,44 @@ struct ReturnKeyActionTests {
 
     @Test func ordinaryTextStaysText() {
         for line in ["", "   ", "hello world", "TODO: investigate this",
-                     "2026-08-22", "12-31", "42", "rent is due"] {
+                     "42", "rent is due"] {
             #expect(action(line) == .nothing, "`\(line)` should do nothing on return")
+        }
+    }
+
+    @Test func datesAndUnitsBecomeAnswers() {
+        let weekday = IntentExecution.action(forLine: "2026-08-22")
+        guard case .rewriteLine(let replacement) = weekday else {
+            Issue.record("date should rewrite")
+            return
+        }
+        #expect(replacement.contains("·"))
+        if case .rewriteLine = IntentExecution.action(forLine: "days until 2026-09-01") {} else {
+            Issue.record("days until should rewrite")
+        }
+        if case .rewriteLine = IntentExecution.action(forLine: "12 kg → lb") {} else {
+            Issue.record("unit conversion should rewrite")
+        }
+    }
+
+    @Test func definitionsGainTheirValueOnReturn() {
+        let buffer = "price = 4 * 12"
+        if case .rewriteLine(let replacement) = IntentExecution.action(forLine: buffer, in: buffer) {
+            #expect(replacement == "price = 4 * 12 = 48")
+        } else {
+            Issue.record("definition should gain its value")
+        }
+        // Bare-number definitions stay put — `a = 5 = 5` helps nobody.
+        #expect(IntentExecution.action(forLine: "a = 5", in: "a = 5") == .nothing)
+    }
+
+    @Test func aggregatesNeedTheBuffer() {
+        #expect(action("sum") == .nothing)
+        if case .insertAggregate(.sum) = IntentExecution.action(forLine: "sum", in: "12\n34\nsum") {} else {
+            Issue.record("sum with a buffer should aggregate")
+        }
+        if case .startPasteStream = IntentExecution.action(forLine: "paste", in: "") {} else {
+            Issue.record("paste should start streaming")
         }
     }
 }

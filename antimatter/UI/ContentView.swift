@@ -3,6 +3,8 @@ import AppKit
 
 struct ContentView: View {
     @StateObject private var store = ScratchStore.shared
+    // Declared so a Settings-side change re-renders (and re-styles) the editor.
+    @AppStorage("fontSize") private var fontSizeObservation = 15
 
     var body: some View {
         PaneEditor(text: $store.text)
@@ -17,7 +19,7 @@ struct ContentView: View {
                 RoundedRectangle(cornerRadius: PaneStyle.cornerRadius, style: .continuous)
                     .strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: PaneStyle.borderWidth)
             }
-            .overlay(alignment: .topTrailing) { TimerStrip().padding(.trailing, 10) }
+            .overlay(alignment: .topTrailing) { CaptureStrip().padding(.trailing, 10) }
             .overlay(alignment: .bottomLeading) { SaveErrorHint(error: store.saveError).padding(.leading, PaneStyle.padding) }
             .background(WindowConfigurator())
             .background(HotKeyWindowBridge())
@@ -47,15 +49,15 @@ private struct HotKeyWindowBridge: View {
     }
 }
 
-/// Floating countdown chips for running timers, top-right of the pane.
-private struct TimerStrip: View {
+/// Floating chips for running timers and the active paste stream,
+/// top-right of the pane.
+private struct CaptureStrip: View {
     @ObservedObject private var center = TimerCenter.shared
+    @ObservedObject private var stream = PasteStream.shared
 
     var body: some View {
-        Group {
-            if center.timers.isEmpty {
-                Color.clear.frame(width: 0, height: 0)
-            } else {
+        VStack(alignment: .trailing, spacing: 6) {
+            if !center.timers.isEmpty {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     VStack(alignment: .trailing, spacing: 6) {
                         ForEach(center.timers) { timer in
@@ -65,6 +67,25 @@ private struct TimerStrip: View {
                         }
                     }
                 }
+            }
+            if stream.isStreaming {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.down.doc")
+                        .font(.system(size: 9, weight: .medium))
+                    Text("paste stream")
+                    Button(action: stream.stopStreaming) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: 0.5))
             }
         }
         .padding(.top, PaneStyle.titleBarInset - 8)
@@ -91,7 +112,7 @@ private struct TimerChip: View {
                     .lineLimit(1)
                     .opacity(isDone ? 0.5 : 1)
             }
-            Text(isDone ? "done" : Self.format(remaining))
+            Text(isDone ? "done" : TimerCenter.format(remaining))
                 .monospacedDigit()
                 .foregroundStyle(isDone ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
             Button(action: onDismiss) {
@@ -106,17 +127,6 @@ private struct TimerChip: View {
         .padding(.vertical, 4)
         .background(.ultraThinMaterial, in: Capsule())
         .overlay(Capsule().strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: 0.5))
-    }
-
-    private static func format(_ interval: TimeInterval) -> String {
-        let seconds = Int(interval.rounded(.up))
-        let hours = seconds / 3_600
-        let minutes = (seconds % 3_600) / 60
-        let secs = seconds % 60
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, secs)
-        }
-        return String(format: "%d:%02d", minutes, secs)
     }
 }
 
