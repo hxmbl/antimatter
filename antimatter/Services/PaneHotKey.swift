@@ -3,6 +3,9 @@ import Carbon.HIToolbox
 
 /// Registers a system-wide hot key — control+option+space by default — and
 /// toggles the pane whenever it fires, even when the app is inactive.
+/// All AppKit window work happens on the main actor; the Carbon callback
+/// hops over with `Task { @MainActor }`.
+@MainActor
 final class PaneHotKey {
     static let shared = PaneHotKey()
 

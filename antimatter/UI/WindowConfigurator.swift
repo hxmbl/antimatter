@@ -19,6 +19,10 @@ struct WindowConfigurator: NSViewRepresentable {
     private func configure(_ window: NSWindow?) {
         guard let window, !Self.configuredWindows.contains(window) else { return }
         Self.configuredWindows.add(window)
+        window.identifier = NSUserInterfaceItemIdentifier(PaneStyle.windowIdentifier)
+        // Restores the saved frame synchronously; the size clamp below then
+        // reins in any frame saved before a smaller contentMaxSize existed.
+        window.setFrameAutosaveName(PaneStyle.frameAutosaveName)
         let maxSize = NSSize(width: PaneStyle.maxWidth, height: PaneStyle.maxHeight)
         window.contentMaxSize = maxSize
         if window.frame.width > maxSize.width || window.frame.height > maxSize.height {
@@ -27,7 +31,6 @@ struct WindowConfigurator: NSViewRepresentable {
                 height: min(window.frame.height, maxSize.height)
             ))
         }
-        window.identifier = NSUserInterfaceItemIdentifier(PaneStyle.windowIdentifier)
         if PaneStyle.floatsAboveOtherApps {
             window.level = .floating
         }

@@ -15,6 +15,11 @@ struct ActiveTimer: Identifiable, Codable, Equatable {
 /// center owns the running list, plays a sound when one elapses, and
 /// persists everything so relaunches restore unfinished timers (ones that
 /// elapsed while the app was closed come back already marked done, silently).
+///
+/// Main-actor isolated: the fire tasks mutate `timers` and `fireTasks` after
+/// their sleep, and those collections are also read by the countdown chips —
+/// without isolation a fire landing mid-dismiss would be a data race.
+@MainActor
 final class TimerCenter: ObservableObject {
     static let shared = TimerCenter()
 
@@ -33,7 +38,7 @@ final class TimerCenter: ObservableObject {
         }
     }
 
-    static func defaultFileURL() -> URL {
+    nonisolated static func defaultFileURL() -> URL {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Antimatter", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

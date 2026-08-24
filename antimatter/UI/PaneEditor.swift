@@ -103,6 +103,7 @@ struct PaneEditor: NSViewRepresentable {
         ]
     }
 
+    @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var text: Binding<String>
         let highlighter = MarkdownHighlighter()
@@ -145,8 +146,10 @@ struct PaneEditor: NSViewRepresentable {
         private func schedulePendingCalculation(_ textView: NSTextView) {
             DispatchQueue.main.async { [weak self, weak textView] in
                 guard let self, let textView,
-                      textView.string == self.text.wrappedValue,
-                      textView.window?.firstResponder == textView  // user may have moved on
+                      !IntentExecution.isDeferredCommitStale(
+                        viewText: textView.string,
+                        boundText: self.text.wrappedValue,
+                        viewHasFocus: textView.window?.firstResponder == textView)
                 else { return }
                 self.commitCalculation(textView, in: self.caretLineRange(in: textView))
             }
@@ -155,45 +158,26 @@ struct PaneEditor: NSViewRepresentable {
         private func executeLineIntent(_ textView: NSTextView) {
             guard let contentRange = caretLineRange(in: textView) else { return }
             let line = (textView.string as NSString).substring(with: contentRange)
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            // A trailing `=` means the user is asking for a calculation,
-            // never starting a timer (`timer 5 =`).
-            guard !trimmed.hasSuffix("=") else { return }
-
-            if let timer = IntentParser.parseTimer(trimmed) {
+            switch IntentExecution.action(forLine: line) {
+            case .startTimer(let timer):
                 TimerCenter.shared.start(duration: timer.duration, label: timer.label)
-                return
+            case .rewriteCalculation:
+                commitCalculation(textView, in: contentRange)
+            case .nothing:
+                break
             }
-            commitCalculation(textView, in: contentRange)
         }
 
         private func commitCalculation(_ textView: NSTextView, in contentRange: NSRange?) {
-            guard let contentRange, contentRange.length > 0 else { return }
-            let ns = textView.string as NSString
-            let line = ns.substring(with: contentRange)
-            let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            let calculation = IntentParser.pendingCalculation(trimmedLine)
-                ?? IntentParser.parseCalculation(trimmedLine)
-            guard let calculation else { return }
-            let indent = String(line.prefix(while: { $0 == " " || $0 == "\t" }))
-            let replacement = indent + calculation.expression + " = " + IntentParser.format(calculation.result)
+            guard let commit = IntentExecution.calculationCommit(in: textView.string, at: contentRange) else { return }
             textView.breakUndoCoalescing()
-            textView.insertText(replacement, replacementRange: contentRange)
+            textView.insertText(commit.replacement, replacementRange: commit.range)
         }
 
         /// The current line excluding its trailing newline, or nil when the
         /// selection spans more than one position.
         private func caretLineRange(in textView: NSTextView) -> NSRange? {
-            let selection = textView.selectedRange()
-            guard selection.length == 0 else { return nil }
-            let ns = textView.string as NSString
-            guard selection.location <= ns.length else { return nil }
-            var range = ns.lineRange(for: NSRange(location: selection.location, length: 0))
-            if range.length > 0, ns.character(at: NSMaxRange(range) - 1) == unichar(10) {
-                range.length -= 1
-            }
-            return range
+            IntentExecution.caretLineRange(in: textView.string, selection: textView.selectedRange())
         }
     }
 }

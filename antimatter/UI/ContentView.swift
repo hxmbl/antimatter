@@ -18,6 +18,7 @@ struct ContentView: View {
                     .strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: PaneStyle.borderWidth)
             }
             .overlay(alignment: .topTrailing) { TimerStrip().padding(.trailing, 10) }
+            .overlay(alignment: .bottomLeading) { SaveErrorHint(error: store.saveError).padding(.leading, PaneStyle.padding) }
             .background(WindowConfigurator())
             .background(HotKeyWindowBridge())
             .onChange(of: store.text) { _, _ in store.textDidChange() }
@@ -26,7 +27,9 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                 store.flush()
             }
-            .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
+                // Any window closing posts here; only the pane's own file matters.
+                guard (note.object as? NSWindow)?.identifier?.rawValue == PaneStyle.windowIdentifier else { return }
                 store.flush()
             }
     }
@@ -114,6 +117,33 @@ private struct TimerChip: View {
             return String(format: "%d:%02d:%02d", hours, minutes, secs)
         }
         return String(format: "%d:%02d", minutes, secs)
+    }
+}
+
+/// Transient notice when a flush failed; the store clears itself after a
+/// few seconds, so this simply renders whatever is current.
+private struct SaveErrorHint: View {
+    let error: Error?
+
+    var body: some View {
+        Group {
+            if let error {
+                HStack(spacing: 6) {
+                    Image(systemName: "externaldrive.badge.exclamationmark")
+                        .font(.system(size: 10, weight: .medium))
+                    Text("Couldn't save — \(error.localizedDescription)")
+                        .lineLimit(2)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: 0.5))
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: error as NSError?)
     }
 }
 

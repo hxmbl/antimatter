@@ -62,6 +62,10 @@ enum PaneStyle {
     /// Escape hides the pane (the hot key brings it back).
     static let hidesOnEscape = true
 
+    /// UserDefaults key the pane's frame is autosaved under; relaunches
+    /// reopen where the user left it.
+    static let frameAutosaveName = "pane-frame"
+
     // Global hot key: control + option + space. Raw Carbon constants live in
     // `PaneHotKey`; flip these to change the chord.
     static let hotKeyUsesControl = true

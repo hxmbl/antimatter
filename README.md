@@ -10,9 +10,8 @@ It is a place to quickly put whatever is currently in your head — text, calcul
 Language: Swift
 UI: SwiftUI
 Platform: macOS initially
-Persistence: SQLite
+Persistence: flat files you own — `scratchpad.md` (+ a one-generation `.bak`) and `timers.json` in Application Support/Antimatter
 Concurrency: Swift Concurrency (async/await, Task, actors where useful)
-Database layer: GRDB.swift or raw SQLite
 Parsing: Swift, deterministic parser first
 Timers: Swift Concurrency / Foundation
 Global hotkey: macOS Carbon/AppKit API or a tiny library
@@ -169,8 +168,9 @@ Avoid creating abstractions until they solve an actual problem.
 ## Implemented so far
 
 * plain-text Markdown editing with Notion-style syntax collapsing
-* autosave to `Application Support/Antimatter/scratchpad.md` — type → quit → relaunch → the text is still there
-* floating pane: stays above other windows, hides on Escape or ⌃⌥Space, reopens with the same chord
+* Markdown rendering while the source stays untouched: ATX and setext headings, block quotes, fenced code blocks (with language tag), bullet/ordered/task lists, GFM tables, thematic breaks, bold/italic/inline-code/strikethrough spans, links, images (as links over alt text), autolinks and bare URLs, `\` escapes — syntax collapses away from the caret and reappears on its line
+* autosave to `Application Support/Antimatter/scratchpad.md` — type → quit → relaunch → the text is still there; saves are atomic with a one-generation `.bak`, a failed write shows a transient hint, and edits made in another editor are adopted instead of clobbered
+* floating pane: stays above other windows, hides on Escape or ⌃⌥Space, reopens with the same chord; position and size survive relaunches
 * calculations: type `384 * 27 =` for an instant answer, or press return on a pure-arithmetic line to rewrite it to `384 * 27 = 10368` (date-shaped lines like `2026-08-22` are left alone)
 * timers: `timer 5`, `timer 90s`, `timer 1h 20m stand up` — countdown chips float in the corner, a sound plays on completion, and unfinished timers survive relaunches
 
