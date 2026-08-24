@@ -12,7 +12,7 @@ struct ActiveTimer: Identifiable, Codable, Equatable {
     var firedAt: Date?
 }
 
-/// Runs scratchpad timers. `timer 25 soup` schedules a countdown here; the
+/// Runs scratchpad timers. `.timer 25 soup` schedules a countdown here; the
 /// center owns the running list, plays a sound when one elapses, and
 /// persists everything so relaunches restore unfinished timers (ones that
 /// elapsed while the app was closed come back already marked done, silently).

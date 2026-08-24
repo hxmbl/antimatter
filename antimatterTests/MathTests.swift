@@ -66,7 +66,7 @@ struct AggregateTests {
 
     cost = 2 * 30
     cost = 60 = 60
-    timer 90s laundry
+    .timer 90s laundry
     fix bug 42 later
     2026-08-22
     12 kg → lb
@@ -85,7 +85,7 @@ struct AggregateTests {
     @Test func emptyNoteLeavesTheLineAlone() {
         for kind in [IntentExecution.AggregateKind.sum, .avg, .count] {
             #expect(kind.value(of: []) == nil)
-            #expect(IntentExecution.aggregateCommit(kind, keyword: "sum", in: "", at: NSRange(location: 0, length: 3)) == nil)
+            #expect(IntentExecution.aggregateCommit(kind, keyword: ".sum", in: "", at: NSRange(location: 0, length: 3)) == nil)
         }
     }
 }

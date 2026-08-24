@@ -49,7 +49,8 @@ nonisolated enum VariableTable {
     }
 }
 
-/// Collects the note's numbers for `sum` / `avg` / `count`, ignoring prose.
+/// Collects the note's numbers for `.sum` / `.avg` / `.count`, ignoring
+/// prose.
 ///
 /// A line contributes its numeric literals only when it is arithmetic:
 /// either a bare expression (`12`), a committed calculation whose stored

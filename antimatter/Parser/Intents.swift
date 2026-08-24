@@ -3,10 +3,11 @@ import Foundation
 /// Detects executable intents on a single line. Everything that does not
 /// parse stays ordinary text — only recognised commands do anything.
 ///
-/// Timers: `timer 5`, `timer 90s`, `timer 1h 20m stand up` (a bare number
-/// means minutes, per the README).
+/// Dot-commands are explicit: `.timer 5`, `.timer 90s`, `.timer 1h 20m stand up`
+/// (a bare number means minutes, per the README). A plain word like `timer`
+/// in a note is just a word.
 ///
-/// Calculations commit in two ways:
+/// Calculations need no command at all — they happen automatically:
 /// * typing `=` after an expression (`384 * 27 =`) asks for the answer
 ///   immediately — explicit intent wins even over the date heuristic;
 /// * pressing return on a line that is pure arithmetic rewrites it to
@@ -18,6 +19,9 @@ nonisolated enum IntentParser {
         let label: String
     }
 
+    /// The dot-command prefix; commands must be typed, not stumbled into.
+    static let commandPrefix = "."
+
     struct Calculation: Equatable {
         let expression: String
         let result: Double
@@ -27,7 +31,7 @@ nonisolated enum IntentParser {
 
     static func parseTimer(_ line: String) -> Timer? {
         let words = line.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
-        guard words.first?.lowercased() == "timer" else { return nil }
+        guard words.first?.lowercased() == commandPrefix + "timer" else { return nil }
 
         var duration: TimeInterval = 0
         var matchedAny = false

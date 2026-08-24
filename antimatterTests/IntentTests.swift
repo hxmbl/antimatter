@@ -5,33 +5,34 @@ import Testing
 struct IntentTimerTests {
 
     @Test func bareNumberMeansMinutes() {
-        #expect(IntentParser.parseTimer("timer 5") == IntentParser.Timer(duration: 300, label: ""))
+        #expect(IntentParser.parseTimer(".timer 5") == IntentParser.Timer(duration: 300, label: ""))
     }
 
     @Test func unitsAreHonoured() {
-        #expect(IntentParser.parseTimer("timer 90s")?.duration == 90)
-        #expect(IntentParser.parseTimer("timer 1.5m")?.duration == 90)
-        #expect(IntentParser.parseTimer("timer 2h")?.duration == 7_200)
-        #expect(IntentParser.parseTimer("timer 2000ms")?.duration == 2)
-        #expect(IntentParser.parseTimer("timer 2d")?.duration == 172_800)
+        #expect(IntentParser.parseTimer(".timer 90s")?.duration == 90)
+        #expect(IntentParser.parseTimer(".timer 1.5m")?.duration == 90)
+        #expect(IntentParser.parseTimer(".timer 2h")?.duration == 7_200)
+        #expect(IntentParser.parseTimer(".timer 2000ms")?.duration == 2)
+        #expect(IntentParser.parseTimer(".timer 2d")?.duration == 172_800)
     }
 
     @Test func compoundDurationsAccumulate() {
-        #expect(IntentParser.parseTimer("timer 1h 20m")?.duration == 4_800)
+        #expect(IntentParser.parseTimer(".timer 1h 20m")?.duration == 4_800)
     }
 
     @Test func remainderBecomesTheLabel() {
-        #expect(IntentParser.parseTimer("timer 5 laundry") == IntentParser.Timer(duration: 300, label: "laundry"))
-        #expect(IntentParser.parseTimer("timer 1h 20m stand up") == IntentParser.Timer(duration: 4_800, label: "stand up"))
+        #expect(IntentParser.parseTimer(".timer 5 laundry") == IntentParser.Timer(duration: 300, label: "laundry"))
+        #expect(IntentParser.parseTimer(".timer 1h 20m stand up") == IntentParser.Timer(duration: 4_800, label: "stand up"))
     }
 
     @Test func keywordIsCaseInsensitive() {
-        #expect(IntentParser.parseTimer("TIMER 5") != nil)
-        #expect(IntentParser.parseTimer("Timer 30s stretch") != nil)
+        #expect(IntentParser.parseTimer(".TIMER 5") != nil)
+        #expect(IntentParser.parseTimer(".Timer 30s stretch") != nil)
     }
 
     @Test func nonTimersStayNil() {
-        for line in ["timer", "timer abc", "timer 0", "timers 5", "remind me at 5"] {
+        // A bare "timer" is just a word now; only the dot-command fires.
+        for line in ["timer", "timer abc", "timer 0", "timers 5", "remind me at 5", "timer 5"] {
             #expect(IntentParser.parseTimer(line) == nil, "\(line) should not be a timer")
         }
     }

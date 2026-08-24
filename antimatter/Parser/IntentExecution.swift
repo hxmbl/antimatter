@@ -70,8 +70,10 @@ nonisolated enum IntentExecution {
         case avg
         case count
 
+        /// Dot-commands only: `.sum`, `.total`, `.avg`, `.average`, `.count`.
         init?(keyword: String) {
-            switch keyword.lowercased() {
+            guard keyword.hasPrefix(IntentParser.commandPrefix) else { return nil }
+            switch String(keyword.dropFirst(IntentParser.commandPrefix.count)).lowercased() {
             case "sum", "total": self = .sum
             case "avg", "average": self = .avg
             case "count": self = .count
@@ -91,7 +93,7 @@ nonisolated enum IntentExecution {
         }
     }
 
-    /// Rewrites a bare `sum` / `avg` / `count` line into `sum = 102`,
+    /// Rewrites a `.sum` / `.avg` / `.count` line into `.sum = 102`,
     /// aggregating the arithmetic numbers found across the whole note.
     static func aggregateCommit(
         _ kind: AggregateKind, keyword: String, in text: String, at contentRange: NSRange?
@@ -179,7 +181,7 @@ nonisolated enum IntentExecution {
         if let kind = AggregateKind(keyword: trimmed) {
             return buffer != nil ? .insertAggregate(kind) : .nothing
         }
-        if trimmed.lowercased() == "paste" {
+        if trimmed.lowercased() == IntentParser.commandPrefix + "paste" {
             return .startPasteStream
         }
         if let replacement = DateIntent.commit(line) {

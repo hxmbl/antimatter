@@ -52,8 +52,8 @@ struct ReturnKeyActionTests {
     }
 
     @Test func timersWinOnTheirLines() {
-        #expect(action("timer 5 laundry") == .startTimer(IntentParser.Timer(duration: 300, label: "laundry")))
-        #expect(action("timer 90s") == .startTimer(IntentParser.Timer(duration: 90, label: "")))
+        #expect(action(".timer 5 laundry") == .startTimer(IntentParser.Timer(duration: 300, label: "laundry")))
+        #expect(action(".timer 90s") == .startTimer(IntentParser.Timer(duration: 90, label: "")))
     }
 
     @Test func pureArithmeticRewrites() {
@@ -65,7 +65,8 @@ struct ReturnKeyActionTests {
     @Test func trailingEqualsDefersInsteadOfActing() {
         // Asking for an answer must never double as starting a timer.
         #expect(action("384 * 27 =") == .nothing)
-        #expect(action("timer 5 =") == .nothing)
+        #expect(action(".timer 5 =") == .nothing)
+        #expect(action("timer 5 =") == .nothing) // a bare word stays inert
         #expect(action("-5 =") == .nothing)
     }
 
@@ -102,13 +103,16 @@ struct ReturnKeyActionTests {
         #expect(IntentExecution.action(forLine: "a = 5", in: "a = 5") == .nothing)
     }
 
-    @Test func aggregatesNeedTheBuffer() {
+    @Test func dotCommandsNeedTheDot() {
+        // Without the dot these are ordinary words; with it they command.
         #expect(action("sum") == .nothing)
-        if case .insertAggregate(.sum) = IntentExecution.action(forLine: "sum", in: "12\n34\nsum") {} else {
-            Issue.record("sum with a buffer should aggregate")
+        #expect(action("paste") == .nothing)
+        #expect(IntentExecution.action(forLine: ".sum") == .nothing) // no buffer → no aggregate
+        if case .insertAggregate(.sum) = IntentExecution.action(forLine: ".sum", in: "12\n34\n.sum") {} else {
+            Issue.record(".sum with a buffer should aggregate")
         }
-        if case .startPasteStream = IntentExecution.action(forLine: "paste", in: "") {} else {
-            Issue.record("paste should start streaming")
+        if case .startPasteStream = IntentExecution.action(forLine: ".paste", in: "") {} else {
+            Issue.record(".paste should start streaming")
         }
     }
 }

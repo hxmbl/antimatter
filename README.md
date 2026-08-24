@@ -28,7 +28,7 @@ Antimatter should feel like an extension of the user's thought process, not anot
 The user should be able to:
 
 ```text
-timer 5
+.timer 5
 ```
 
 and get a five-minute timer.
@@ -133,13 +133,17 @@ The first version should remain deliberately small.
 ### Example Inputs
 
 ```text
-timer 5
-timer 5 laundry
+.timer 5
+.timer 5 laundry
 25 * 48
 2026-08-22
 hello world
 TODO: investigate this
 ```
+
+Dot-commands (`.timer`, `.sum`, `.paste`) must be typed deliberately.
+Math happens automatically — only recognised commands produce special
+behaviour; everything else remains valid text.
 
 Only recognized commands should produce special behaviour.
 
@@ -172,10 +176,10 @@ Avoid creating abstractions until they solve an actual problem.
 * autosave to `Application Support/Antimatter/scratchpad.md` — type → quit → relaunch → the text is still there; saves are atomic with a one-generation `.bak`, a failed write shows a transient hint, and edits made in another editor are adopted instead of clobbered
 * floating pane: stays above other windows, hides on Escape or ⌃⌥Space, reopens with the same chord; position and size survive relaunches
 * calculations: type `384 * 27 =` for an instant answer, or press return on a pure-arithmetic line to rewrite it to `384 * 27 = 10368` (date-shaped lines like `2026-08-22` are left alone)
-* timers: `timer 5`, `timer 90s`, `timer 1h 20m stand up` — countdown chips float in the corner, a sound plays on completion, a system notification carries the name (click it to reopen the pane), and unfinished timers survive relaunches
-* reactive math: `price = 4 * 12` defines a variable, later lines use `price / 2`; editing a definition recomputes committed dependents live. Functions `sqrt abs round min max`, aggregates `sum avg count` over the note's numbers (prose ignored)
+* dot-commands are explicit — `.timer 5`, `.timer 90s`, `.timer 1h 20m stand up` — countdown chips float in the corner, a sound plays on completion, a system notification carries the name (click it to reopen the pane), and unfinished timers survive relaunches
+* reactive math: `price = 4 * 12` defines a variable, later lines use `price / 2`; editing a definition recomputes committed dependents live. Functions `sqrt abs round min max`; `.sum` `.avg` `.count` aggregate over the note's numbers (prose ignored)
 * dates & units offline: return on `2026-08-22` shows its weekday, `days until 2026-09-01` counts down, `12 kg → lb` converts (built-in table, no network)
-* capture: return on `paste` streams clipboard copies into the note until dismissed; drop an image on the pane for on-device OCR text capture
+* capture: return on `.paste` streams clipboard copies into the note until dismissed; drop an image on the pane for on-device OCR text capture
 * comfort: runtime settings (hot key chord picker, font size, light/dark theme, Dock-icon-off menu-bar mode), system find bar (`⌘F`), Reveal Scratchpad in Finder (`⌘R`)
 
 ## Command System
@@ -199,7 +203,7 @@ Result
 For example:
 
 ```text
-"timer 5"
+".timer 5"
       ↓
 TimerIntent(duration: 300)
       ↓
@@ -268,7 +272,7 @@ Text is still there
 Then:
 
 ```text
-timer 5
+.timer 5
 ```
 
 should actually create a timer.

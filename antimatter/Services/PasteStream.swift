@@ -1,7 +1,7 @@
 import AppKit
 import Combine
 
-/// Return on `paste` starts streaming: every subsequent clipboard copy
+/// Return on `.paste` starts streaming: every subsequent clipboard copy
 /// lands in the note as plain text until dismissed. Polling the pasteboard
 /// change count is the whole mechanism — no polling of contents, no
 /// permissions, nothing networked.
