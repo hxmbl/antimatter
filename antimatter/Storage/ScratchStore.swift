@@ -15,6 +15,11 @@ import AppKit
 /// survives as `<scratchpad>.md.bak` courtesy of `Persistence`. Edits made to
 /// the file outside this app are watched for and adopted, so an external
 /// editor always wins over this app's next flush.
+///
+/// Flushes that would write bytes already on disk are skipped — no backup
+/// churn, no watcher events, nothing. `lastWritten` tracks what the primary
+/// file is believed to contain; it is re-synced from disk whenever an
+/// external event lands.
 @MainActor
 final class ScratchStore: ObservableObject {
     static let shared = ScratchStore()
@@ -31,6 +36,7 @@ final class ScratchStore: ObservableObject {
     }
 
     private let fileURL: URL
+    private var lastWritten: String?
     private var saveTask: Task<Void, Never>?
     private var errorClearTask: Task<Void, Never>?
     private var watchSource: DispatchSourceFileSystemObject?
@@ -39,6 +45,9 @@ final class ScratchStore: ObservableObject {
     init(fileURL: URL = ScratchStore.defaultFileURL()) {
         self.fileURL = fileURL
         self.text = Persistence.read(from: fileURL) ?? ""
+        // Only a readable primary counts as written; if load fell back to
+        // the .bak, the first flush must push the rescue out to disk.
+        self.lastWritten = Persistence.readPrimary(from: fileURL)
         restartWatching()
     }
 
@@ -65,10 +74,15 @@ final class ScratchStore: ObservableObject {
     func flush() {
         saveTask?.cancel()
         saveTask = nil
+        guard text != lastWritten else { return } // disk already agrees
+
         if let error = Persistence.write(text, to: fileURL) {
             saveError = error
-        } else if saveError != nil {
-            saveError = nil
+        } else {
+            lastWritten = text
+            if saveError != nil {
+                saveError = nil
+            }
         }
         // Atomic writes replace the file, leaving the old watch fd pointing
         // at an orphaned inode — re-arm so external edits stay visible.
@@ -115,11 +129,21 @@ final class ScratchStore: ObservableObject {
         }
     }
 
-    private func adoptExternalChange() {
+    /// Internal (test-visible): what the vnode watcher does once its
+    /// coalescing delay settles.
+    func adoptExternalChange() {
         restartWatching()
-        // Identical content means the event was this app's own flush landing.
-        guard let incoming = Persistence.read(from: fileURL), incoming != text else { return }
-        text = incoming // flows into the editor; its debounced flush rewrites the same bytes
+        if let incoming = Persistence.readPrimary(from: fileURL) {
+            // Disk is the truth about what was written, whoever wrote it —
+            // our own flush's events land here too and simply sync up.
+            lastWritten = incoming
+            if incoming != text {
+                text = incoming // flows into the editor; its flush is then a no-op
+            }
+        } else if let rescued = Persistence.read(from: fileURL), rescued != text {
+            // Primary vanished or turned unreadable; the .bak still speaks.
+            text = rescued // the follow-up flush pushes the rescue onto disk
+        }
     }
 
     deinit {

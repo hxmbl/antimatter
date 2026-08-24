@@ -56,6 +56,29 @@ struct TimerCenterPruneTests {
         let reloaded = TimerCenter(fileURL: url, now: { clock })
         #expect(reloaded.timers.isEmpty)
     }
+
+    @Test func corruptTimersJSONFallsBackToTheBackup() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("antimatter-timers-\(UUID().uuidString).json")
+        let clock = Date(timeIntervalSince1970: 1_000_000)
+        let tea = ActiveTimer(
+            id: UUID(), label: "tea", duration: 60,
+            endDate: clock.addingTimeInterval(60), createdAt: clock, firedAt: nil
+        )
+        // Last good generation lives in the .bak; the primary is garbage.
+        try JSONEncoder().encode([tea]).write(to: Persistence.backupURL(for: url))
+        try Data([0xFF]).write(to: url)
+
+        let reloaded = TimerCenter(fileURL: url, now: { clock })
+        #expect(reloaded.timers.map(\.label) == ["tea"])
+    }
+
+    @Test func missingTimersFilesLoadEmpty() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("antimatter-timers-\(UUID().uuidString).json")
+        let center = TimerCenter(fileURL: url, now: Date.init)
+        #expect(center.timers.isEmpty)
+    }
 }
 
 @MainActor

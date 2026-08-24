@@ -71,4 +71,57 @@ struct SaveFailureTests {
         store.flush()
         #expect(store.saveError == nil)
     }
+
+    @Test func firstEverFlushCreatesNoStrayBackup() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("antimatter-fresh-\(UUID().uuidString).md")
+        let store = ScratchStore(fileURL: url)
+        store.text = "one"
+        store.flush()
+        #expect(try String(contentsOf: url, encoding: .utf8) == "one")
+        #expect(!FileManager.default.fileExists(atPath: Persistence.backupURL(for: url).path))
+    }
+
+    @Test func unchangedFlushDoesNotChurnTheBackup() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("antimatter-churn-\(UUID().uuidString).md")
+        let backup = Persistence.backupURL(for: url)
+        let store = ScratchStore(fileURL: url)
+
+        store.text = "one"
+        store.flush()          // primary = one, no backup yet
+        store.text = "two"
+        store.flush()          // backup = one, primary = two
+        #expect(try String(contentsOf: backup, encoding: .utf8) == "one")
+
+        store.text = "two"
+        store.flush()          // disk already agrees — skipped
+        #expect(try String(contentsOf: backup, encoding: .utf8) == "one")
+        #expect(try String(contentsOf: url, encoding: .utf8) == "two")
+    }
+
+    @Test func externalCorruptionRecoversFromTheBackup() {
+        // The watcher fires after the primary was clobbered elsewhere:
+        // disk truth wins over unsaved local typing. The .bak always trails
+        // one generation behind, so recovery lands on the PREVIOUS good
+        // content — that is the guarantee, by design.
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("antimatter-adopt-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("scratchpad.md")
+
+        let store = ScratchStore(fileURL: url)
+        store.text = "first generation"
+        store.flush()
+        store.text = "second generation"
+        store.flush()   // now the .bak holds the first generation
+
+        try? Data([0xFF]).write(to: url)  // corrupt the primary behind the app's back
+        store.text = "unsaved typing"     // keystrokes that never reached disk
+        store.adoptExternalChange()
+
+        #expect(store.text == "first generation")
+        store.flush()
+        #expect((try? String(contentsOf: url, encoding: .utf8)) == "first generation")
+    }
 }

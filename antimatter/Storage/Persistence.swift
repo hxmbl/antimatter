@@ -19,6 +19,12 @@ enum Persistence {
         return try? String(contentsOf: backupURL(for: url), encoding: .utf8)
     }
 
+    /// Reads only the primary file — no fallback. Used to learn what is
+    /// actually on disk right now (as opposed to what we last wrote).
+    static func readPrimary(from url: URL) -> String? {
+        try? String(contentsOf: url, encoding: .utf8)
+    }
+
     /// Atomically replaces `url` with `text`, preserving the current
     /// contents as the `.bak` first. Returns the write error, if any —
     /// a failed atomic write never touches the previous file.

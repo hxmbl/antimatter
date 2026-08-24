@@ -154,15 +154,20 @@ final class TimerCenter: ObservableObject {
     // MARK: Persistence
 
     private func load() {
-        guard let data = try? Data(contentsOf: fileURL),
-              let stored = try? JSONDecoder().decode([ActiveTimer].self, from: data)
-        else { return }
-        let timestamp = now()
-        // Finished chips linger an hour after firing so they can be seen
-        // (and dismissed); older ones are dropped.
-        timers = stored.filter { timer in
-            guard let fired = timer.firedAt else { return true }
-            return timestamp.timeIntervalSince(fired) < 60 * 60
+        // Same recovery rule as the scratchpad: a corrupt or missing primary
+        // falls back to the last good generation in timers.json.bak.
+        for url in [fileURL, Persistence.backupURL(for: fileURL)] {
+            guard let data = try? Data(contentsOf: url),
+                  let stored = try? JSONDecoder().decode([ActiveTimer].self, from: data)
+            else { continue }
+            let timestamp = now()
+            // Finished chips linger an hour after firing so they can be seen
+            // (and dismissed); older ones are dropped.
+            timers = stored.filter { timer in
+                guard let fired = timer.firedAt else { return true }
+                return timestamp.timeIntervalSince(fired) < 60 * 60
+            }
+            return
         }
     }
 
