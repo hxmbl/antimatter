@@ -55,6 +55,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UNUserNotificationCenter.current().delegate = notificationRouter
         LaunchPreferences.apply()
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Lives here, not in the pane's view: the window (and its SwiftUI
+        // observers) may not exist when the app quits.
+        ScratchStore.shared.flush()
+    }
 }
 
 /// Timer notifications: clicking one reopens the pane and clears the chip.

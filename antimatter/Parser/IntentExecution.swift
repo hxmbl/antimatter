@@ -8,7 +8,7 @@ import Foundation
 /// Subtlety that lives here:
 /// * **Caret line range** — the line under a collapsed caret, newline
 ///   stripped, nil for selections spanning characters.
-/// * **Return-key dispatch** — timers first, then aggregates (`sum`),
+/// * **Return-key dispatch** — timers first, then dot-commands (`.sum`),
 ///   paste streaming, dates, units, variable definitions, calculations.
 /// * **Reactive results** — committed `expr = number` lines whose number no
 ///   longer matches the freshly evaluated expression are collected as
@@ -185,7 +185,7 @@ nonisolated enum IntentExecution {
     /// What pressing return on `line` should do, given the surrounding
     /// `buffer` (needed for aggregates and definitions). A trailing `=`
     /// defers to the async commit path instead — asking for an answer must
-    /// never double as starting a timer (`timer 5 =` stays a question).
+    /// never double as starting a timer (`.timer 5 =` stays a question).
     static func action(forLine line: String, in buffer: String? = nil) -> LineAction {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.hasSuffix("=") else { return .nothing }

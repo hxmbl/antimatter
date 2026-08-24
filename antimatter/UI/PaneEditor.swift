@@ -114,6 +114,9 @@ struct PaneEditor: NSViewRepresentable {
         let highlighter = MarkdownHighlighter()
         private var deferredPassTask: Task<Void, Never>?
         private var appliedFontSize: CGFloat = PaneStyle.fontSize
+        /// Set whenever a did-change arrives mid-undo; automatic rewrites
+        /// stand down briefly so ⌘Z can actually win.
+        private var lastUndoDetectedAt: Date?
 
         init(text: Binding<String>) {
             self.text = text
@@ -121,6 +124,9 @@ struct PaneEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
+            if textView.undoManager?.isUndoing == true {
+                lastUndoDetectedAt = Date()
+            }
             text.wrappedValue = textView.string
             highlighter.refresh(textView)
             schedulePendingCalculation(textView)
@@ -165,6 +171,7 @@ struct PaneEditor: NSViewRepresentable {
         private func schedulePendingCalculation(_ textView: NSTextView) {
             DispatchQueue.main.async { [weak self, weak textView] in
                 guard let self, let textView,
+                      !undoRecentlyDetected,
                       !IntentExecution.isDeferredCommitStale(
                         viewText: textView.string,
                         boundText: self.text.wrappedValue,
@@ -176,7 +183,9 @@ struct PaneEditor: NSViewRepresentable {
 
         /// Reactive results: once typing quiets down, committed lines whose
         /// stored answers drifted (a definition changed) are recomputed in
-        /// place. Debounced so it never fights an active keystroke.
+        /// place. Debounced so it never fights an active keystroke, and
+        /// suppressed after an undo — otherwise the pass would instantly
+        /// reapply whatever ⌘Z just removed.
         private func scheduleReactivePass(_ textView: NSTextView) {
             deferredPassTask?.cancel()
             deferredPassTask = Task { [weak self, weak textView] in
@@ -186,8 +195,14 @@ struct PaneEditor: NSViewRepresentable {
             }
         }
 
+        private var undoRecentlyDetected: Bool {
+            guard let lastUndoDetectedAt else { return false }
+            return Date().timeIntervalSince(lastUndoDetectedAt) < 1.0
+        }
+
         private func runReactivePass(_ textView: NSTextView?) {
             guard let textView,
+                  !undoRecentlyDetected,
                   !IntentExecution.isDeferredCommitStale(
                     viewText: textView.string,
                     boundText: text.wrappedValue,

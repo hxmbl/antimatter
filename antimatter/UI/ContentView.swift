@@ -26,9 +26,6 @@ struct ContentView: View {
             .onChange(of: store.text) { _, _ in store.textDidChange() }
             // Debounced saves leave a small window where quitting would lose
             // the last keystrokes; flushing here closes it.
-            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
-                store.flush()
-            }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
                 // Any window closing posts here; only the pane's own file matters.
                 guard (note.object as? NSWindow)?.identifier?.rawValue == PaneStyle.windowIdentifier else { return }
