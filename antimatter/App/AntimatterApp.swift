@@ -64,15 +64,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Context-menu bridge for menu-bar (accessory) mode: with no menu bar
     /// there is no Settings item and no ⌘Q, so the pane's right-click menu
-    /// is the way out. Targets both eras of the settings selector.
+    /// is the way out.
     @objc func openSettings(_ sender: Any?) {
         NSApplication.shared.activate()
+        // Decide by result, not by responds(): the modern selector may be
+        // handled deeper in the responder chain than NSApp itself.
         let modern = Selector(("showSettingsWindow:"))
-        let legacy = Selector(("showPreferencesWindow:"))
-        if NSApplication.shared.responds(to: modern) {
-            NSApplication.shared.sendAction(modern, to: nil, from: nil)
-        } else {
-            NSApplication.shared.sendAction(legacy, to: nil, from: nil)
+        if !NSApplication.shared.sendAction(modern, to: nil, from: nil) {
+            NSApplication.shared.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
         }
     }
 }
