@@ -38,14 +38,9 @@ final class PaneHotKey {
         registerChord()
     }
 
-    /// Swaps to whatever chord `PaneStyle` now reports. A chord without any
-    /// modifier is refused — registering bare letters system-wide would
-    /// swallow ordinary typing everywhere — and the previous chord keeps
-    /// working, matching what the UI last showed.
+    /// Swaps to whatever chord `PaneStyle` now reports. Invalid chords are
+    /// refused and the previous one keeps working.
     func reinstall() {
-        guard PaneStyle.hotKeyUsesControl || PaneStyle.hotKeyUsesOption
-                || PaneStyle.hotKeyUsesCommand || PaneStyle.hotKeyUsesShift
-        else { return }
         registerChord()
     }
 
@@ -54,6 +49,12 @@ final class PaneHotKey {
             UnregisterEventHotKey(hotKeyRef)
             self.hotKeyRef = nil
         }
+        // Refuse chords that would swallow ordinary typing system-wide:
+        // no modifier at all, or shift alone (shift+space is an input-method
+        // staple). The previously registered chord stays live instead.
+        guard PaneStyle.hotKeyUsesControl || PaneStyle.hotKeyUsesOption
+                || PaneStyle.hotKeyUsesCommand
+        else { return }
         var modifiers: UInt32 = 0
         if PaneStyle.hotKeyUsesControl { modifiers |= UInt32(controlKey) }
         if PaneStyle.hotKeyUsesOption { modifiers |= UInt32(optionKey) }

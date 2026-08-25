@@ -35,7 +35,7 @@ struct SettingsView: View {
             } header: {
                 Text("Hot Key")
             } footer: {
-                Text("At least one modifier is required; a bare key would swallow typing everywhere, so the old chord keeps working instead.")
+                Text("Control, Option, or Command is required. Bare keys and Shift-only chords would swallow typing system-wide, so the old chord keeps working instead.")
             }
             Section("Text") {
                 Slider(value: Binding(
