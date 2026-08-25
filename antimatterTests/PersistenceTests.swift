@@ -124,4 +124,46 @@ struct SaveFailureTests {
         store.flush()
         #expect((try? String(contentsOf: url, encoding: .utf8)) == "first generation")
     }
+
+    @Test func corruptPrimaryIsNeverRotatedIntoTheBackup() throws {
+        // The .bak must survive a recovery flush: copying the corrupt
+        // primary over it would destroy the safety net exactly when needed.
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("antimatter-rotate-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("scratchpad.md")
+        let backup = Persistence.backupURL(for: url)
+
+        let store = ScratchStore(fileURL: url)
+        store.text = "first"
+        store.flush()
+        store.text = "second"
+        store.flush()                      // bak = "first", primary = "second"
+
+        try? Data([0xFF]).write(to: url)   // primary corrupted externally
+        store.adoptExternalChange()        // rescues "first" from the bak
+        store.flush()
+
+        #expect((try? String(contentsOf: url, encoding: .utf8)) == "first")
+        #expect((try? String(contentsOf: backup, encoding: .utf8)) == "first") // not garbage
+    }
+
+    @Test func corruptionWithoutBackupStillRecoversOnFlush() {
+        // No .bak exists (single-generation history): after adoption sees an
+        // unreadable primary, the next flush must restore anyway — a naive
+        // skip-if-synced check would preserve the garbage forever.
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("antimatter-nobak-\(UUID().uuidString).md")
+
+        let store = ScratchStore(fileURL: url)
+        store.text = "only generation"
+        store.flush()
+
+        try? Data([0xFF]).write(to: url)   // clobbered; nothing to rescue
+        store.adoptExternalChange()
+        store.flush()
+
+        #expect(store.text == "only generation")
+        #expect((try? String(contentsOf: url, encoding: .utf8)) == "only generation")
+    }
 }

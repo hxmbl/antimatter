@@ -11,6 +11,18 @@ import Carbon.HIToolbox
 final class PaneHotKey {
     static let shared = PaneHotKey()
 
+    /// The chord actually registered with the system — the source of truth
+    /// Settings syncs its toggles to, so refused chords never linger in the UI.
+    struct Chord: Equatable {
+        var control = false
+        var option = false
+        var command = false
+        var shift = false
+        var keyCode = 49
+    }
+
+    private(set) var activeChord = Chord()
+
     var onToggle: (() -> Void)?
     /// Set from SwiftUI's `openWindow` environment action; recreates the
     /// pane after the user closed it with the red button.
@@ -30,8 +42,12 @@ final class PaneHotKey {
         let context = Unmanaged.passUnretained(self).toOpaque()
         let status = InstallEventHandler(GetApplicationEventTarget(), { _, _, userData in
             guard let userData else { return noErr }
+            // Hot-key events arrive on the main thread, so no Sendable hop
+            // is needed — assume the actor isolation directly.
             let controller = Unmanaged<PaneHotKey>.fromOpaque(userData).takeUnretainedValue()
-            Task { @MainActor in controller.fireToggle() }
+            MainActor.assumeIsolated {
+                controller.fireToggle()
+            }
             return noErr
         }, 1, &spec, context, &eventHandler)
         guard status == noErr else { return }
@@ -49,20 +65,30 @@ final class PaneHotKey {
             UnregisterEventHotKey(hotKeyRef)
             self.hotKeyRef = nil
         }
+        let chord = Chord(
+            control: PaneStyle.hotKeyUsesControl,
+            option: PaneStyle.hotKeyUsesOption,
+            command: PaneStyle.hotKeyUsesCommand,
+            shift: PaneStyle.hotKeyUsesShift,
+            keyCode: Int(PaneStyle.hotKeyCode)
+        )
         // Refuse chords that would swallow ordinary typing system-wide:
         // no modifier at all, or shift alone (shift+space is an input-method
-        // staple). The previously registered chord stays live instead.
-        guard PaneStyle.hotKeyUsesControl || PaneStyle.hotKeyUsesOption
-                || PaneStyle.hotKeyUsesCommand
-        else { return }
+        // staple). The previously registered chord stays live instead, and
+        // `activeChord` keeps telling the truth about which one that is.
+        guard chord.control || chord.option || chord.command else { return }
         var modifiers: UInt32 = 0
-        if PaneStyle.hotKeyUsesControl { modifiers |= UInt32(controlKey) }
-        if PaneStyle.hotKeyUsesOption { modifiers |= UInt32(optionKey) }
-        if PaneStyle.hotKeyUsesCommand { modifiers |= UInt32(cmdKey) }
-        if PaneStyle.hotKeyUsesShift { modifiers |= UInt32(shiftKey) }
+        if chord.control { modifiers |= UInt32(controlKey) }
+        if chord.option { modifiers |= UInt32(optionKey) }
+        if chord.command { modifiers |= UInt32(cmdKey) }
+        if chord.shift { modifiers |= UInt32(shiftKey) }
 
         let hotKeyID = EventHotKeyID(signature: OSType(0x50414E45) /* 'PANE' */, id: 1)
-        RegisterEventHotKey(PaneStyle.hotKeyCode, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &hotKeyRef)
+        var newRef: EventHotKeyRef?
+        let status = RegisterEventHotKey(UInt32(chord.keyCode), modifiers, hotKeyID, GetApplicationEventTarget(), 0, &newRef)
+        guard status == noErr, let newRef else { return }
+        hotKeyRef = newRef
+        activeChord = chord
     }
 
     private func fireToggle() {

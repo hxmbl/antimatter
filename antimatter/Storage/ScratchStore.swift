@@ -26,14 +26,17 @@ final class ScratchStore: ObservableObject {
 
     @Published var text: String
 
-    /// The most recent flush failure, cleared automatically after a few
-    /// seconds and by the next successful flush.
+    /// The most recent flush failure, cleared automatically after a while
+    /// and by the next successful flush. The token increments per failure
+    /// so the UI can re-animate even when consecutive errors compare equal.
     @Published private(set) var saveError: Error? {
         didSet {
             guard saveError != nil else { return }
+            saveErrorToken += 1
             scheduleErrorClear()
         }
     }
+    @Published private(set) var saveErrorToken = 0
 
     private let fileURL: URL
     private var lastWritten: String?
@@ -52,10 +55,7 @@ final class ScratchStore: ObservableObject {
     }
 
     nonisolated static func defaultFileURL() -> URL {
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Antimatter", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory.appendingPathComponent("scratchpad.md")
+        StorageLocation.directory(named: "scratchpad").appendingPathComponent("scratchpad.md")
     }
 
     /// Called after every edit; coalesces rapid keystrokes into one write.
@@ -89,11 +89,13 @@ final class ScratchStore: ObservableObject {
         restartWatching()
     }
 
-    /// Drops the transient error hint early (e.g. when a new one replaces it).
+    /// Drops the transient error hint. Ten seconds rather than a few: the
+    /// pane is often hidden when the failure lands, and an unseen expiry
+    /// defeats the point.
     private func scheduleErrorClear() {
         errorClearTask?.cancel()
         errorClearTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(4))
+            try? await Task.sleep(for: .seconds(10))
             guard !Task.isCancelled else { return }
             self?.saveError = nil
         }
@@ -140,9 +142,15 @@ final class ScratchStore: ObservableObject {
             if incoming != text {
                 text = incoming // flows into the editor; its flush is then a no-op
             }
-        } else if let rescued = Persistence.read(from: fileURL), rescued != text {
-            // Primary vanished or turned unreadable; the .bak still speaks.
-            text = rescued // the follow-up flush pushes the rescue onto disk
+        } else {
+            // Primary vanished or turned unreadable. The .bak still speaks
+            // if it exists; either way the skip-if-synced check must stand
+            // down so the next flush pushes healthy content onto disk —
+            // otherwise a corrupt file survives every flush forever.
+            if let rescued = Persistence.read(from: fileURL), rescued != text {
+                text = rescued
+            }
+            lastWritten = nil
         }
     }
 

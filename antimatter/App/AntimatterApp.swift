@@ -86,11 +86,15 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
     ) {
         let identifier = response.notification.request.identifier
         Task { @MainActor in
-            if let id = UUID(uuidString: identifier) {
-                TimerCenter.shared.dismiss(id)
-            }
+            defer { completionHandler() }
+            // Only act on clicks for timers that still exist — a foreign
+            // notification with a UUID identifier must not yank the pane
+            // forward or dismiss an innocent chip.
+            guard let id = UUID(uuidString: identifier),
+                  TimerCenter.shared.timers.contains(where: { $0.id == id })
+            else { return }
+            TimerCenter.shared.dismiss(id)
             PaneHotKey.shared.revealPane()
-            completionHandler()
         }
     }
 

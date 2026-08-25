@@ -27,6 +27,25 @@ final class TimerCenter: ObservableObject {
 
     @Published private(set) var timers: [ActiveTimer] = []
 
+    /// Transient user-facing notice (e.g. a clamped duration); auto-clears.
+    @Published private(set) var notice: String? {
+        didSet {
+            guard notice != nil else { return }
+            noticeClearTask?.cancel()
+            noticeClearTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(6))
+                guard !Task.isCancelled else { return }
+                self?.notice = nil
+            }
+        }
+    }
+
+    private var noticeClearTask: Task<Void, Never>?
+
+    func showNotice(_ message: String) {
+        notice = message
+    }
+
     private let fileURL: URL
     private let now: () -> Date
     private var fireTasks: [UUID: Task<Void, Never>] = [:]
@@ -34,20 +53,30 @@ final class TimerCenter: ObservableObject {
     init(fileURL: URL = TimerCenter.defaultFileURL(), now: @escaping () -> Date = Date.init) {
         self.fileURL = fileURL
         self.now = now
-        // Requests scheduled by a previous session are rebuilt below; the
-        // leftovers would double-fire alongside the fresh ones.
-        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        // Requests scheduled by a previous session are rebuilt below; only
+        // stale timer requests are removed — scoped, so any non-timer
+        // notification the app might someday post survives the sweep.
         load()
+        pruneStaleNotifications()
         for timer in timers {
             scheduleFire(timer, announce: false)
         }
     }
 
+    private func pruneStaleNotifications() {
+        let center = UNUserNotificationCenter.current()
+        let keep = Set(timers.filter { $0.firedAt == nil }.map(\.id.uuidString))
+        center.getPendingNotificationRequests { requests in
+            let stale = requests.map(\.identifier).filter { identifier in
+                UUID(uuidString: identifier) != nil && !keep.contains(identifier)
+            }
+            guard !stale.isEmpty else { return }
+            center.removePendingNotificationRequests(withIdentifiers: stale)
+        }
+    }
+
     nonisolated static func defaultFileURL() -> URL {
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Antimatter", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory.appendingPathComponent("timers.json")
+        StorageLocation.directory(named: "timers").appendingPathComponent("timers.json")
     }
 
     /// Starts a countdown. Returns false for invalid durations or an
@@ -182,9 +211,11 @@ final class TimerCenter: ObservableObject {
 
     private func persist() {
         guard let data = try? JSONEncoder().encode(timers) else { return }
-        // Same backup semantics as the scratchpad; timer state is
-        // regenerable, so failures need no UI surface — but the last good
-        // file still survives as timers.json.bak.
-        Persistence.writeData(data, to: fileURL)
+        // Backup rotation skips an undecodable primary: after a recovery
+        // from timers.json.bak, the corrupt file must not bury the last
+        // good generation.
+        Persistence.writeData(data, to: fileURL) { primary in
+            (try? JSONDecoder().decode([ActiveTimer].self, from: primary)) != nil
+        }
     }
 }

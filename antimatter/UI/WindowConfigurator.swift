@@ -22,6 +22,8 @@ struct WindowConfigurator: NSViewRepresentable {
         window.identifier = NSUserInterfaceItemIdentifier(PaneStyle.windowIdentifier)
         // Restores the saved frame synchronously; the size clamp below then
         // reins in any frame saved before a smaller contentMaxSize existed.
+        // Note SwiftUI also keeps its own frame-restore keys in defaults
+        // ("NSWindow Frame …AppWindow…"); ours is applied later and wins.
         window.setFrameAutosaveName(PaneStyle.frameAutosaveName)
         let maxSize = NSSize(width: PaneStyle.maxWidth, height: PaneStyle.maxHeight)
         window.contentMaxSize = maxSize

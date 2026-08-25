@@ -17,6 +17,9 @@ nonisolated enum IntentParser {
     struct Timer: Equatable {
         let duration: TimeInterval
         let label: String
+        /// True when the requested duration exceeded the cap and was
+        /// shortened — surfaced to the user as a transient notice.
+        var clamped = false
     }
 
     /// The dot-command prefix; commands must be typed, not stumbled into.
@@ -44,7 +47,8 @@ nonisolated enum IntentParser {
         guard matchedAny, duration > 0 else { return nil }
 
         let label = index < words.count ? words[index...].joined(separator: " ") : ""
-        return Timer(duration: min(duration, maxDuration), label: label)
+        let capped = duration > maxDuration
+        return Timer(duration: min(duration, maxDuration), label: label, clamped: capped)
     }
 
     /// Largest supported timer: 30 days.

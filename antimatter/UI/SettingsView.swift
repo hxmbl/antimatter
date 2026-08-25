@@ -27,11 +27,12 @@ struct SettingsView: View {
                         Text(key.name).tag(key.code)
                     }
                 }
-                .onChange(of: usesControl) { _, _ in PaneHotKey.shared.reinstall() }
-                .onChange(of: usesOption) { _, _ in PaneHotKey.shared.reinstall() }
-                .onChange(of: usesCommand) { _, _ in PaneHotKey.shared.reinstall() }
-                .onChange(of: usesShift) { _, _ in PaneHotKey.shared.reinstall() }
-                .onChange(of: keyCode) { _, _ in PaneHotKey.shared.reinstall() }
+                .onChange(of: usesControl) { _, _ in chordChanged() }
+                .onChange(of: usesOption) { _, _ in chordChanged() }
+                .onChange(of: usesCommand) { _, _ in chordChanged() }
+                .onChange(of: usesShift) { _, _ in chordChanged() }
+                .onChange(of: keyCode) { _, _ in chordChanged() }
+                .onAppear { syncToActiveChord() }
             } header: {
                 Text("Hot Key")
             } footer: {
@@ -62,6 +63,22 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 420)
+    }
+
+    /// Re-registers the chord, then snaps the toggles back to whatever the
+    /// system actually accepted — refused combinations never linger in the UI.
+    private func chordChanged() {
+        PaneHotKey.shared.reinstall()
+        syncToActiveChord()
+    }
+
+    private func syncToActiveChord() {
+        let active = PaneHotKey.shared.activeChord
+        usesControl = active.control
+        usesOption = active.option
+        usesCommand = active.command
+        usesShift = active.shift
+        keyCode = active.keyCode
     }
 
     private static let keys: [(name: String, code: Int)] = [

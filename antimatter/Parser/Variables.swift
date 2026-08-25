@@ -5,7 +5,11 @@ import Foundation
 /// A definition is a line shaped `name = expression` with a valid identifier
 /// and an expression that fully evaluates against the table built so far.
 /// Later definitions win; forward references and self-references do not
-/// resolve, so those lines simply stay text.
+/// resolve, so those lines simply stay text. (Committed results on such
+/// lines still recompute in `staleResultCommits`, which deliberately
+/// evaluates against the *final* table — a line like `a = b + 1 = 3` placed
+/// above `b = 2` will track `b` once it exists below. That asymmetry is a
+/// chosen feature: definitions declare, results follow.)
 nonisolated enum VariableTable {
     static func scan(_ text: String) -> [String: Double] {
         var table: [String: Double] = [:]

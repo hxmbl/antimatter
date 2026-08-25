@@ -38,9 +38,10 @@ final class PasteStream: ObservableObject {
         guard pasteboard.changeCount != lastChangeCount else { return }
         lastChangeCount = pasteboard.changeCount
         guard let copied = pasteboard.string(forType: .string), !copied.isEmpty else { return }
-        ScratchStore.shared.text += "\n" + copied
+        let store = ScratchStore.shared
+        store.text += (store.text.isEmpty ? "" : "\n") + copied
         // The pane's SwiftUI onChange only exists while the window does;
         // streaming with the pane closed must still reach the disk.
-        ScratchStore.shared.textDidChange()
+        store.textDidChange()
     }
 }

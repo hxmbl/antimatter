@@ -38,14 +38,15 @@ nonisolated enum UnitConverter {
 
     // MARK: Parsing
 
-    /// `<number> <unit> → <unit>` — arrow may be `→` or `->`, units may carry `°`.
+    /// `<number> <unit> → <unit>` — arrow may be `→` or `->`; a bare `>`
+    /// is deliberately not an arrow, so comparison-shaped lines stay text.
     static func parse(_ line: String) -> (value: Double, from: String, to: String)? {
         let words = splitPreservingArrow(line)
         guard words.count == 4,
               let value = Double(words[0])
         else { return nil }
         let arrow = words[2]
-        guard arrow == "→" || arrow == "->" || arrow == ">" else { return nil }
+        guard arrow == "→" || arrow == "->" else { return nil }
         return (value, words[1], words[3])
     }
 

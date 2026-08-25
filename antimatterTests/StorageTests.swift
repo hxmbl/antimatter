@@ -73,6 +73,28 @@ struct TimerCenterPruneTests {
         #expect(reloaded.timers.map(\.label) == ["tea"])
     }
 
+    @Test func recoveryPersistDoesNotBuryTheGoodBackupUnderGarbage() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("antimatter-timers-\(UUID().uuidString).json")
+        let backup = Persistence.backupURL(for: url)
+        let clock = Date(timeIntervalSince1970: 1_000_000)
+        let tea = ActiveTimer(
+            id: UUID(), label: "tea", duration: 60,
+            endDate: clock.addingTimeInterval(60), createdAt: clock, firedAt: nil
+        )
+        try JSONEncoder().encode([tea]).write(to: backup)
+        try Data([0xFF]).write(to: url)   // primary is garbage
+
+        let center = TimerCenter(fileURL: url, now: { clock })
+        #expect(center.timers.map(\.label) == ["tea"])   // recovered from bak
+        center.dismiss(center.timers[0].id)              // forces a persist…
+
+        // …which must not rotate the undecodable primary over the good bak.
+        let bakTimers = try JSONDecoder().decode([ActiveTimer].self, from: Data(contentsOf: backup))
+        #expect(bakTimers.map(\.label) == ["tea"])
+        #expect((try? JSONDecoder().decode([ActiveTimer].self, from: Data(contentsOf: url)))?.isEmpty == true)
+    }
+
     @Test func missingTimersFilesLoadEmpty() {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("antimatter-timers-\(UUID().uuidString).json")

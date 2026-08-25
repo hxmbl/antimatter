@@ -20,6 +20,13 @@ struct IntentTimerTests {
         #expect(IntentParser.parseTimer(".timer 1h 20m")?.duration == 4_800)
     }
 
+    @Test func oversizedDurationsAreClampedAndFlagged() {
+        let clamped = IntentParser.parseTimer(".timer 100d")
+        #expect(clamped?.duration == IntentParser.maxDuration)
+        #expect(clamped?.clamped == true)
+        #expect(IntentParser.parseTimer(".timer 5")?.clamped == false)
+    }
+
     @Test func remainderBecomesTheLabel() {
         #expect(IntentParser.parseTimer(".timer 5 laundry") == IntentParser.Timer(duration: 300, label: "laundry"))
         #expect(IntentParser.parseTimer(".timer 1h 20m stand up") == IntentParser.Timer(duration: 4_800, label: "stand up"))

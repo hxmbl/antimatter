@@ -1,5 +1,31 @@
 import Foundation
 
+/// Where mutable app data lives. Test hosts and Xcode Previews run inside
+/// the app's sandbox container — a unit-test suite once zeroed a live
+/// scratchpad that way — so isolated runs are routed to throwaway
+/// directories instead.
+enum StorageLocation {
+    nonisolated static let isIsolatedRun: Bool = {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
+    }()
+
+    nonisolated static func directory(named name: String) -> URL {
+        if isIsolatedRun {
+            let dir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("antimatter-isolated", isDirectory: true)
+                .appendingPathComponent(name, isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            return dir
+        }
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Antimatter", isDirectory: true)
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base
+    }
+}
+
 /// Atomic text persistence for the scratchpad file, plus a one-generation
 /// `.bak`: every overwrite first copies the current file aside, so even a
 /// successful write of bad content (or a user's accidental deletion of the
@@ -26,18 +52,34 @@ enum Persistence {
     }
 
     /// Atomically replaces `url` with `text`, preserving the current
-    /// contents as the `.bak` first. Returns the write error, if any —
-    /// a failed atomic write never touches the previous file.
+    /// contents as the `.bak` first — but only when the primary is still
+    /// readable text. Copying garbage over the backup would destroy the
+    /// safety net precisely when it matters (post-corruption recovery).
     @discardableResult
     static func write(_ text: String, to url: URL) -> Error? {
-        writeData(Data(text.utf8), to: url)
+        // Failable decode on purpose: `String(decoding:as:)` always succeeds
+        // by substituting replacement characters, which would let corrupt
+        // bytes pass as "readable".
+        writeData(Data(text.utf8), to: url) { primary in
+            String(data: primary, encoding: .utf8) != nil
+        }
     }
 
-    /// The binary form of `write` (same backup semantics).
+    /// The binary form of `write`. `isValidPrimary` lets callers judge
+    /// whether the current file deserves to become the backup (JSON
+    /// decodability for timers, for example); an invalid primary is left
+    /// unrotated, keeping the previous good generation in place.
     @discardableResult
-    static func writeData(_ data: Data, to url: URL) -> Error? {
+    static func writeData(
+        _ data: Data,
+        to url: URL,
+        isValidPrimary: ((Data) -> Bool)? = nil
+    ) -> Error? {
         let backup = backupURL(for: url)
-        if FileManager.default.fileExists(atPath: url.path) {
+        if FileManager.default.fileExists(atPath: url.path),
+           let primary = try? Data(contentsOf: url),
+           isValidPrimary?(primary) ?? true
+        {
             try? FileManager.default.removeItem(at: backup)
             try? FileManager.default.copyItem(at: url, to: backup)
         }

@@ -20,7 +20,7 @@ struct ContentView: View {
                     .strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: PaneStyle.borderWidth)
             }
             .overlay(alignment: .topTrailing) { CaptureStrip().padding(.trailing, 10) }
-            .overlay(alignment: .bottomLeading) { SaveErrorHint(error: store.saveError).padding(.leading, PaneStyle.padding) }
+            .overlay(alignment: .bottomLeading) { SaveErrorHint(error: store.saveError, token: store.saveErrorToken).padding(.leading, PaneStyle.padding) }
             .background(WindowConfigurator())
             .background(HotKeyWindowBridge())
             .onChange(of: store.text) { _, _ in store.textDidChange() }
@@ -84,6 +84,20 @@ private struct CaptureStrip: View {
                 .background(.ultraThinMaterial, in: Capsule())
                 .overlay(Capsule().strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: 0.5))
             }
+            if let notice = center.notice {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 9, weight: .medium))
+                    Text(notice)
+                        .lineLimit(2)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: 0.5))
+            }
         }
         .padding(.top, PaneStyle.titleBarInset - 8)
     }
@@ -131,6 +145,7 @@ private struct TimerChip: View {
 /// few seconds, so this simply renders whatever is current.
 private struct SaveErrorHint: View {
     let error: Error?
+    let token: Int
 
     var body: some View {
         Group {
@@ -150,7 +165,7 @@ private struct SaveErrorHint: View {
                 .transition(.opacity)
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: error as NSError?)
+        .animation(.easeInOut(duration: 0.2), value: token)
     }
 }
 
