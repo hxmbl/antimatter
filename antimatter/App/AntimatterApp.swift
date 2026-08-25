@@ -61,6 +61,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // observers) may not exist when the app quits.
         ScratchStore.shared.flush()
     }
+
+    /// Context-menu bridge for menu-bar (accessory) mode: with no menu bar
+    /// there is no Settings item and no ⌘Q, so the pane's right-click menu
+    /// is the way out. Targets both eras of the settings selector.
+    @objc func openSettings(_ sender: Any?) {
+        NSApplication.shared.activate()
+        let modern = Selector(("showSettingsWindow:"))
+        let legacy = Selector(("showPreferencesWindow:"))
+        if NSApplication.shared.responds(to: modern) {
+            NSApplication.shared.sendAction(modern, to: nil, from: nil)
+        } else {
+            NSApplication.shared.sendAction(legacy, to: nil, from: nil)
+        }
+    }
 }
 
 /// Timer notifications: clicking one reopens the pane and clears the chip.

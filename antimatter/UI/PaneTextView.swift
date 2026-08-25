@@ -99,6 +99,29 @@ final class PaneTextView: NSTextView {
         return images
     }
 
+    // MARK: Context menu — the escape hatch for menu-bar mode
+
+    /// Without a menu bar (Dock icon hidden) there is no Settings item and
+    /// no ⌘Q; the pane's right-click menu is what keeps accessory mode
+    /// escapable.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let menu = super.menu(for: event) else { return nil }
+        let appDelegate = NSApplication.shared.delegate as? AppDelegate
+        menu.addItem(.separator())
+        let settings = NSMenuItem(title: "Settings…", action: #selector(AppDelegate.openSettings(_:)), keyEquivalent: "")
+        settings.target = appDelegate
+        menu.addItem(settings)
+        let reveal = NSMenuItem(title: "Reveal Scratchpad in Finder", action: #selector(revealScratchpad(_:)), keyEquivalent: "")
+        reveal.target = self
+        menu.addItem(reveal)
+        menu.addItem(NSMenuItem(title: "Quit Antimatter", action: #selector(NSApplication.terminate(_:)), keyEquivalent: ""))
+        return menu
+    }
+
+    @objc private func revealScratchpad(_ sender: Any?) {
+        NSWorkspace.shared.activateFileViewerSelecting([ScratchStore.defaultFileURL()])
+    }
+
     // MARK: Escape hides the pane
 
     override func cancelOperation(_ sender: Any?) {

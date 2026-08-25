@@ -71,7 +71,7 @@ final class TimerCenter: ObservableObject {
         timers.insert(timer, at: 0)
         scheduleFire(timer, announce: true)
         persist()
-        requestNotificationAuthorizationIfNeeded()
+        Self.requestNotificationAuthorizationIfNeeded()
         return true
     }
 
@@ -115,13 +115,22 @@ final class TimerCenter: ObservableObject {
 
     // MARK: System notifications
 
-    private func requestNotificationAuthorizationIfNeeded() {
-        let requested = UserDefaults.standard.bool(forKey: "requestedNotifications")
-        guard !requested else { return }
-        UserDefaults.standard.set(true, forKey: "requestedNotifications")
-        Task {
-            _ = try? await UNUserNotificationCenter.current()
-                .requestAuthorization(options: [.alert, .sound])
+    /// Test hosts share the app's sandbox container; asking for permission
+    /// from tests would burn the system's one-time prompt for real users.
+    private nonisolated static let isTestHost =
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
+    /// Asks only when the system says we never asked (`notDetermined`) —
+    /// no persisted flag, because a flag set before the answer (or set by a
+    /// test run in the shared container) permanently silences the feature.
+    /// The system itself remembers denials, so this never re-prompts.
+    private nonisolated static func requestNotificationAuthorizationIfNeeded() {
+        guard !isTestHost else { return }
+        Task { @MainActor in
+            let center = UNUserNotificationCenter.current()
+            let settings = await center.notificationSettings()
+            guard settings.authorizationStatus == .notDetermined else { return }
+            _ = try? await center.requestAuthorization(options: [.alert])
         }
     }
 
