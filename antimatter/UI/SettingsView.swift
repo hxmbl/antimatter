@@ -1,12 +1,11 @@
 import SwiftUI
 import Carbon.HIToolbox
 
-/// Runtime settings: hot key chord, font size, appearance, and the
-/// menu-bar (Dock-icon-off) mode. Replaces "edit `PaneStyle.swift`".
+/// Runtime settings: hot key chord, font size, and appearance.
+/// Replaces "edit `PaneStyle.swift`".
 struct SettingsView: View {
     @AppStorage("fontSize") private var fontSize = 15
     @AppStorage("appearance") private var appearance = "system"
-    @AppStorage("hideDockIcon") private var hideDockIcon = false
     @AppStorage("hotKey.control") private var usesControl = true
     @AppStorage("hotKey.option") private var usesOption = true
     @AppStorage("hotKey.command") private var usesCommand = false
@@ -57,8 +56,6 @@ struct SettingsView: View {
                     Text("Dark").tag("dark")
                 }
                 .onChange(of: appearance) { _, value in LaunchPreferences.appearanceChanged(value) }
-                Toggle("Hide Dock icon (menu-bar mode)", isOn: $hideDockIcon)
-                    .onChange(of: hideDockIcon) { _, hidden in LaunchPreferences.dockIconHiddenChanged(hidden) }
             }
         }
         .formStyle(.grouped)
