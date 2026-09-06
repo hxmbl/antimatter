@@ -268,4 +268,44 @@ struct UnitConverterTests {
         #expect(UnitConverter.commit("3 mi -> km") != nil)
         #expect(UnitConverter.commit("   100 °F -> c")?.hasPrefix("   ") == true)
     }
+
+    @Test func dashArrowsWork() {
+        #expect(UnitConverter.commit("12 kg – lb")?.hasSuffix(" = 26.4555") == true)
+        #expect(UnitConverter.commit("12 kg — lb")?.hasSuffix(" = 26.4555") == true)
+    }
+
+    @Test func currencyConversionUsesCache() {
+        let fakeRates: [String: Double] = ["USD": 1.0, "EUR": 0.85, "GBP": 0.73, "BTC": 0.000024]
+        RateCache.shared.replace(with: fakeRates)
+        defer { RateCache.shared.replace(with: [:]) }
+
+        let eur = UnitConverter.convert(value: 100, from: "usd", to: "eur")!
+        #expect(abs(eur - 85.0) < 0.001)
+
+        let usd = UnitConverter.convert(value: 17, from: "eur", to: "usd")!
+        #expect(abs(usd - 20.0) < 0.001)
+
+        let btc = UnitConverter.convert(value: 1000, from: "usd", to: "btc")!
+        #expect(abs(btc - 0.024) < 0.000001)
+    }
+
+    @Test func currencyEmptyCacheReturnsNil() {
+        RateCache.shared.replace(with: [:])
+        #expect(UnitConverter.convert(value: 100, from: "usd", to: "eur") == nil)
+    }
+
+    @Test func currencyUnknownSymbolReturnsNil() {
+        let fakeRates: [String: Double] = ["USD": 1.0, "EUR": 0.85]
+        RateCache.shared.replace(with: fakeRates)
+        defer { RateCache.shared.replace(with: [:]) }
+        #expect(UnitConverter.convert(value: 100, from: "usd", to: "zzz") == nil)
+    }
+
+    @Test func commitCurrencyWithArrow() {
+        let fakeRates: [String: Double] = ["USD": 1.0, "EUR": 0.85]
+        RateCache.shared.replace(with: fakeRates)
+        defer { RateCache.shared.replace(with: [:]) }
+        let result = UnitConverter.commit("100 USD → eur")
+        #expect(result?.contains("85") == true)
+    }
 }

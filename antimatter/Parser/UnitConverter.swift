@@ -1,8 +1,10 @@
 import Foundation
 
-/// Offline unit conversion from a built-in table: `12 kg → lb`,
-/// `3 mi -> km`, `100 °F -> c`. No network, ever. The line is rewritten to
-/// include the answer: `12 kg → lb = 26.46`.
+/// Unit conversion: physical units from a built-in offline table
+/// (`12 kg → lb`, `3 mi -> km`, `100 °F -> c`), plus — only when the opt-in
+/// network switch is on — currency and cryptocurrency conversion using
+/// Coinbase's cached rates (`100 USD -> EUR`, `1 btc → usd`). The line is
+/// rewritten to include the answer: `12 kg → lb = 26.46`.
 nonisolated enum UnitConverter {
     /// Base-unit factors per dimension; conversion requires matching dimensions.
     private static let linearUnits: [String: (dimension: String, factor: Double)] = [
@@ -14,6 +16,11 @@ nonisolated enum UnitConverter {
         "mg": ("mass", 0.000_001), "g": ("mass", 0.001), "kg": ("mass", 1),
         "oz": ("mass", 0.028_349_523_125), "lb": ("mass", 0.453_592_37),
     ]
+
+    /// Characters treated as a conversion arrow: `→`, the digraph `->`, and
+    /// the en/em dashes `–`/`—` (typed `--`/`---` become those dashes, so a
+    /// conversion can be written with plain hyphens too).
+    private static let arrows: Set<String> = ["→", "->", "–", "—", "—-", "—>"]
 
     static func commit(_ rawLine: String) -> String? {
         let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -30,39 +37,41 @@ nonisolated enum UnitConverter {
         if isTemperature(fromUnit), isTemperature(toUnit) {
             return convertTemperature(value, fromUnit, toUnit)
         }
-        guard let source = linearUnits[fromUnit], let target = linearUnits[toUnit],
-              source.dimension == target.dimension
-        else { return nil }
-        return value * source.factor / target.factor
+        if isPhysical(fromUnit), isPhysical(toUnit) {
+            guard let source = linearUnits[fromUnit], let target = linearUnits[toUnit],
+                  source.dimension == target.dimension
+            else { return nil }
+            return value * source.factor / target.factor
+        }
+        // Currency pairs only ever convert when the opt-in network feed has a
+        // cached rate for both symbols; a physical unit never collides with a
+        // currency code we care about.
+        return CurrencyCenter.convert(value: value, from: fromUnit, to: toUnit)
+    }
+
+    private static func isPhysical(_ unit: String) -> Bool {
+        linearUnits[unit] != nil
     }
 
     // MARK: Parsing
 
-    /// `<number> <unit> → <unit>` — arrow may be `→` or `->`; a bare `>`
-    /// is deliberately not an arrow, so comparison-shaped lines stay text.
+    /// `<number> <unit> <arrow> <unit>` — arrow may be `→`, `->`, or the
+    /// en/em dashes `–`/`—`; a bare `>` is deliberately not an arrow, so
+    /// comparison-shaped lines stay text.
     static func parse(_ line: String) -> (value: Double, from: String, to: String)? {
         let words = splitPreservingArrow(line)
         guard words.count == 4,
               let value = Double(words[0])
         else { return nil }
         let arrow = words[2]
-        guard arrow == "→" || arrow == "->" else { return nil }
+        guard arrows.contains(arrow) else { return nil }
         return (value, words[1], words[3])
     }
 
     private static func splitPreservingArrow(_ line: String) -> [String] {
-        if line.contains("→") {
-            return line.components(separatedBy: " ").filter { !$0.isEmpty }
-        }
-        if let range = line.range(of: "->") {
-            var parts: [String] = []
-            parts.append(contentsOf: line[..<range.lowerBound]
-                .components(separatedBy: " ").filter { !$0.isEmpty })
-            parts.append("->")
-            parts.append(contentsOf: line[range.upperBound...]
-                .components(separatedBy: " ").filter { !$0.isEmpty })
-            return parts
-        }
+        // All of our arrows are space-delimited tokens that survive a plain
+        // split (`->`, `–`, `—`, `→` carry no internal spaces), so a simple
+        // whitespace split keeps the arrow intact by construction.
         return line.components(separatedBy: " ").filter { !$0.isEmpty }
     }
 

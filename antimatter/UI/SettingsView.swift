@@ -11,6 +11,7 @@ struct SettingsView: View {
     @AppStorage("hotKey.command") private var usesCommand = false
     @AppStorage("hotKey.shift") private var usesShift = false
     @AppStorage("hotKey.keyCode") private var keyCode = 49
+    @AppStorage("conversion.network") private var currencyNetworkEnabled = false
 
     var body: some View {
         Form {
@@ -56,6 +57,18 @@ struct SettingsView: View {
                     Text("Dark").tag("dark")
                 }
                 .onChange(of: appearance) { _, value in LaunchPreferences.appearanceChanged(value) }
+            }
+            Section {
+                Toggle("Live currency & crypto conversion", isOn: $currencyNetworkEnabled)
+                    .onChange(of: currencyNetworkEnabled) { _, enabled in
+                        if enabled {
+                            CurrencyCenter.shared.activate()
+                        }
+                    }
+            } header: {
+                Text("Conversion")
+            } footer: {
+                Text("When on, antimatter fetches exchange rates (fiat and crypto) from a third party once an hour and converts lines like `100 USD → EUR` or `1 btc → usd`. Off by default — keep it off for a fully offline note.")
             }
         }
         .formStyle(.grouped)

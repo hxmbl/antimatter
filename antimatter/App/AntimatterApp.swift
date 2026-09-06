@@ -78,6 +78,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PaneHotKey.shared.install()
         UNUserNotificationCenter.current().delegate = notificationRouter
         LaunchPreferences.apply()
+        // Load cached rates and, if the opt-in switch is on, refresh them.
+        CurrencyCenter.shared.activate()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
