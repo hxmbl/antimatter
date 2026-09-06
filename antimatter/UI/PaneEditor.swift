@@ -91,11 +91,13 @@ struct PaneEditor: NSViewRepresentable {
 
     func updateNSView(_ scrollView: OverlayScrollView, context: Context) {
         guard let textView = scrollView.documentView as? PaneTextView else { return }
+        // The help view swaps the whole buffer; a SwiftUI re-render (timer
+        // chips, notices, settings) must not clobber it back to the note —
+        // and a settings-side font change must not restyle the reference
+        // text either, which re-rendering it as Markdown would do.
+        guard !context.coordinator.isInHelpView else { return }
         // A settings-side font change arrives as a plain re-render.
         context.coordinator.applyFontSizeIfChanged(to: textView)
-        // The help view swaps the whole buffer; a SwiftUI re-render (timer
-        // chips, notices, settings) must not clobber it back to the note.
-        guard !context.coordinator.isInHelpView else { return }
         guard textView.string != text else { return }
         let selected = textView.selectedRanges.compactMap { proto -> NSValue? in
             var range = proto.rangeValue
