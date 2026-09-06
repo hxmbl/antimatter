@@ -61,10 +61,6 @@ final class PaneHotKey {
     }
 
     private func registerChord() {
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-            self.hotKeyRef = nil
-        }
         let chord = Chord(
             control: PaneStyle.hotKeyUsesControl,
             option: PaneStyle.hotKeyUsesOption,
@@ -77,18 +73,40 @@ final class PaneHotKey {
         // staple). The previously registered chord stays live instead, and
         // `activeChord` keeps telling the truth about which one that is.
         guard chord.control || chord.option || chord.command else { return }
+
+        // Carbon owns one hot key per signature/id pair, so the old
+        // registration must be released before the new one can take its
+        // place. Swap carefully: if the new chord fails to register (likely
+        // already bound by another app), the previous one is restored rather
+        // than orphaned — before this fix the pane could quietly lose its
+        // working hot key (and Settings still showed it as active).
+        let previous = activeChord
+        if let hotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
+            self.hotKeyRef = nil
+        }
+        if let newRef = Self.register(chord) {
+            hotKeyRef = newRef
+            activeChord = chord
+        } else if previous.control || previous.option || previous.command,
+                  let restored = Self.register(previous) {
+            hotKeyRef = restored
+        }
+    }
+
+    /// Registers `chord` and returns its reference, or nil when the system
+    /// refuses it (bad key code, already bound elsewhere).
+    private static func register(_ chord: Chord) -> EventHotKeyRef? {
         var modifiers: UInt32 = 0
         if chord.control { modifiers |= UInt32(controlKey) }
         if chord.option { modifiers |= UInt32(optionKey) }
         if chord.command { modifiers |= UInt32(cmdKey) }
         if chord.shift { modifiers |= UInt32(shiftKey) }
-
         let hotKeyID = EventHotKeyID(signature: OSType(0x50414E45) /* 'PANE' */, id: 1)
         var newRef: EventHotKeyRef?
         let status = RegisterEventHotKey(UInt32(chord.keyCode), modifiers, hotKeyID, GetApplicationEventTarget(), 0, &newRef)
-        guard status == noErr, let newRef else { return }
-        hotKeyRef = newRef
-        activeChord = chord
+        guard status == noErr else { return nil }
+        return newRef
     }
 
     private func fireToggle() {
