@@ -18,7 +18,7 @@ final class PaneTextView: NSTextView {
 
     private var pendingClick: (location: NSPoint, modifiers: NSEvent.ModifierFlags)?
 
-    // MARK: Accelerated repeat for deletion / navigation
+    // MARK: Accelerated repeat for navigation
     private func userBaseInterval() -> TimeInterval {
         // macOS system settings: KeyRepeat (ticks/60) default ~6, InitialKeyRepeat default ~15
         let initialRepeat = UserDefaults.standard.object(forKey: "InitialKeyRepeat") as? Int ?? 15
@@ -54,16 +54,17 @@ final class PaneTextView: NSTextView {
         let startLength = textStorage?.length ?? startRange.length
         guard startRange != endRange || ((textStorage?.length ?? startLength) != startLength) else { return }
         let delta = abs(endRange.location - startRange.location)
-        // Big or medium jumps (word/line/document, deletions) go straight
-        // there; only a tiny single-character step earns the animation.
+        // Big or medium jumps (word/line/document) go straight there —
+        // nobody wants to watch the caret crawl from line 1 to line 500 —
+        // and only a tiny single-character step earns the glide.
         guard delta <= 1 else {
             super.setSelectedRange(endRange)
             return
         }
         super.setSelectedRange(startRange)
         smoothAnimationTimer?.invalidate()
-        let steps = 8
-        let interval = 0.004
+        let steps = 12
+        let interval = 0.012
         var step = 0
         smoothAnimationTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timer in
             guard let self = self else { timer.invalidate(); return }
@@ -74,15 +75,14 @@ final class PaneTextView: NSTextView {
                 self.setSelectionRaw(endRange)
             } else {
                 let progress = Double(step) / Double(steps)
-                let newLoc = Int(Double(startRange.location) + Double(endRange.location - startRange.location) * progress)
+                let eased = 1 - pow(1 - progress, 3)
+                let newLoc = Int(Double(startRange.location) + Double(endRange.location - startRange.location) * eased)
                 self.setSelectionRaw(NSRange(location: max(0, min(newLoc, self.textStorage?.length ?? newLoc)), length: 0))
             }
         }
     }
 
     private static let acceleratedKeyCodes: Set<UInt16> = [
-        51,  // Backspace (deleteBackward)
-        117, // Delete (deleteForward)
         123, // Left arrow
         124, // Right arrow
         125, // Down arrow
@@ -100,14 +100,6 @@ final class PaneTextView: NSTextView {
         let cmd = flags.contains(.command)
         let opt = flags.contains(.option)
         switch event.keyCode {
-        case 51: // Backspace
-            if cmd { return { [weak self] in self?.performSmoothAction { self?.deleteToBeginningOfLine(nil) } } }
-            if opt { return { [weak self] in self?.performSmoothAction { self?.deleteWordBackward(nil) } } }
-            return { [weak self] in self?.performSmoothAction { self?.deleteBackward(nil) } }
-        case 117: // Delete
-            if cmd { return { [weak self] in self?.performSmoothAction { self?.deleteToEndOfLine(nil) } } }
-            if opt { return { [weak self] in self?.performSmoothAction { self?.deleteWordForward(nil) } } }
-            return { [weak self] in self?.performSmoothAction { self?.deleteForward(nil) } }
         case 123: // Left arrow
             if cmd { return { [weak self] in self?.performSmoothAction { self?.moveToBeginningOfLine(nil) } } }
             if opt { return { [weak self] in self?.performSmoothAction { self?.moveWordLeft(nil) } } }
@@ -302,6 +294,70 @@ final class PaneTextView: NSTextView {
             return
         }
         super.keyUp(with: event)
+    }
+
+    // MARK: Tab indents list items
+
+    override func insertTab(_ sender: Any?) {
+        if !indentCurrentListLine(direction: 1) { super.insertTab(sender) }
+    }
+
+    override func insertBacktab(_ sender: Any?) {
+        if !indentCurrentListLine(direction: -1) { super.insertBacktab(sender) }
+    }
+
+    /// Moves the caret's list-item line in or out by one indent step for
+    /// Tab / Shift-Tab. Returns false when the caret isn't sitting in a
+    /// plain list item, so Tab falls back to inserting a tab character.
+    private func indentCurrentListLine(direction: Int) -> Bool {
+        guard let storage = textStorage,
+              !hasMarkedText(),
+              selectedRanges.count == 1,
+              selectedRange().length == 0 else { return false }
+        let selected = selectedRange()
+        let line = (storage.string as NSString).lineRange(for: selected)
+        guard line.location != NSNotFound, line.length > 0 else { return false }
+        let lineText = NSString(string: storage.string).substring(with: line)
+        var spaceCount = 0
+        var afterSpaces = lineText.startIndex
+        while afterSpaces < lineText.endIndex, lineText[afterSpaces] == " " {
+            spaceCount += 1
+            afterSpaces = lineText.index(after: afterSpaces)
+        }
+        guard isListMarker(lineText[afterSpaces...]) else { return false }
+
+        let step = 2
+        if direction > 0 {
+            let spaces = String(repeating: " ", count: step)
+            replaceText(in: NSRange(location: line.location, length: 0), with: spaces)
+            let newCaret = selected.location == line.location ? line.location : selected.location + step
+            setSelectedRange(NSRange(location: newCaret, length: 0))
+            return true
+        }
+        let removed = min(step, spaceCount)
+        guard removed > 0 else { return false }
+        replaceText(in: NSRange(location: line.location, length: removed), with: "")
+        setSelectedRange(NSRange(location: max(line.location, selected.location - removed), length: 0))
+        return true
+    }
+
+    private func isListMarker(_ rest: Substring) -> Bool {
+        guard let first = rest.first else { return false }
+        if "-+*".contains(first) { return true }
+        var index = rest.startIndex
+        while index < rest.endIndex, rest[index].isNumber {
+            index = rest.index(after: index)
+        }
+        return index != rest.startIndex && index < rest.endIndex
+            && (rest[index] == "." || rest[index] == ")")
+    }
+
+    /// A text change that flows through the editing machinery, so the
+    /// delegate (binding sync, re-render, undo) sees it exactly like typing.
+    private func replaceText(in range: NSRange, with replacement: String) {
+        guard shouldChangeText(in: range, replacementString: replacement) else { return }
+        textStorage?.replaceCharacters(in: range, with: replacement)
+        didChangeText()
     }
 
     // MARK: Escape hides the pane

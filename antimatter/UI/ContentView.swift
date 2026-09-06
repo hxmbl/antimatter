@@ -62,7 +62,11 @@ private struct HotKeyWindowBridge: View {
     }
 }
 
-/// Allows window dragging from any edge even when at max size.
+/// Allows window dragging from any edge even when at max size. The drag
+/// gesture must claim only the thin edge strip: `contentShape` is applied
+/// *before* the `.frame(maxWidth/maxHeight: .infinity)` expansion so the
+/// hit shape stays lip-sized, otherwise the invisible full-pane frame
+/// swallows every click, drag, and scroll meant for the text view.
 private struct WindowDragEdge: View {
     private let lip = PaneStyle.windowDragLip
 
@@ -70,24 +74,24 @@ private struct WindowDragEdge: View {
         GeometryReader { geo in
             ZStack {
                 Color.clear
+                    .contentShape(Rectangle())
                     .frame(width: geo.size.width, height: lip)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .contentShape(Rectangle())
                     .gesture(windowDragGesture())
                 Color.clear
+                    .contentShape(Rectangle())
                     .frame(width: geo.size.width, height: lip)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .contentShape(Rectangle())
                     .gesture(windowDragGesture())
                 Color.clear
+                    .contentShape(Rectangle())
                     .frame(width: lip, height: geo.size.height)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
                     .gesture(windowDragGesture())
                 Color.clear
+                    .contentShape(Rectangle())
                     .frame(width: lip, height: geo.size.height)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
-                    .contentShape(Rectangle())
                     .gesture(windowDragGesture())
             }
         }
@@ -104,10 +108,11 @@ private struct WindowDragEdge: View {
     }
 }
 
-/// Title bar background with less transparency than content area.
+/// Extends the surface material across the top strip so the title area and
+/// the typing surface read as a single pane (no separate bar).
 private struct TitleBarBackground: View {
     var body: some View {
-        VisualEffectBackground(material: .headerView, blendingMode: .withinWindow)
+        PaneBackground()
             .frame(height: PaneStyle.titleBarInset)
             .clipShape(RoundedRectangle(cornerRadius: PaneStyle.cornerRadius, style: .continuous))
             .allowsHitTesting(false)
