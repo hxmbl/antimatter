@@ -210,6 +210,32 @@ struct DateIntentTests {
         #expect(DateIntent.commit("days until someday") == nil)
         #expect(DateIntent.commit("hello world") == nil)
     }
+
+    @Test func weekdayIsCorrectOutsideUTC() {
+        // New York is UTC-4 in August: a UTC-midnight parse of 2026-08-22
+        // reads as the 21st at 20:00, which would report Friday. Interpreting
+        // the date in the caller's own calendar keeps it Saturday. The
+        // explicit en_US locale pins the weekday name regardless of where the
+        // tests run.
+        var newYork = Calendar(identifier: .gregorian)
+        newYork.locale = Locale(identifier: "en_US")
+        newYork.timeZone = TimeZone(identifier: "America/New_York")!
+        let out = DateIntent.commit("2026-08-22", now: fixedNow, calendar: newYork)
+        #expect(out?.contains("· Saturday") == true)
+    }
+
+    @Test func daysUntilCountsInTheCallersCalendar() {
+        // The 8-day gap must hold no matter the zone: a UTC-midnight instant
+        // for the target would sit at 8pm the day before in New York, which
+        // the buggy count turned into 7. `now` is midday UTC (= 8am in NY)
+        // so both calendars share the same "today".
+        var newYork = Calendar(identifier: .gregorian)
+        newYork.locale = Locale(identifier: "en_US")
+        newYork.timeZone = TimeZone(identifier: "America/New_York")!
+        let now = Date(timeIntervalSince1970: 1_789_038_000)
+        let out = DateIntent.commit("days until 2026-09-18", now: now, calendar: newYork)
+        #expect(out?.hasSuffix(" = 8") == true)
+    }
 }
 
 struct UnitConverterTests {
