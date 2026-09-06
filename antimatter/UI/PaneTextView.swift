@@ -43,12 +43,23 @@ final class PaneTextView: NSTextView {
         super.setSelectedRange(range)
     }
 
+    /// Smoothly eases the caret from its current spot to wherever `action`
+    /// leaves it. Intended only for small, single-step moves (one arrow press);
+    /// it is a no-op glider, so an action that jumps far is applied instantly
+    /// instead — nobody wants to watch the caret crawl from line 1 to line 500.
     private func performSmoothAction(_ action: () -> Void) {
         let startRange = selectedRange()
         action()
         let endRange = selectedRange()
         let startLength = textStorage?.length ?? startRange.length
         guard startRange != endRange || ((textStorage?.length ?? startLength) != startLength) else { return }
+        let delta = abs(endRange.location - startRange.location)
+        // Big or medium jumps (word/line/document, deletions) go straight
+        // there; only a tiny single-character step earns the animation.
+        guard delta <= 1 else {
+            super.setSelectedRange(endRange)
+            return
+        }
         super.setSelectedRange(startRange)
         smoothAnimationTimer?.invalidate()
         let steps = 8
