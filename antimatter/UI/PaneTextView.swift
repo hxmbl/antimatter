@@ -63,8 +63,8 @@ final class PaneTextView: NSTextView {
         }
         super.setSelectedRange(startRange)
         smoothAnimationTimer?.invalidate()
-        let steps = 12
-        let interval = 0.012
+        let steps = 8
+        let interval = 0.004
         var step = 0
         smoothAnimationTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timer in
             guard let self = self else { timer.invalidate(); return }
@@ -329,35 +329,46 @@ final class PaneTextView: NSTextView {
         let step = 2
         if direction > 0 {
             let spaces = String(repeating: " ", count: step)
-            replaceText(in: NSRange(location: line.location, length: 0), with: spaces)
+            guard replaceText(in: NSRange(location: line.location, length: 0), with: spaces) else { return false }
             let newCaret = selected.location == line.location ? line.location : selected.location + step
             setSelectedRange(NSRange(location: newCaret, length: 0))
             return true
         }
         let removed = min(step, spaceCount)
         guard removed > 0 else { return false }
-        replaceText(in: NSRange(location: line.location, length: removed), with: "")
+        guard replaceText(in: NSRange(location: line.location, length: removed), with: "") else { return false }
         setSelectedRange(NSRange(location: max(line.location, selected.location - removed), length: 0))
         return true
     }
 
     private func isListMarker(_ rest: Substring) -> Bool {
         guard let first = rest.first else { return false }
-        if "-+*".contains(first) { return true }
+        let afterFirst = rest.index(after: rest.startIndex)
+        guard afterFirst < rest.endIndex else { return false }
+        // Bullet lists: "- ", "+ ", "* " (must have space after)
+        if "-+*".contains(first) {
+            return rest[afterFirst] == " "
+        }
+        // Ordered lists: "1. ", "2) ", etc. (must have space after)
         var index = rest.startIndex
         while index < rest.endIndex, rest[index].isNumber {
             index = rest.index(after: index)
         }
-        return index != rest.startIndex && index < rest.endIndex
-            && (rest[index] == "." || rest[index] == ")")
+        guard index != rest.startIndex && index < rest.endIndex else { return false }
+        guard rest[index] == "." || rest[index] == ")" else { return false }
+        let afterMarker = rest.index(after: index)
+        return afterMarker < rest.endIndex && rest[afterMarker] == " "
     }
 
     /// A text change that flows through the editing machinery, so the
     /// delegate (binding sync, re-render, undo) sees it exactly like typing.
-    private func replaceText(in range: NSRange, with replacement: String) {
-        guard shouldChangeText(in: range, replacementString: replacement) else { return }
+    /// Returns false if the delegate rejected the change via shouldChangeText.
+    @discardableResult
+    private func replaceText(in range: NSRange, with replacement: String) -> Bool {
+        guard shouldChangeText(in: range, replacementString: replacement) else { return false }
         textStorage?.replaceCharacters(in: range, with: replacement)
         didChangeText()
+        return true
     }
 
     // MARK: Escape hides the pane
