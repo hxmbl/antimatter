@@ -18,6 +18,94 @@ final class PaneTextView: NSTextView {
 
     private var pendingClick: (location: NSPoint, modifiers: NSEvent.ModifierFlags)?
 
+    // MARK: Accelerated repeat for deletion / navigation
+    private var accelerationTimer: Timer?
+    private var currentRepeatAction: (() -> Void)?
+    private var currentInterval: TimeInterval = 0.35
+    private let minInterval: TimeInterval = 0.025
+    private var isAccelerating = false
+    private var smoothAnimationTimer: Timer?
+
+    /// Routes around any subclass override of `setSelectedRange` without
+    /// using `super`, which Swift does not allow inside an escaping closure.
+    private func setSelectionRaw(_ range: NSRange) {
+        super.setSelectedRange(range)
+    }
+
+    private func performSmoothAction(_ action: () -> Void) {
+        let startRange = selectedRange()
+        action()
+        let endRange = selectedRange()
+        let startLength = textStorage?.length ?? startRange.length
+        guard startRange != endRange || ((textStorage?.length ?? startLength) != startLength) else { return }
+        super.setSelectedRange(startRange)
+        smoothAnimationTimer?.invalidate()
+        let steps = 12
+        let interval = 0.008
+        var step = 0
+        smoothAnimationTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timer in
+            guard let self = self else { timer.invalidate(); return }
+            step += 1
+            if step >= steps {
+                timer.invalidate()
+                self.smoothAnimationTimer = nil
+                self.setSelectionRaw(endRange)
+            } else {
+                let progress = Double(step) / Double(steps)
+                let newLoc = Int(Double(startRange.location) + Double(endRange.location - startRange.location) * progress)
+                self.setSelectionRaw(NSRange(location: max(0, min(newLoc, self.textStorage?.length ?? newLoc)), length: 0))
+            }
+        }
+    }
+
+    private static let acceleratedKeyCodes: Set<UInt16> = [
+        51,  // Backspace (deleteBackward)
+        117, // Delete (deleteForward)
+        123, // Left arrow
+        124, // Right arrow
+        125, // Down arrow
+        126, // Up arrow
+        115, // Home
+        119  // End
+    ]
+
+    private static func isAcceleratedKey(_ event: NSEvent) -> Bool {
+        acceleratedKeyCodes.contains(event.keyCode)
+    }
+
+    private func actionForAcceleratedKey(_ event: NSEvent) -> (() -> Void)? {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let cmd = flags.contains(.command)
+        let opt = flags.contains(.option)
+        switch event.keyCode {
+        case 51: // Backspace
+            if cmd { return { [weak self] in self?.performSmoothAction { self?.deleteToBeginningOfLine(nil) } } }
+            if opt { return { [weak self] in self?.performSmoothAction { self?.deleteWordBackward(nil) } } }
+            return { [weak self] in self?.performSmoothAction { self?.deleteBackward(nil) } }
+        case 117: // Delete
+            if cmd { return { [weak self] in self?.performSmoothAction { self?.deleteToEndOfLine(nil) } } }
+            if opt { return { [weak self] in self?.performSmoothAction { self?.deleteWordForward(nil) } } }
+            return { [weak self] in self?.performSmoothAction { self?.deleteForward(nil) } }
+        case 123: // Left arrow
+            if cmd { return { [weak self] in self?.performSmoothAction { self?.moveToBeginningOfLine(nil) } } }
+            if opt { return { [weak self] in self?.performSmoothAction { self?.moveWordLeft(nil) } } }
+            return { [weak self] in self?.performSmoothAction { self?.moveLeft(nil) } }
+        case 124: // Right arrow
+            if cmd { return { [weak self] in self?.performSmoothAction { self?.moveToEndOfLine(nil) } } }
+            if opt { return { [weak self] in self?.performSmoothAction { self?.moveWordRight(nil) } } }
+            return { [weak self] in self?.performSmoothAction { self?.moveRight(nil) } }
+        case 125: // Down arrow
+            return { [weak self] in self?.performSmoothAction { self?.moveDown(nil) } }
+        case 126: // Up arrow
+            return { [weak self] in self?.performSmoothAction { self?.moveUp(nil) } }
+        case 115: // Home
+            return { [weak self] in self?.performSmoothAction { self?.moveToBeginningOfLine(nil) } }
+        case 119: // End
+            return { [weak self] in self?.performSmoothAction { self?.moveToEndOfLine(nil) } }
+        default: return nil
+        }
+    }
+
     /// The pane always builds its own text view with defaults.
     convenience init() {
         self.init(frame: .zero, textContainer: nil)
@@ -143,9 +231,55 @@ final class PaneTextView: NSTextView {
 
     // MARK: Help view keystroke interception
 
+    private func startAcceleration(for event: NSEvent) {
+        guard let action = actionForAcceleratedKey(event) else { return }
+        isAccelerating = true
+        currentInterval = 0.35
+        currentRepeatAction = action
+        currentRepeatAction?()
+        scheduleNextAcceleration()
+    }
+
+    private func scheduleNextAcceleration() {
+        guard isAccelerating else { return }
+        accelerationTimer?.invalidate()
+        accelerationTimer = Timer.scheduledTimer(withTimeInterval: currentInterval, repeats: false) { [weak self] timer in
+            guard let self = self, self.isAccelerating else {
+                timer.invalidate()
+                return
+            }
+            self.currentRepeatAction?()
+            self.currentInterval = max(self.minInterval, self.currentInterval * 0.85)
+            self.scheduleNextAcceleration()
+        }
+    }
+
+    private func stopAcceleration() {
+        isAccelerating = false
+        accelerationTimer?.invalidate()
+        accelerationTimer = nil
+        currentRepeatAction = nil
+    }
+
     override func keyDown(with event: NSEvent) {
         if onHelpKeyDown?(event) == true { return }
+        if Self.isAcceleratedKey(event) {
+            if event.isARepeat {
+                // System repeats are ignored; our timer handles acceleration.
+                return
+            }
+            startAcceleration(for: event)
+            return
+        }
         super.keyDown(with: event)
+    }
+
+    override func keyUp(with event: NSEvent) {
+        if Self.isAcceleratedKey(event) {
+            stopAcceleration()
+            return
+        }
+        super.keyUp(with: event)
     }
 
     // MARK: Escape hides the pane
