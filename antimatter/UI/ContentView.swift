@@ -118,6 +118,7 @@ private struct TitleBarBackground: View {
 /// top-right of the pane.
 private struct CaptureStrip: View {
     @ObservedObject private var center = TimerCenter.shared
+    @ObservedObject private var swatches = StopwatchCenter.shared
     @ObservedObject private var stream = PasteStream.shared
     @ObservedObject private var notices = NoticeCenter.shared
     @ObservedObject private var reminders = ReminderCenter.shared
@@ -131,6 +132,20 @@ private struct CaptureStrip: View {
                             TimerChip(timer: timer, now: context.date) {
                                 center.dismiss(timer.id)
                             }
+                        }
+                    }
+                }
+            }
+            if !swatches.stopwatches.isEmpty {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    VStack(alignment: .trailing, spacing: 6) {
+                        ForEach(swatches.stopwatches) { stopwatch in
+                            StopwatchChip(
+                                stopwatch: stopwatch,
+                                now: context.date,
+                                onStop: { swatches.stop(stopwatch.id) },
+                                onDismiss: { swatches.dismiss(stopwatch.id) }
+                            )
                         }
                     }
                 }
@@ -203,6 +218,60 @@ private struct TimerChip: View {
             Text(isDone ? "done" : TimerCenter.format(remaining))
                 .monospacedDigit()
                 .foregroundStyle(isDone ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+        }
+        .font(.caption)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: 0.5))
+    }
+}
+
+/// A stopwatch counting up, top-right of the pane. Running ones tick and
+/// can be stopped (freezing the reading); stopped ones stay until dismissed.
+private struct StopwatchChip: View {
+    let stopwatch: ActiveStopwatch
+    let now: Date
+    let onStop: () -> Void
+    let onDismiss: () -> Void
+
+    private var isRunning: Bool {
+        stopwatch.stoppedAt == nil
+    }
+
+    private var elapsed: TimeInterval {
+        if let stoppedAt = stopwatch.stoppedAt {
+            return stoppedAt.timeIntervalSince(stopwatch.startedAt)
+        }
+        return now.timeIntervalSince(stopwatch.startedAt)
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "stopwatch")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(isRunning ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+            if !stopwatch.label.isEmpty {
+                Text(stopwatch.label)
+                    .lineLimit(1)
+            }
+            Text(StopwatchCenter.format(elapsed))
+                .monospacedDigit()
+                .foregroundStyle(isRunning ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+            if isRunning {
+                Button(action: onStop) {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .bold))

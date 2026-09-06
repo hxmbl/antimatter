@@ -22,6 +22,7 @@ remember to fix the relay   → just stays text. good.
 - **Reactive variables** — `price = 4 * 12` defines a variable; later lines use `price / 2`. Edit a definition and committed dependents recompute live.
 - **Aggregates** — `.sum` `.avg` `.count` scan the note's numbers (prose ignored) and recompute when the note changes.
 - **Timers** — `.timer 5`, `.timer 90s`, `.timer 1h 20m stand up`. Countdown chips float in the corner, a sound plays on completion, a notification carries the name (click to reopen the pane), and unfinished timers survive relaunches. `.timer cancel` / `.timer cancel all` to clear.
+- **Stopwatches** — `.stopwatch` starts a counter that ticks up in the corner; `⏹` freezes its reading, `.stopwatch cancel` clears it. No end means no banners — the chip is the whole surface, and it keeps counting across relaunches.
 - **Reminders** — `.remind in 10 minutes` or `.remind tomorrow at 3pm`. One-shot system notifications, persisted.
 - **Dates & units, offline** — return on `2026-08-22` appends its weekday; `days until …` counts down; `12 kg -> lb` converts. Built-in table, no network.
 - **Capture** — `.paste` streams clipboard copies into the note until you dismiss it. Drop an image on the pane for on-device OCR (Apple Vision, fully local).
@@ -36,6 +37,8 @@ remember to fix the relay   → just stays text. good.
 |---------|--------------|
 | `.timer 5 soup` | Countdown timer with a label |
 | `.timer cancel all` | Clear running timers |
+| `.stopwatch soup` | Stopwatch that counts up |
+| `.stopwatch cancel all` | Clear stopwatches |
 | `.remind in 10 minutes` | One-shot reminder |
 | `.reminder cancel all` | Clear reminders |
 | `.paste` | Stream clipboard copies into the note |

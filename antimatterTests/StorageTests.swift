@@ -170,3 +170,77 @@ struct TimerCenterTests {
         #expect(dough?.firedAt == nil)
     }
 }
+
+@MainActor
+struct StopwatchCenterTests {
+
+    private func tempFile() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("antimatter-stopwatches-\(UUID().uuidString).json")
+    }
+
+    @Test func startTicksWithTheClockAndStopFreezes() {
+        var clock = Date(timeIntervalSince1970: 1_000_000)
+        let center = StopwatchCenter(fileURL: tempFile(), now: { clock })
+        #expect(center.start(label: "pomodoro"))
+        let id = center.stopwatches[0].id
+        #expect(center.elapsed(center.stopwatches[0]) == 0)
+
+        clock = clock.addingTimeInterval(90)
+        #expect(center.elapsed(center.stopwatches[0]) == 90)
+
+        center.stop(id)
+        clock = clock.addingTimeInterval(30)   // the clock keeps moving…
+        #expect(center.elapsed(center.stopwatches[0]) == 90)   // …the reading is frozen
+    }
+
+    @Test func stopwatchesSurviveRelaunchAndKeepCounting() {
+        var clock = Date(timeIntervalSince1970: 1_000_000)
+        let url = tempFile()
+        let first = StopwatchCenter(fileURL: url, now: { clock })
+        first.start(label: "dough")
+        first.start(label: "soup")
+
+        clock = clock.addingTimeInterval(300)   // the app was closed for five minutes
+        let second = StopwatchCenter(fileURL: url, now: { clock })
+        #expect(second.stopwatches.count == 2)
+        let soup = second.stopwatches.first { $0.label == "soup" }
+        #expect(soup != nil)
+        #expect(second.elapsed(soup!) == 300)
+    }
+
+    @Test func longStoppedChipsArePrunedOnLoad() throws {
+        let url = tempFile()
+        let clock = Date(timeIntervalSince1970: 1_000_000)
+        let old = ActiveStopwatch(
+            id: UUID(), label: "old",
+            startedAt: clock.addingTimeInterval(-7_200),
+            createdAt: clock.addingTimeInterval(-7_200),
+            stoppedAt: clock.addingTimeInterval(-7_200))
+        let live = ActiveStopwatch(
+            id: UUID(), label: "live",
+            startedAt: clock, createdAt: clock, stoppedAt: nil)
+        try JSONEncoder().encode([old, live]).write(to: url)
+
+        let reloaded = StopwatchCenter(fileURL: url, now: { clock })
+        #expect(reloaded.stopwatches.map(\.label) == ["live"])
+    }
+
+    @Test func dismissAndCancelClearEverything() {
+        let clock = Date(timeIntervalSince1970: 1_000_000)
+        let url = tempFile()
+        let center = StopwatchCenter(fileURL: url, now: { clock })
+        center.start(label: "a")
+        center.start(label: "b")
+        #expect(center.stopwatches.count == 2)
+
+        center.dismiss(center.stopwatches[0].id)
+        #expect(center.stopwatches.count == 1)
+
+        center.cancelAll()
+        #expect(center.stopwatches.isEmpty)
+
+        let reloaded = StopwatchCenter(fileURL: url, now: { clock })
+        #expect(reloaded.stopwatches.isEmpty)
+    }
+}

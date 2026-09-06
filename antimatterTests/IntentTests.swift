@@ -67,6 +67,37 @@ struct IntentTimerTests {
     }
 }
 
+struct IntentStopwatchTests {
+
+    @Test func bareCommandStartsOne() {
+        #expect(IntentParser.isStopwatch(".stopwatch"))
+        #expect(IntentParser.stopwatchLabel(".stopwatch") == "")
+        #expect(!IntentParser.isStopwatchCancel(".stopwatch"))
+    }
+
+    @Test func labelIsTheRemainder() {
+        #expect(IntentParser.isStopwatch(".stopwatch soup"))
+        #expect(IntentParser.stopwatchLabel(".stopwatch soup") == "soup")
+        #expect(IntentParser.stopwatchLabel(".STOPWATCH pasta") == "pasta")
+        #expect(IntentParser.stopwatchLabel(".stopwatch read a book") == "read a book")
+    }
+
+    @Test func cancelForms() {
+        #expect(IntentParser.isStopwatchCancel(".stopwatch cancel"))
+        #expect(IntentParser.isStopwatchCancel(".stopwatch cancel all"))
+        #expect(IntentParser.isStopwatchCancel(".STOPWATCH CANCEL ALL"))
+        #expect(!IntentParser.isStopwatchCancel(".stopwatch"))
+        #expect(!IntentParser.isStopwatchCancel(".stopwatch cancel xyz"))
+    }
+
+    @Test func nonStopwatchesAreRejected() {
+        for line in ["stopwatch", "stopwatch soup", ".stop", ".timer", ".stopwatchfoo"] {
+            #expect(!IntentParser.isStopwatch(line), "\(line) should not be a stopwatch")
+            #expect(!IntentParser.isStopwatchCancel(line), "\(line) should not be a cancel")
+        }
+    }
+}
+
 struct IntentCalculationTests {
 
     // MARK: Typed-equals commit form

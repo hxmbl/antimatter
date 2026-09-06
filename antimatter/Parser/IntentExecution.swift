@@ -178,6 +178,10 @@ nonisolated enum IntentExecution {
 
     enum LineAction: Equatable {
         case startTimer(IntentParser.Timer)
+        /// Start a running stopwatch (`.stopwatch [label]`); counts up.
+        case startStopwatch(String)
+        /// Cancel every running stopwatch (`.stopwatch cancel [all]`).
+        case cancelStopwatches
         /// Schedule a natural-language reminder (`.remind in 10 mins stand up`).
         case startReminder(ReminderIntent.Reminder)
         /// Cancel every running timer (`.timer cancel [all]`).
@@ -221,6 +225,15 @@ nonisolated enum IntentExecution {
                 return .startTimer(timer)
             }
             return .hint(".timer needs a duration — e.g. `.timer 25`")
+        }
+        if trimmed.lowercased().hasPrefix(IntentParser.commandPrefix + "stopwatch") {
+            if IntentParser.isStopwatchCancel(trimmed) {
+                return .cancelStopwatches
+            }
+            if IntentParser.stopwatchLabel(trimmed).lowercased().hasPrefix("cancel") {
+                return .hint(".stopwatch cancel takes no further arguments")
+            }
+            return .startStopwatch(IntentParser.stopwatchLabel(trimmed))
         }
         if trimmed.lowercased().hasPrefix(ReminderIntent.command) {
             if ReminderIntent.isCancelAll(trimmed) {
@@ -295,6 +308,8 @@ nonisolated enum IntentExecution {
           .timer 5                5-minute countdown (bare number = minutes; also 90s, 1h 20m, 5 mins)
           .timer 1h 20m stand up  labelled countdown; max 30 days
           .timer cancel [all]     cancel all running timers
+          .stopwatch [label]      stopwatch counting up (chip in the corner)
+          .stopwatch cancel       cancel running stopwatches
           .remind in 10 mins …    natural-language reminder ("call mom", "tomorrow at 3pm …")
           .remind tomorrow 3pm …  absolute times work too
           .reminder cancel [all]  cancel all pending reminders
@@ -332,6 +347,12 @@ nonisolated enum IntentExecution {
         }
         if IntentParser.parseTimer(trimmed) != nil {
             return "⏎ starts a timer"
+        }
+        if IntentParser.isStopwatchCancel(trimmed) {
+            return "⏎ cancels all stopwatches"
+        }
+        if IntentParser.isStopwatch(trimmed) {
+            return "⏎ starts a stopwatch"
         }
         if ReminderIntent.isCancelAll(trimmed) {
             return "⏎ cancels all reminders"
@@ -395,6 +416,7 @@ nonisolated enum IntentExecution {
     /// at the moment of use, with no chrome.
     static let dotCommands: [(name: String, description: String)] = [
         (".timer", "start or cancel a countdown"),
+        (".stopwatch", "start or cancel a stopwatch"),
         (".remind", "set a natural-language reminder"),
         (".reminder", "cancel reminders (`.reminder cancel all`)"),
         (".paste", "stream clipboard into the note"),

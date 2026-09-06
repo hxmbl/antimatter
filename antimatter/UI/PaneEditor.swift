@@ -283,6 +283,12 @@ struct PaneEditor: NSViewRepresentable {
                 if timer.clamped {
                     NoticeCenter.shared.show("Timers cap at 30 days — shortened.")
                 }
+            case .startStopwatch(let label):
+                StopwatchCenter.shared.start(label: label)
+            case .cancelStopwatches:
+                let count = StopwatchCenter.shared.stopwatches.count
+                StopwatchCenter.shared.cancelAll()
+                NoticeCenter.shared.show(count == 0 ? "No stopwatches to cancel." : (count == 1 ? "Stopwatch cancelled." : "\(count) stopwatches cancelled."))
             case .startReminder(let reminder):
                 if ReminderCenter.shared.schedule(message: reminder.message, at: reminder.date) {
                     NoticeCenter.shared.show("Reminder in \(ReminderCenter.format(reminder.date.timeIntervalSinceNow)) — \(reminder.message)")
@@ -547,8 +553,8 @@ struct PaneEditor: NSViewRepresentable {
             guard commandPalette == nil, let window = textView.window else { return }
             let palette = CommandPalette()
             commandPalette = palette
-            palette.present(anchoredTo: window) { [weak self, weak textView] command in
-                guard let self, let textView, textView.window != nil else { return }
+            palette.present(anchoredTo: window) { [weak textView] command in
+                guard let textView, textView.window != nil else { return }
                 let selection = textView.selectedRange()
                 let commit = IntentExecution.paletteInsertionCommit(
                     for: command.name,

@@ -58,6 +58,13 @@ struct ReturnKeyActionTests {
         #expect(action(".timer 2 hours tea") == .startTimer(IntentParser.Timer(duration: 7_200, label: "tea")))
     }
 
+    @Test func stopwatchesStartOnTheirLines() {
+        #expect(action(".stopwatch") == .startStopwatch(""))
+        #expect(action(".stopwatch pizza") == .startStopwatch("pizza"))
+        #expect(action(".STOPWATCH pasta timer") == .startStopwatch("pasta timer"))
+        #expect(action(".stopwatch") != .cancelStopwatches)
+    }
+
     @Test func pureArithmeticRewrites() {
         #expect(action("384 * 27") == .rewriteCalculation)
         #expect(action("(2+3)*4") == .rewriteCalculation)
@@ -124,6 +131,7 @@ struct ReturnKeyActionTests {
             Issue.record(".help should show the reference block")
         }
         #expect(IntentExecution.helpText.contains(".timer"))
+        #expect(IntentExecution.helpText.contains(".stopwatch"))
         #expect(IntentExecution.helpText.contains(".sum"))
         #expect(IntentExecution.helpText.contains(".paste"))
         #expect(IntentExecution.helpText.contains(".help"))
@@ -217,6 +225,19 @@ struct CancelCommandTests {
         #expect(IntentExecution.preview(forLine: ".timer cancel") == "⏎ cancels all running timers")
     }
 
+    @Test func stopwatchCancelDispatches() {
+        #expect(IntentExecution.action(forLine: ".stopwatch cancel") == .cancelStopwatches)
+        #expect(IntentExecution.action(forLine: ".stopwatch cancel all") == .cancelStopwatches)
+        #expect(IntentExecution.preview(forLine: ".stopwatch cancel") == "⏎ cancels all stopwatches")
+        #expect(IntentExecution.preview(forLine: ".stopwatch soup") == "⏎ starts a stopwatch")
+        // ".stopwatch cancel xyz" is not a cancel and not a useful label.
+        if case .hint(let message) = IntentExecution.action(forLine: ".stopwatch cancel xyz") {
+            #expect(message.contains("cancel"))
+        } else {
+            Issue.record(".stopwatch cancel with arguments should hint")
+        }
+    }
+
     @Test func reminderCancelDispatches() {
         #expect(IntentExecution.action(forLine: ".reminder cancel") == .cancelAllReminders)
         #expect(IntentExecution.action(forLine: ".reminder cancel all") == .cancelAllReminders)
@@ -246,10 +267,11 @@ struct CommandPaletteTests {
         #expect(names("timer") == [".timer"])
         #expect(names("TIMER") == [".timer"])
         #expect(names(".timer") == [".timer"])
-        // "cancel" appears in the descriptions of both timer and reminder.
+        // "cancel" appears in the descriptions of timer, stopwatch and reminder.
         #expect(names("cancel").contains(".timer"))
+        #expect(names("cancel").contains(".stopwatch"))
         #expect(names("cancel").contains(".reminder"))
-        #expect(names("cancel").count == 2)
+        #expect(names("cancel").count == 3)
         #expect(names("zzz") == [])
     }
 
@@ -287,6 +309,7 @@ struct CommandCompletionTests {
 
     @Test func partialDotCommandsMatch() {
         #expect(completions(".ti") == [".timer "])
+        #expect(completions(".sto") == [".stopwatch "])
         #expect(completions(".su")?.contains(".sum ") == true)
         #expect(completions(".h")?.contains(".help ") == true)
     }

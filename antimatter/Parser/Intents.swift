@@ -75,6 +75,31 @@ nonisolated enum IntentParser {
             || trimmed == commandPrefix + "timer cancel all"
     }
 
+    // MARK: Stopwatches
+
+    /// `.stopwatch` starts a stopwatch counting up; anything after the
+    /// command becomes its label. `.stopwatch cancel [all]` clears them.
+    static func isStopwatch(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return trimmed == commandPrefix + "stopwatch"
+            || trimmed.hasPrefix(commandPrefix + "stopwatch ")
+    }
+
+    static func isStopwatchCancel(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return trimmed == commandPrefix + "stopwatch cancel"
+            || trimmed == commandPrefix + "stopwatch cancel all"
+    }
+
+    /// Everything after `.stopwatch ` — the labelled remainder. Empty for a
+    /// bare `.stopwatch`.
+    static func stopwatchLabel(_ line: String) -> String {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix = commandPrefix + "stopwatch"
+        guard trimmed.lowercased().hasPrefix(prefix) else { return "" }
+        return String(trimmed.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+    }
+
     private static func bareNumber(_ word: String) -> Double? {
         guard !word.isEmpty,
               word.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == ".") }),
