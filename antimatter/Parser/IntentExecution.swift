@@ -196,6 +196,8 @@ nonisolated enum IntentExecution {
         case insertAggregate(AggregateKind)
         /// Begin streaming clipboard contents into the note.
         case startPasteStream
+        /// Export the whole note somewhere local (`.export notes` / `.export obsidian`).
+        case export(ExportDestination)
         /// Expand `.help` into the command reference block.
         case showHelp
         /// Open the app's settings window (`.settings`).
@@ -251,6 +253,12 @@ nonisolated enum IntentExecution {
                 ? .hint("No numbers in the note to \(kind.name)")
                 : .insertAggregate(kind)
         }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "export" {
+            return .hint("Export where? — `.export notes` or `.export obsidian`")
+        }
+        if let destination = exportDestination(from: trimmed) {
+            return .export(destination)
+        }
         if trimmed.lowercased() == IntentParser.commandPrefix + "paste" {
             return .startPasteStream
         }
@@ -298,6 +306,27 @@ nonisolated enum IntentExecution {
         return indent + trimmed + " = " + IntentParser.format(value)
     }
 
+    // MARK: Export
+
+    /// Parses a `.export <destination>` line into its destination, or nil.
+    static func exportDestination(from line: String) -> ExportDestination? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard trimmed.hasPrefix(IntentParser.commandPrefix + "export") else { return nil }
+        for destination in ExportDestination.allCases {
+            if trimmed == IntentParser.commandPrefix + "export " + destination.rawValue.lowercased() {
+                return destination
+            }
+        }
+        return nil
+    }
+
+    private static func destinationTitle(_ destination: ExportDestination) -> String {
+        switch destination {
+        case .appleNotes: "Apple Notes"
+        case .obsidian: "Obsidian"
+        }
+    }
+
     // MARK: Help
 
     /// The reference block `.help` expands into on return: every dot-command
@@ -314,6 +343,8 @@ nonisolated enum IntentExecution {
           .remind tomorrow 3pm …  absolute times work too
           .reminder cancel [all]  cancel all pending reminders
           .paste                  stream clipboard copies into the note until dismissed
+          .export notes           send the note to Apple Notes
+          .export obsidian        save the note as a markdown file in your vault
           .sum  .total            sum the numbers in this note
           .avg  .average          average the note's numbers
           .count                  count the note's numbers
@@ -369,6 +400,9 @@ nonisolated enum IntentExecution {
         if trimmed.lowercased() == IntentParser.commandPrefix + "paste" {
             return "⏎ begins paste stream"
         }
+        if let destination = exportDestination(from: trimmed) {
+            return "⏎ exports the note to \(destinationTitle(destination))"
+        }
         if trimmed.lowercased() == IntentParser.commandPrefix + "help" {
             return "⏎ opens the reference (press q to close)"
         }
@@ -420,6 +454,8 @@ nonisolated enum IntentExecution {
         (".remind", "set a natural-language reminder"),
         (".reminder", "cancel reminders (`.reminder cancel all`)"),
         (".paste", "stream clipboard into the note"),
+        (".export notes", "send the note to Apple Notes"),
+        (".export obsidian", "save the note as markdown in a vault"),
         (".sum", "sum the note's numbers"),
         (".avg", "average the note's numbers"),
         (".count", "count the note's numbers"),

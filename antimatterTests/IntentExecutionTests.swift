@@ -138,6 +138,25 @@ struct ReturnKeyActionTests {
         #expect(IntentExecution.helpText.contains("days until"))
     }
 
+    @Test func exportCommandsResolveToDestinations() {
+        if case .export(.appleNotes) = IntentExecution.action(forLine: ".export notes", in: "") {} else {
+            Issue.record(".export notes should export to Apple Notes")
+        }
+        if case .export(.obsidian) = IntentExecution.action(forLine: ".export obsidian", in: "") {} else {
+            Issue.record(".export obsidian should export to Obsidian")
+        }
+        if case .export = IntentExecution.action(forLine: ".export null", in: "") {
+            Issue.record(".export null should not resolve to a destination")
+        }
+        #expect(IntentExecution.action(forLine: ".export", in: "") == .hint("Export where? — `.export notes` or `.export obsidian`"))
+        #expect(IntentExecution.preview(forLine: ".export notes") == "⏎ exports the note to Apple Notes")
+        #expect(IntentExecution.preview(forLine: ".export obsidian") == "⏎ exports the note to Obsidian")
+        #expect(IntentExecution.helpText.contains(".export notes"))
+        #expect(IntentExecution.helpText.contains(".export obsidian"))
+        #expect(IntentExecution.dotCommands.contains { $0.name == ".export notes" })
+        #expect(IntentExecution.dotCommands.contains { $0.name == ".export obsidian" })
+    }
+
     @Test func settingsAndDebugAreCommands() {
         if case .showSettings = IntentExecution.action(forLine: ".settings", in: "") {} else {
             Issue.record(".settings should open the settings window")
