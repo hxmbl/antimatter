@@ -19,10 +19,21 @@ final class PaneTextView: NSTextView {
     private var pendingClick: (location: NSPoint, modifiers: NSEvent.ModifierFlags)?
 
     // MARK: Accelerated repeat for deletion / navigation
+    private func userBaseInterval() -> TimeInterval {
+        // macOS system settings: KeyRepeat (ticks/60) default ~6, InitialKeyRepeat default ~15
+        let initialRepeat = UserDefaults.standard.object(forKey: "InitialKeyRepeat") as? Int ?? 15
+        // Use initial delay as the user's deliberate base speed, converted to seconds
+        let base = max(1, initialRepeat > 0 ? initialRepeat : 15)
+        return TimeInterval(base) / 60.0
+    }
+
+    private func userMinInterval() -> TimeInterval {
+        userBaseInterval() / 1.6
+    }
+
     private var accelerationTimer: Timer?
     private var currentRepeatAction: (() -> Void)?
     private var currentInterval: TimeInterval = 0.35
-    private let minInterval: TimeInterval = 0.025
     private var isAccelerating = false
     private var smoothAnimationTimer: Timer?
 
@@ -40,8 +51,8 @@ final class PaneTextView: NSTextView {
         guard startRange != endRange || ((textStorage?.length ?? startLength) != startLength) else { return }
         super.setSelectedRange(startRange)
         smoothAnimationTimer?.invalidate()
-        let steps = 12
-        let interval = 0.008
+        let steps = 8
+        let interval = 0.004
         var step = 0
         smoothAnimationTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timer in
             guard let self = self else { timer.invalidate(); return }
@@ -234,7 +245,7 @@ final class PaneTextView: NSTextView {
     private func startAcceleration(for event: NSEvent) {
         guard let action = actionForAcceleratedKey(event) else { return }
         isAccelerating = true
-        currentInterval = 0.35
+        currentInterval = userBaseInterval()
         currentRepeatAction = action
         currentRepeatAction?()
         scheduleNextAcceleration()
@@ -249,7 +260,7 @@ final class PaneTextView: NSTextView {
                 return
             }
             self.currentRepeatAction?()
-            self.currentInterval = max(self.minInterval, self.currentInterval * 0.85)
+            self.currentInterval = max(self.userMinInterval(), self.currentInterval * 0.92)
             self.scheduleNextAcceleration()
         }
     }
