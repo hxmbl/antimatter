@@ -82,6 +82,7 @@ final class TimerCenter: ObservableObject {
         scheduleFire(timer, announce: true)
         persist()
         Self.requestNotificationAuthorizationIfNeeded()
+        DebugLog.log("timer started — \(label.isEmpty ? "unlabelled" : label) (\(Self.format(duration)))")
         return true
     }
 
@@ -104,6 +105,7 @@ final class TimerCenter: ObservableObject {
                 .removePendingNotificationRequests(withIdentifiers: identifiers)
         }
         persist()
+        DebugLog.log("timers cancelled — \(identifiers.count)")
     }
 
     // MARK: Firing

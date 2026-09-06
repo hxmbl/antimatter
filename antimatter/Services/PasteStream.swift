@@ -18,6 +18,7 @@ final class PasteStream: ObservableObject {
         guard !isStreaming else { return }
         lastChangeCount = NSPasteboard.general.changeCount
         isStreaming = true
+        DebugLog.log("paste stream started")
         pollTask = Task { [weak self] in
             while let self, !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(400))
@@ -40,6 +41,7 @@ final class PasteStream: ObservableObject {
         guard let copied = pasteboard.string(forType: .string), !copied.isEmpty else { return }
         let store = ScratchStore.shared
         store.text += (store.text.isEmpty ? "" : "\n") + copied
+        DebugLog.log("paste adopted — \(copied.count) chars")
         // The pane's SwiftUI onChange only exists while the window does;
         // streaming with the pane closed must still reach the disk.
         store.textDidChange()

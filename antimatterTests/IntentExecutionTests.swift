@@ -130,6 +130,24 @@ struct ReturnKeyActionTests {
         #expect(IntentExecution.helpText.contains("days until"))
     }
 
+    @Test func settingsAndDebugAreCommands() {
+        if case .showSettings = IntentExecution.action(forLine: ".settings", in: "") {} else {
+            Issue.record(".settings should open the settings window")
+        }
+        if case .showDebug = IntentExecution.action(forLine: ".debug", in: "") {} else {
+            Issue.record(".debug should show the diagnostics reference")
+        }
+        #expect(IntentExecution.preview(forLine: ".settings") == "⏎ opens the settings window")
+        #expect(IntentExecution.preview(forLine: ".debug") == "⏎ shows diagnostics and the event log")
+        #expect(IntentExecution.helpText.contains(".settings"))
+        #expect(IntentExecution.helpText.contains(".debug"))
+        #expect(IntentExecution.completions(for: ".se")?.contains(".settings ") == true)
+        #expect(IntentExecution.completions(for: ".de")?.contains(".debug ") == true)
+        // Without the dot they are ordinary prose lines.
+        #expect(IntentExecution.action(forLine: "settings", in: "") == .nothing)
+        #expect(IntentExecution.action(forLine: "debug", in: "") == .nothing)
+    }
+
     @Test func quietFailuresNowSaySomething() {
         // Unknown dot-commands, a duration-less timer, and an empty
         // aggregate each raise a hint instead of dying silently.

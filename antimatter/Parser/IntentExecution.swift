@@ -194,6 +194,10 @@ nonisolated enum IntentExecution {
         case startPasteStream
         /// Expand `.help` into the command reference block.
         case showHelp
+        /// Open the app's settings window (`.settings`).
+        case showSettings
+        /// Expand `.debug` into a diagnostics + log reference block.
+        case showDebug
         /// Say something through a transient notice instead of acting
         /// (unknown dot-command, missing argument, empty aggregate).
         case hint(String)
@@ -239,6 +243,12 @@ nonisolated enum IntentExecution {
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "help" {
             return .showHelp
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "settings" {
+            return .showSettings
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "debug" {
+            return .showDebug
         }
         if let replacement = DateIntent.commit(line) {
             return .rewriteLine(replacement)
@@ -292,7 +302,11 @@ nonisolated enum IntentExecution {
           .sum  .total            sum the numbers in this note
           .avg  .average          average the note's numbers
           .count                  count the note's numbers
+          .settings               open the settings window
+          .debug                  show diagnostics and the event log
           .help                   open this reference full-screen (press q to close)
+
+        Reference view keys:  j/k  scroll  ·  space/b  page  ·  g/G  top/bottom  ·  q/Esc  close
 
         Automatic — press return on a line:
           384 * 27            →  384 * 27 = 10368
@@ -336,6 +350,12 @@ nonisolated enum IntentExecution {
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "help" {
             return "⏎ opens the reference (press q to close)"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "settings" {
+            return "⏎ opens the settings window"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "debug" {
+            return "⏎ shows diagnostics and the event log"
         }
         if let replacement = DateIntent.commit(line) {
             return "⏎ " + replacement.trimmingCharacters(in: .whitespaces)
@@ -381,6 +401,8 @@ nonisolated enum IntentExecution {
         (".sum", "sum the note's numbers"),
         (".avg", "average the note's numbers"),
         (".count", "count the note's numbers"),
+        (".settings", "open the settings window"),
+        (".debug", "show diagnostics and the event log"),
         (".help", "show the command reference"),
     ]
 

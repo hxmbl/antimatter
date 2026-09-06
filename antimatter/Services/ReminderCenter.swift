@@ -54,6 +54,7 @@ final class ReminderCenter: ObservableObject {
         scheduleFire(reminder, announce: true)
         persist()
         Self.requestNotificationAuthorizationIfNeeded()
+        DebugLog.log("reminder set — \(message) in \(Self.format(date.timeIntervalSince(timestamp)))")
         return true
     }
 
@@ -77,6 +78,7 @@ final class ReminderCenter: ObservableObject {
                 .removePendingNotificationRequests(withIdentifiers: identifiers)
         }
         persist()
+        DebugLog.log("reminders cancelled — \(identifiers.count)")
     }
 
     // MARK: Firing
