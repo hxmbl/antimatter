@@ -280,37 +280,29 @@ final class MarkdownHighlighter {
     
     private func applyCodeHighlighting(to storage: NSTextStorage, text: String, elements: [Markdown.Element], baseSize: CGFloat) {
         var currentLanguage: String?
-        var codeBlockRange: NSRange?
         
         for element in elements {
             switch element.kind {
             case .language:
                 currentLanguage = (text as NSString).substring(with: element.range).trimmingCharacters(in: .whitespaces)
             case .codeBlock:
-                codeBlockRange = element.range
-                if let language = currentLanguage, !language.isEmpty, let range = codeBlockRange {
-                    let codeContent = (text as NSString).substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines)
+                if let language = currentLanguage, !language.isEmpty {
+                    let range = element.range
+                    // Use the actual code block content (not trimmed) for highlighting
+                    let codeContent = (text as NSString).substring(with: range)
                     if !codeContent.isEmpty {
                         let highlighted = CodeHighlighter.highlight(code: codeContent, language: language, baseFont: NSFont.monospacedSystemFont(ofSize: baseSize - 1, weight: .regular))
-                        let contentRange = (text as NSString).range(of: codeContent, options: [])
-                        if contentRange.location != NSNotFound {
-                            let adjustedRange = NSRange(location: range.location + contentRange.location, length: contentRange.length)
-                            if adjustedRange.location + adjustedRange.length <= storage.length {
-                                // Apply attributes from highlighted string to existing storage
-                                // without replacing the underlying text
-                                let fullRange = NSRange(location: 0, length: highlighted.length)
-                                highlighted.enumerateAttributes(in: fullRange, options: []) { attrs, attrRange, _ in
-                                    let storageRange = NSRange(location: adjustedRange.location + attrRange.location, length: attrRange.length)
-                                    if storageRange.location + storageRange.length <= storage.length {
-                                        storage.addAttributes(attrs, range: storageRange)
-                                    }
-                                }
+                        // Apply attributes directly to the code block range
+                        let fullRange = NSRange(location: 0, length: highlighted.length)
+                        highlighted.enumerateAttributes(in: fullRange, options: []) { attrs, attrRange, _ in
+                            let storageRange = NSRange(location: range.location + attrRange.location, length: attrRange.length)
+                            if storageRange.location + storageRange.length <= storage.length {
+                                storage.addAttributes(attrs, range: storageRange)
                             }
                         }
                     }
                 }
                 currentLanguage = nil
-                codeBlockRange = nil
             default:
                 break
             }
