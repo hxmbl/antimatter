@@ -48,8 +48,16 @@ final class TimerCenter: ObservableObject {
         let center = UNUserNotificationCenter.current()
         let keep = Set(timers.filter { $0.firedAt == nil }.map(\.id.uuidString))
         center.getPendingNotificationRequests { requests in
-            let stale = requests.map(\.identifier).filter { identifier in
-                UUID(uuidString: identifier) != nil && !keep.contains(identifier)
+            // Scoped to requests this center owns: anything carrying a
+            // `timerID` that no live timer references. UUID-shaped requests
+            // from other suites (a reminder, say) must survive the sweep —
+            // before this check they were pruned here, so reminders silently
+            // died on relaunch.
+            let stale = requests.compactMap { request -> String? in
+                guard let timerID = request.content.userInfo["timerID"] as? String,
+                      !keep.contains(timerID)
+                else { return nil }
+                return request.identifier
             }
             guard !stale.isEmpty else { return }
             center.removePendingNotificationRequests(withIdentifiers: stale)

@@ -29,6 +29,7 @@ final class ReminderCenter: ObservableObject {
         self.fileURL = fileURL
         self.now = now
         load()
+        pruneStaleNotifications()
         for reminder in reminders where reminder.firedAt == nil {
             scheduleFire(reminder, announce: false)
         }
@@ -36,6 +37,24 @@ final class ReminderCenter: ObservableObject {
 
     nonisolated static func defaultFileURL() -> URL {
         StorageLocation.directory(named: "reminders").appendingPathComponent("reminders.json")
+    }
+
+    /// Drops pending system-notification requests this center owns whose
+    /// reminder is no longer running — scoped to `reminderID`, so requests
+    /// from other suites (a timer, say) are never caught in the sweep.
+    private func pruneStaleNotifications() {
+        let center = UNUserNotificationCenter.current()
+        let keep = Set(reminders.filter { $0.firedAt == nil }.map(\.id.uuidString))
+        center.getPendingNotificationRequests { requests in
+            let stale = requests.compactMap { request -> String? in
+                guard let reminderID = request.content.userInfo["reminderID"] as? String,
+                      !keep.contains(reminderID)
+                else { return nil }
+                return request.identifier
+            }
+            guard !stale.isEmpty else { return }
+            center.removePendingNotificationRequests(withIdentifiers: stale)
+        }
     }
 
     /// Schedules a one-shot reminder. Returns false for dates already past.
