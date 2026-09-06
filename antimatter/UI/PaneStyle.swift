@@ -37,6 +37,11 @@ enum PaneStyle {
     static let titleBarInset: CGFloat = 30
     static let maxWidth: CGFloat = 600
     static let maxHeight: CGFloat = 900
+    static let windowMaxWidth: CGFloat = 650
+    static let windowMaxHeight: CGFloat = 950
+    static let windowMinWidth: CGFloat = 300
+    static let windowMinHeight: CGFloat = 200
+    static let windowDragLip: CGFloat = 6
     static let hasShadow = true
 
     static let border: Color = .white

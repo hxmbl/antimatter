@@ -8,27 +8,31 @@ struct ContentView: View {
     @State private var footer = FooterStatus()
 
     var body: some View {
-        PaneEditor(text: $store.text, status: $footer)
-            .padding(.top, PaneStyle.titleBarInset)
-            .padding(.leading, PaneStyle.padding)
-            .padding(.trailing, PaneStyle.padding)
-            .padding(.bottom, PaneStyle.padding + PaneStyle.footerHeight)
-            .frame(maxWidth: PaneStyle.maxWidth, maxHeight: PaneStyle.maxHeight)
-            .background { PaneBackground() }
-            .clipShape(RoundedRectangle(cornerRadius: PaneStyle.cornerRadius, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: PaneStyle.cornerRadius, style: .continuous)
-                    .strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: PaneStyle.borderWidth)
-            }
-            .overlay(alignment: .topTrailing) { CaptureStrip().padding(.trailing, 10) }
-            .overlay(alignment: .bottomLeading) { SaveErrorHint(error: store.saveError, token: store.saveErrorToken).padding(.leading, PaneStyle.padding) }
-            .overlay(alignment: .bottom) {
-                PaneFooter(status: footer)
-                    .padding(.horizontal, PaneStyle.padding)
-                    .padding(.bottom, 7)
-            }
-            .background(WindowConfigurator())
-            .background(HotKeyWindowBridge())
+        ZStack(alignment: .top) {
+            PaneEditor(text: $store.text, status: $footer)
+                .padding(.top, PaneStyle.titleBarInset)
+                .padding(.leading, PaneStyle.padding)
+                .padding(.trailing, PaneStyle.padding)
+                .padding(.bottom, PaneStyle.padding + PaneStyle.footerHeight)
+                .frame(maxWidth: PaneStyle.maxWidth, maxHeight: PaneStyle.maxHeight)
+                .background { PaneBackground() }
+                .clipShape(RoundedRectangle(cornerRadius: PaneStyle.cornerRadius, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: PaneStyle.cornerRadius, style: .continuous)
+                        .strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: PaneStyle.borderWidth)
+                }
+                .overlay(alignment: .topTrailing) { CaptureStrip().padding(.trailing, 10) }
+                .overlay(alignment: .bottomLeading) { SaveErrorHint(error: store.saveError, token: store.saveErrorToken).padding(.leading, PaneStyle.padding) }
+                .overlay(alignment: .bottom) {
+                    PaneFooter(status: footer)
+                        .padding(.horizontal, PaneStyle.padding)
+                        .padding(.bottom, 7)
+                }
+                .overlay(WindowDragEdge())
+            TitleBarBackground()
+        }
+        .background(WindowConfigurator())
+        .background(HotKeyWindowBridge())
             .onChange(of: store.text) { _, _ in store.textDidChange() }
             .onAppear {
                 if !UserDefaults.standard.bool(forKey: PaneStyle.didWelcomeKey) {
@@ -55,6 +59,58 @@ private struct HotKeyWindowBridge: View {
         Color.clear
             .frame(width: 0, height: 0)
             .onAppear { PaneHotKey.shared.openWindow = { openWindow(id: PaneStyle.windowIdentifier) } }
+    }
+}
+
+/// Allows window dragging from any edge even when at max size.
+private struct WindowDragEdge: View {
+    private let lip = PaneStyle.windowDragLip
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                Color.clear
+                    .frame(width: geo.size.width, height: lip)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .contentShape(Rectangle())
+                    .gesture(windowDragGesture())
+                Color.clear
+                    .frame(width: geo.size.width, height: lip)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .contentShape(Rectangle())
+                    .gesture(windowDragGesture())
+                Color.clear
+                    .frame(width: lip, height: geo.size.height)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .gesture(windowDragGesture())
+                Color.clear
+                    .frame(width: lip, height: geo.size.height)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                    .contentShape(Rectangle())
+                    .gesture(windowDragGesture())
+            }
+        }
+    }
+
+    private func windowDragGesture() -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { _ in
+                if let window = NSApp.keyWindow {
+                    let event = NSApp.currentEvent ?? NSEvent()
+                    window.performDrag(with: event)
+                }
+            }
+    }
+}
+
+/// Title bar background with less transparency than content area.
+private struct TitleBarBackground: View {
+    var body: some View {
+        VisualEffectBackground(material: .headerView, blendingMode: .withinWindow)
+            .frame(height: PaneStyle.titleBarInset)
+            .clipShape(RoundedRectangle(cornerRadius: PaneStyle.cornerRadius, style: .continuous))
+            .allowsHitTesting(false)
     }
 }
 

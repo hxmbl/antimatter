@@ -25,14 +25,20 @@ struct WindowConfigurator: NSViewRepresentable {
         // Note SwiftUI also keeps its own frame-restore keys in defaults
         // ("NSWindow Frame …AppWindow…"); ours is applied later and wins.
         window.setFrameAutosaveName(PaneStyle.frameAutosaveName)
-        let maxSize = NSSize(width: PaneStyle.maxWidth, height: PaneStyle.maxHeight)
-        window.contentMaxSize = maxSize
-        if window.frame.width > maxSize.width || window.frame.height > maxSize.height {
-            window.setContentSize(NSSize(
-                width: min(window.frame.width, maxSize.width),
-                height: min(window.frame.height, maxSize.height)
-            ))
+        let windowMaxSize = NSSize(width: PaneStyle.windowMaxWidth, height: PaneStyle.windowMaxHeight)
+        let windowMinSize = NSSize(width: PaneStyle.windowMinWidth, height: PaneStyle.windowMinHeight)
+        window.maxSize = windowMaxSize
+        window.minSize = windowMinSize
+        window.contentMaxSize = NSSize(width: PaneStyle.maxWidth, height: PaneStyle.maxHeight)
+        if window.frame.width > windowMaxSize.width || window.frame.height > windowMaxSize.height {
+            var frame = window.frame
+            frame.size.width = min(frame.width, windowMaxSize.width)
+            frame.size.height = min(frame.height, windowMaxSize.height)
+            window.setFrame(frame, display: true)
         }
+        UserDefaults.standard.removeObject(forKey: "NSWindow Frame \(PaneStyle.frameAutosaveName)")
+        UserDefaults.standard.removeObject(forKey: "NSWindow Frame AppWindow")
+        window.setFrameAutosaveName(PaneStyle.frameAutosaveName)
         if PaneStyle.floatsAboveOtherApps {
             window.level = .floating
         }
