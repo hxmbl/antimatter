@@ -41,15 +41,19 @@ struct DashSubstitutionTests {
         #expect(text == "– ")
     }
 
-    // Typing a third hyphen into an inline `--` → em dash, run absorbed.
+    // Typing a third hyphen into an inline `--` → em dash, replacing just the
+    // two hyphens already in the buffer (the typed one is suppressed).
     @Test func thirdHyphenInlineMakesEmDash() {
-        let o = DashSubstitution.outcome(typing: "-", into: "warm--", at: 6)
-        guard let (range, text) = rewrite(o) else {
+        let text = "warm--"
+        let o = DashSubstitution.outcome(typing: "-", into: text, at: text.count)
+        guard let (range, replacement) = rewrite(o) else {
             Issue.record("expected rewrite, got \(o)")
             return
         }
-        #expect(range == NSRange(location: 4, length: 3))
-        #expect(text == "—")
+        #expect(range == NSRange(location: 4, length: 2))
+        #expect(replacement == "—")
+        // The replacement range must never exceed the buffer length.
+        #expect(NSMaxRange(range) <= text.utf16.count)
     }
 
     // `---` + space at line start stays raw (horizontal rule).
@@ -71,6 +75,30 @@ struct DashSubstitutionTests {
     // A lone hyphen at start, then a letter → still deferred, no change yet.
     @Test func loneHyphenStartStayDeferred() {
         #expect(DashSubstitution.outcome(typing: "a", into: "-", at: 1) == .accept)
+    }
+
+    // A `---` at line start followed by a letter → still collapsed to em dash.
+    @Test func tripleInlineCollapsesWithLetter() {
+        let o = DashSubstitution.outcome(typing: "a", into: "x---", at: 4)
+        guard let (range, text) = rewrite(o) else {
+            Issue.record("expected rewrite, got \(o)")
+            return
+        }
+        #expect(range == NSRange(location: 1, length: 3))
+        #expect(text == "—a")
+    }
+
+    // Typing a 4th hyphen into `---` inline → replaces all three with em dash.
+    @Test func fourthHyphenInlineMakesEmDash() {
+        let text = "warm---"
+        let o = DashSubstitution.outcome(typing: "-", into: text, at: text.count)
+        guard let (range, replacement) = rewrite(o) else {
+            Issue.record("expected rewrite, got \(o)")
+            return
+        }
+        #expect(range == NSRange(location: 4, length: 3))
+        #expect(replacement == "—")
+        #expect(NSMaxRange(range) <= text.utf16.count)
     }
 
     // A `--` at the very start followed by a letter becomes `–a`.

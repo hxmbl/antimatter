@@ -69,10 +69,26 @@ nonisolated enum UnitConverter {
     }
 
     private static func splitPreservingArrow(_ line: String) -> [String] {
-        // All of our arrows are space-delimited tokens that survive a plain
-        // split (`->`, `–`, `—`, `→` carry no internal spaces), so a simple
-        // whitespace split keeps the arrow intact by construction.
-        return line.components(separatedBy: " ").filter { !$0.isEmpty }
+        // Arrows can sit flush against their operand (`12 kg->lb`, `12kg→lb`)
+        // or be surrounded by spaces, so find the first arrow and split the
+        // line around it rather than relying on `" "` separation.
+        var earliest: (lower: String.Index, upper: String.Index)? = nil
+        for arrow in arrows {
+            if let range = line.range(of: arrow) {
+                if earliest == nil || range.lowerBound < earliest!.lower {
+                    earliest = (range.lowerBound, range.upperBound)
+                }
+            }
+        }
+        guard let arrowRange = earliest else {
+            return line.components(separatedBy: " ").filter { !$0.isEmpty }
+        }
+        let before = line[..<arrowRange.lower]
+            .components(separatedBy: " ").filter { !$0.isEmpty }
+        let arrowString = String(line[arrowRange.lower..<arrowRange.upper])
+        let after = line[arrowRange.upper...]
+            .components(separatedBy: " ").filter { !$0.isEmpty }
+        return before + [arrowString] + after
     }
 
     // MARK: Temperature

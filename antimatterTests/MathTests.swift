@@ -238,6 +238,9 @@ struct DateIntentTests {
     }
 }
 
+/// Serialised: the currency tests share the one process-global `RateCache`,
+/// so running them concurrently (Swift Testing's default) makes them flaky.
+@Suite(.serialized)
 struct UnitConverterTests {
 
     private func convert(_ v: Double, _ f: String, _ t: String) -> Double? {
@@ -267,6 +270,7 @@ struct UnitConverterTests {
         #expect(UnitConverter.commit("12 kg → lb")?.hasSuffix(" = 26.4555") == true)
         #expect(UnitConverter.commit("3 mi -> km") != nil)
         #expect(UnitConverter.commit("   100 °F -> c")?.hasPrefix("   ") == true)
+        #expect(UnitConverter.commit("12 kg->lb")?.hasSuffix(" = 26.4555") == true)
     }
 
     @Test func dashArrowsWork() {

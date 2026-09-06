@@ -17,9 +17,9 @@ nonisolated enum DashSubstitution {
     /// - typed non-hyphen: `range` is the trailing hyphen run in the current
     ///   text and `text` is the dash *plus the typed character* (so `--a`
     ///   becomes `–a` in one undoable edit);
-    /// - typed hyphen (inline `---`): `range` covers the run plus the segment
-    ///   the new hyphen will occupy and `text` is just the em dash, because
-    ///   the typed hyphen is already part of the run.
+    /// - typed hyphen (inline `---`): `range` covers just the hyphens that
+    ///   already exist (the typed hyphen is suppressed, not part of the
+    ///   replacement), and `text` is the em dash alone.
     enum Outcome: Equatable {
         case accept
         case rewrite(range: NSRange, text: String)
@@ -50,8 +50,10 @@ nonisolated enum DashSubstitution {
                     // On its own line: a horizontal rule. Keep the raw hyphens.
                     return .accept
                 }
-                // Inline `---` → em dash. The run includes the typed hyphen.
-                return .rewrite(range: NSRange(location: location - trailing, length: run), text: "—")
+                // Inline `---` → em dash. Replace only the hyphens that
+                // already sit in the buffer; the typed hyphen is never
+                // inserted (return false suppresses it).
+                return .rewrite(range: NSRange(location: location - trailing, length: trailing), text: "—")
             }
             return .accept
         }

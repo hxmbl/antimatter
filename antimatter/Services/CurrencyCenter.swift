@@ -91,7 +91,7 @@ final class CurrencyCenter: ObservableObject {
     func refreshNow() {
         guard CurrencyPreference.networkEnabled, !isFetching else { return }
         isFetching = true
-        Task { [weak self] in
+        Task { @MainActor [weak self] in
             defer { self?.isFetching = false }
             guard let self else { return }
             do {

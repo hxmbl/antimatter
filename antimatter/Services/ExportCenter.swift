@@ -51,11 +51,11 @@ enum ExportCenter {
         let body = lines.dropFirst().joined(separator: "\n")
 
         let noteTitle = title.isEmpty ? "Antimatter note" : title
+        // Let Notes pick the default account rather than hard-coding "iCloud",
+        // which fails for users whose notes live "On My Mac" or another account.
         let script = """
         tell application "Notes"
-            tell account "iCloud"
-                make new note with properties {name:\(appleScriptEscape(noteTitle)), body:\(appleScriptEscape(body))}
-            end tell
+            make new note with properties {name:\(appleScriptEscape(noteTitle)), body:\(appleScriptEscape(body))}
         end tell
         """
         try runAppleScript(script)
@@ -88,7 +88,7 @@ enum ExportCenter {
     private static func exportToObsidian(_ text: String) throws -> String {
         let panel = NSSavePanel()
         panel.canCreateDirectories = true
-        panel.allowedContentTypes = [.plainText]
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
         panel.nameFieldStringValue = "antimatter.md"
         panel.message = "Choose where in your Obsidian vault to save this note (as a markdown file)."
         panel.prompt = "Save to Vault"
