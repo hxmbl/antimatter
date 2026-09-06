@@ -13,6 +13,11 @@ struct PaneEditor: NSViewRepresentable {
         let textView = PaneTextView()
         textView.delegate = context.coordinator
         textView.string = text
+        // Editing state is made explicit instead of inherited: a pane text
+        // view that ever ends up non-editable silently swallows every
+        // keystroke with an alert beep, so guard the invariant here.
+        textView.isEditable = true
+        textView.isSelectable = true
         textView.isRichText = false
         textView.importsGraphics = false
         textView.allowsUndo = true

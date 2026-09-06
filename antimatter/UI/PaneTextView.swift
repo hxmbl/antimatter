@@ -22,6 +22,18 @@ final class PaneTextView: NSTextView {
 
     override init(frame frameRect: NSRect, textContainer container: NSTextContainer?) {
         super.init(frame: frameRect, textContainer: container)
+        // `init(frame:textContainer:)` on recent AppKit defers wiring the
+        // text system; leave it unwired and every keystroke dies with a beep
+        // (no `textStorage`, so no `interpretKeyEvents`, no insert). Building
+        // the stack explicitly and swapping the container in restores it.
+        if textStorage == nil {
+            let storage = NSTextStorage()
+            let layoutManager = NSLayoutManager()
+            let container = NSTextContainer(containerSize: frameRect.size)
+            layoutManager.addTextContainer(container)
+            storage.addLayoutManager(layoutManager)
+            replaceTextContainer(container)
+        }
         commonInit()
     }
 
@@ -33,13 +45,17 @@ final class PaneTextView: NSTextView {
     private func commonInit() {
         // The find bar is the platform's; ⌘F just has to reach it.
         usesFindBar = true
-        isIncrementalSearchingEnabled = true
+        isIncrementalSearchingEnabled = false
         registerForDraggedTypes([.fileURL, .tiff, .png])
     }
 
     // MARK: Link activation
 
     override func mouseDown(with event: NSEvent) {
+        // The floating pane may sit in front of the active app without being
+        // key; a click is what hands it typing, so make it key first. Without
+        // this, the first click surfaces the window but keystrokes still beep.
+        window?.makeKeyAndOrderFront(nil)
         pendingClick = (event.locationInWindow, event.modifierFlags.intersection(.deviceIndependentFlagsMask))
         super.mouseDown(with: event)
     }

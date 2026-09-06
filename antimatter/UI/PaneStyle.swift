@@ -17,7 +17,7 @@ enum PaneStyle {
     static let blending: NSVisualEffectView.BlendingMode = .behindWindow
 
     /// Extra wash on top of the blur. `0` is blur-only (most transparent).
-    static let tint: Color = .black
+    static let tint: Color = Color(nsColor: .labelColor)
     static let tintOpacity: Double = 0.10
 
     /// Fades the entire window, including text. `1` is no extra fade.
