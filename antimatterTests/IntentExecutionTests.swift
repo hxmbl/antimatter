@@ -54,6 +54,8 @@ struct ReturnKeyActionTests {
     @Test func timersWinOnTheirLines() {
         #expect(action(".timer 5 laundry") == .startTimer(IntentParser.Timer(duration: 300, label: "laundry")))
         #expect(action(".timer 90s") == .startTimer(IntentParser.Timer(duration: 90, label: "")))
+        #expect(action(".timer 5 mins") == .startTimer(IntentParser.Timer(duration: 300, label: "")))
+        #expect(action(".timer 2 hours tea") == .startTimer(IntentParser.Timer(duration: 7_200, label: "tea")))
     }
 
     @Test func pureArithmeticRewrites() {
@@ -107,6 +109,7 @@ struct ReturnKeyActionTests {
         // Without the dot these are ordinary words; with it they command.
         #expect(action("sum") == .nothing)
         #expect(action("paste") == .nothing)
+        #expect(action("help") == .nothing)
         #expect(IntentExecution.action(forLine: ".sum") == .nothing) // no buffer → no aggregate
         if case .insertAggregate(.sum) = IntentExecution.action(forLine: ".sum", in: "12\n34\n.sum") {} else {
             Issue.record(".sum with a buffer should aggregate")
@@ -114,6 +117,116 @@ struct ReturnKeyActionTests {
         if case .startPasteStream = IntentExecution.action(forLine: ".paste", in: "") {} else {
             Issue.record(".paste should start streaming")
         }
+    }
+
+    @Test func helpExpandsIntoTheCommandReference() {
+        if case .showHelp = IntentExecution.action(forLine: ".help", in: "") {} else {
+            Issue.record(".help should show the reference block")
+        }
+        #expect(IntentExecution.helpText.contains(".timer"))
+        #expect(IntentExecution.helpText.contains(".sum"))
+        #expect(IntentExecution.helpText.contains(".paste"))
+        #expect(IntentExecution.helpText.contains(".help"))
+        #expect(IntentExecution.helpText.contains("days until"))
+    }
+
+    @Test func quietFailuresNowSaySomething() {
+        // Unknown dot-commands, a duration-less timer, and an empty
+        // aggregate each raise a hint instead of dying silently.
+        if case .hint(let message) = IntentExecution.action(forLine: ".frobnicate", in: "") {
+            #expect(message.contains(".help"))
+        } else {
+            Issue.record("unknown dot-command should hint")
+        }
+        if case .hint(let message) = IntentExecution.action(forLine: ".timer", in: "") {
+            #expect(message.contains("duration"))
+        } else {
+            Issue.record(".timer without a duration should hint")
+        }
+        if case .hint(let message) = IntentExecution.action(forLine: ".sum", in: "no numbers here") {
+            #expect(message.contains("No numbers"))
+        } else {
+            Issue.record("empty aggregate should hint")
+        }
+        // Real commands are never reflagged as unknown.
+        #expect(IntentExecution.action(forLine: ".help", in: "") != .hint("Not a command — try `.help`"))
+    }
+}
+
+struct LivePreviewTests {
+    @Test func arithmeticPreviewsItsAnswer() {
+        #expect(IntentExecution.preview(forLine: "384 * 27") == "⏎ 384 * 27 = 10368")
+        #expect(IntentExecution.preview(forLine: "10 / 4") == "⏎ 10 / 4 = 2.5")
+    }
+
+    @Test func commandsPreviewTheirOutcome() {
+        #expect(IntentExecution.preview(forLine: ".help") == "⏎ opens the reference (press q to close)")
+        #expect(IntentExecution.preview(forLine: ".paste") == "⏎ begins paste stream")
+        if case .startTimer = IntentExecution.action(forLine: ".timer 90s") {
+            #expect(IntentExecution.preview(forLine: ".timer 90s") == "⏎ starts a timer")
+        } else {
+            Issue.record(".timer should preview")
+        }
+    }
+
+    @Test func aggregatesPreviewOnlyWithNumbers() {
+        #expect(IntentExecution.preview(forLine: ".sum", in: "12\n34\n.sum") == "⏎ .sum = 46")
+        #expect(IntentExecution.preview(forLine: ".sum", in: "just words") == nil)
+    }
+
+    @Test func proseHasNoPreview() {
+        for line in ["", "hello world", "TODO: investigate this", "42", "2026-08-22 ="] {
+            #expect(IntentExecution.preview(forLine: line) == nil, "`\(line)` should have no preview")
+        }
+    }
+
+    @Test func answerExtractsThePayload() {
+        #expect(IntentExecution.answer(fromLine: "384 * 27 = 10368") == "10368")
+        #expect(IntentExecution.answer(fromLine: ".sum = 46") == "46")
+        #expect(IntentExecution.answer(fromLine: "days until 2026-09-01 = 8") == "8")
+        #expect(IntentExecution.answer(fromLine: "2026-08-22 · Saturday") == "Saturday")
+        #expect(IntentExecution.answer(fromLine: "hello world") == nil)
+        #expect(IntentExecution.answer(fromLine: "12 kg -> lb") == nil) // not committed yet
+        #expect(IntentExecution.answer(fromLine: "price = 4 * 12 = 48") == "48")
+    }
+}
+
+struct CancelCommandTests {
+
+    @Test func timerCancelDispatches() {
+        #expect(IntentExecution.action(forLine: ".timer cancel") == .cancelAllTimers)
+        #expect(IntentExecution.action(forLine: ".timer cancel all") == .cancelAllTimers)
+        #expect(IntentExecution.preview(forLine: ".timer cancel") == "⏎ cancels all running timers")
+    }
+
+    @Test func reminderCancelDispatches() {
+        #expect(IntentExecution.action(forLine: ".reminder cancel") == .cancelAllReminders)
+        #expect(IntentExecution.action(forLine: ".reminder cancel all") == .cancelAllReminders)
+        #expect(IntentExecution.preview(forLine: ".reminder cancel") == "⏎ cancels all reminders")
+    }
+
+    @Test func cancelNeverCollidesWithARealCommand() {
+        #expect(IntentExecution.action(forLine: ".timer 5") != .cancelAllTimers)
+        #expect(IntentExecution.action(forLine: ".remind in 10 mins call mom") != .cancelAllReminders)
+    }
+}
+
+struct CommandCompletionTests {
+
+    private func completions(_ prefix: String) -> [String]? {
+        IntentExecution.completions(for: prefix)
+    }
+
+    @Test func partialDotCommandsMatch() {
+        #expect(completions(".ti") == [".timer "])
+        #expect(completions(".su")?.contains(".sum ") == true)
+        #expect(completions(".h")?.contains(".help ") == true)
+    }
+
+    @Test func nonCommandsAndEmptyPrefixesDoNotMatch() {
+        #expect(completions(".") == nil)
+        #expect(completions("time") == nil)
+        #expect(completions("hello") == nil)
     }
 }
 

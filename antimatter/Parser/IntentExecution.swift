@@ -91,6 +91,14 @@ nonisolated enum IntentExecution {
             case .count: return Double(numbers.count)
             }
         }
+
+        var name: String {
+            switch self {
+            case .sum: "sum"
+            case .avg: "average"
+            case .count: "count"
+            }
+        }
     }
 
     /// Rewrites a `.sum` / `.avg` / `.count` line into `.sum = 102`,
@@ -170,6 +178,12 @@ nonisolated enum IntentExecution {
 
     enum LineAction: Equatable {
         case startTimer(IntentParser.Timer)
+        /// Schedule a natural-language reminder (`.remind in 10 mins stand up`).
+        case startReminder(ReminderIntent.Reminder)
+        /// Cancel every running timer (`.timer cancel [all]`).
+        case cancelAllTimers
+        /// Cancel every pending reminder (`.reminder cancel [all]`).
+        case cancelAllReminders
         /// Hand the line to the calculation rewriter.
         case rewriteCalculation
         /// Replace the caret line wholesale (dates, units, definitions).
@@ -178,6 +192,11 @@ nonisolated enum IntentExecution {
         case insertAggregate(AggregateKind)
         /// Begin streaming clipboard contents into the note.
         case startPasteStream
+        /// Expand `.help` into the command reference block.
+        case showHelp
+        /// Say something through a transient notice instead of acting
+        /// (unknown dot-command, missing argument, empty aggregate).
+        case hint(String)
         /// Leave the line alone; the newline simply lands.
         case nothing
     }
@@ -190,14 +209,36 @@ nonisolated enum IntentExecution {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.hasSuffix("=") else { return .nothing }
 
-        if let timer = IntentParser.parseTimer(trimmed) {
-            return .startTimer(timer)
+        if trimmed.lowercased().hasPrefix(IntentParser.commandPrefix + "timer") {
+            if IntentParser.isTimerCancel(trimmed) {
+                return .cancelAllTimers
+            }
+            if let timer = IntentParser.parseTimer(trimmed) {
+                return .startTimer(timer)
+            }
+            return .hint(".timer needs a duration — e.g. `.timer 25`")
+        }
+        if trimmed.lowercased().hasPrefix(ReminderIntent.command) {
+            if ReminderIntent.isCancelAll(trimmed) {
+                return .cancelAllReminders
+            }
+            if let reminder = ReminderIntent.parse(trimmed) {
+                return .startReminder(reminder)
+            }
+            return .hint(".remind needs a time and a message — e.g. `.remind in 10 mins stand up`")
         }
         if let kind = AggregateKind(keyword: trimmed) {
-            return buffer != nil ? .insertAggregate(kind) : .nothing
+            guard let buffer else { return .nothing }
+            let numbers = Aggregates.numbers(in: buffer)
+            return numbers.isEmpty
+                ? .hint("No numbers in the note to \(kind.name)")
+                : .insertAggregate(kind)
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "paste" {
             return .startPasteStream
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "help" {
+            return .showHelp
         }
         if let replacement = DateIntent.commit(line) {
             return .rewriteLine(replacement)
@@ -208,9 +249,16 @@ nonisolated enum IntentExecution {
         if let replacement = assignmentCommit(line: line, buffer: buffer ?? line) {
             return .rewriteLine(replacement)
         }
-        return calculationCommit(in: line, at: NSRange(location: 0, length: (line as NSString).length)) != nil
-            ? .rewriteCalculation
-            : .nothing
+        if calculationCommit(in: line, at: NSRange(location: 0, length: (line as NSString).length)) != nil {
+            return .rewriteCalculation
+        }
+        // A line that still starts with a dot after every parser said no is a
+        // command attempt gone quiet; the pane should say so rather than
+        // pretend it typed a word.
+        if trimmed.hasPrefix(IntentParser.commandPrefix) {
+            return .hint("Not a command — try `.help`")
+        }
+        return .nothing
     }
 
     /// A definition gaining its value on return: `price = 4 * 12` becomes
@@ -219,12 +267,131 @@ nonisolated enum IntentExecution {
     /// writing `a = 5 = 5` helps nobody.
     private static func assignmentCommit(line: String, buffer: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let (name, rhs) = VariableTable.splitDefinition(trimmed),
+        guard let (_, rhs) = VariableTable.splitDefinition(trimmed),
               let value = ExpressionEvaluator.evaluate(rhs, variables: VariableTable.scan(buffer)),
               IntentParser.format(value) != rhs
         else { return nil }
         let indent = String(line.prefix(while: { $0 == " " || $0 == "\t" }))
         return indent + trimmed + " = " + IntentParser.format(value)
+    }
+
+    // MARK: Help
+
+    /// The reference block `.help` expands into on return: every dot-command
+    /// plus the automatic line replies. Kept in the parser layer so it can be
+    /// tested and translated without touching an `NSTextView`.
+    static let helpText = """
+        Commands — type one and press return:
+          .timer 5                5-minute countdown (bare number = minutes; also 90s, 1h 20m, 5 mins)
+          .timer 1h 20m stand up  labelled countdown; max 30 days
+          .timer cancel [all]     cancel all running timers
+          .remind in 10 mins …    natural-language reminder ("call mom", "tomorrow at 3pm …")
+          .remind tomorrow 3pm …  absolute times work too
+          .reminder cancel [all]  cancel all pending reminders
+          .paste                  stream clipboard copies into the note until dismissed
+          .sum  .total            sum the numbers in this note
+          .avg  .average          average the note's numbers
+          .count                  count the note's numbers
+          .help                   open this reference full-screen (press q to close)
+
+        Automatic — press return on a line:
+          384 * 27            →  384 * 27 = 10368
+          price = 4 * 12      →  price = 4 * 12 = 48
+          2026-08-22          →  weekday appended
+          days until 2026-09-01  →  countdown appended
+          12 kg -> lb         →  12 kg -> lb = 26.46
+        """
+
+    // MARK: Live preview
+
+    /// A short string describing what return would do on `line`, living
+    /// alongside the caret so the answer previews before the newline lands.
+    /// nil means plain text: return just adds a newline. Mirrors `action`
+    /// without its side-effect outcomes (timers, streams) collapsing into
+    /// descriptions.
+    static func preview(forLine line: String, in buffer: String? = nil) -> String? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.hasSuffix("=") else { return nil }
+
+        if IntentParser.isTimerCancel(trimmed) {
+            return "⏎ cancels all running timers"
+        }
+        if IntentParser.parseTimer(trimmed) != nil {
+            return "⏎ starts a timer"
+        }
+        if ReminderIntent.isCancelAll(trimmed) {
+            return "⏎ cancels all reminders"
+        }
+        if trimmed.lowercased().hasPrefix(ReminderIntent.command),
+           let reminder = ReminderIntent.parse(trimmed)
+        {
+            return "⏎ reminder in \(ReminderCenter.format(reminder.date.timeIntervalSinceNow))"
+        }
+        if let kind = AggregateKind(keyword: trimmed), let buffer {
+            guard let value = kind.value(of: Aggregates.numbers(in: buffer)) else { return nil }
+            return "⏎ \(trimmed) = \(IntentParser.format(value))"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "paste" {
+            return "⏎ begins paste stream"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "help" {
+            return "⏎ opens the reference (press q to close)"
+        }
+        if let replacement = DateIntent.commit(line) {
+            return "⏎ " + replacement.trimmingCharacters(in: .whitespaces)
+        }
+        if let replacement = UnitConverter.commit(line) {
+            return "⏎ " + replacement.trimmingCharacters(in: .whitespaces)
+        }
+        if let replacement = assignmentCommit(line: line, buffer: buffer ?? line) {
+            return "⏎ " + replacement.trimmingCharacters(in: .whitespaces)
+        }
+        if let commit = calculationCommit(in: line, at: NSRange(location: 0, length: (line as NSString).length)) {
+            return "⏎ " + commit.replacement.trimmingCharacters(in: .whitespaces)
+        }
+        return nil
+    }
+
+    // MARK: Answer extraction
+
+    /// The copyable answer embedded in a committed line: the trailing number
+    /// of `expr = 48`, `.sum = 46`, or `days until … = 8`, or the weekday of
+    /// `2026-08-22 · Saturday`. Plain prose is nil.
+    static func answer(fromLine line: String) -> String? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = trimmed.components(separatedBy: " = ")
+        if let last = parts.last, parts.count >= 2, Double(last.trimmingCharacters(in: .whitespaces)) != nil {
+            return last.trimmingCharacters(in: .whitespaces)
+        }
+        if let marker = trimmed.range(of: " · "), marker.upperBound < trimmed.endIndex {
+            return String(trimmed[marker.upperBound...]).trimmingCharacters(in: .whitespaces)
+        }
+        return nil
+    }
+
+    // MARK: Dot-command autocompletion
+
+    /// Completion vocabulary for typing after a `.` — teaches the commands
+    /// at the moment of use, with no chrome.
+    static let dotCommands: [(name: String, description: String)] = [
+        (".timer", "start or cancel a countdown"),
+        (".remind", "set a natural-language reminder"),
+        (".reminder", "cancel reminders (`.reminder cancel all`)"),
+        (".paste", "stream clipboard into the note"),
+        (".sum", "sum the note's numbers"),
+        (".avg", "average the note's numbers"),
+        (".count", "count the note's numbers"),
+        (".help", "show the command reference"),
+    ]
+
+    /// Completion strings for text typed after a dot, or nil when the caret
+    /// token is not a partial dot-command (`.ti`, `.su`).
+    static func completions(for prefix: String) -> [String]? {
+        guard prefix.hasPrefix(IntentParser.commandPrefix) else { return nil }
+        let partial = String(prefix.dropFirst(IntentParser.commandPrefix.count)).lowercased()
+        guard !partial.isEmpty else { return nil }
+        let matches = dotCommands.filter { $0.name.dropFirst(IntentParser.commandPrefix.count).hasPrefix(partial) }
+        return matches.isEmpty ? nil : matches.map { $0.name + " " }
     }
 
     // MARK: Deferred commit guard

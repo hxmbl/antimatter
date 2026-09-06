@@ -28,6 +28,9 @@ enum PaneStyle {
     static let cornerRadius: CGFloat = 18
     static let padding: CGFloat = 16
 
+    /// Height of the quiet status strip under the editor.
+    static let footerHeight: CGFloat = 26
+
     /// Space reserved at the top so text starts below the traffic lights.
     /// The pane itself extends to the window's top edge, so the title bar
     /// area uses the exact same material as the typing surface.
@@ -58,6 +61,9 @@ enum PaneStyle {
     /// Identifies the pane: SwiftUI scene id, `openWindow` id, and
     /// NSWindow.identifier all use this so the hot key can find the window.
     static let windowIdentifier = "pane"
+
+    /// UserDefaults key marking the one-time welcome notice as shown.
+    static let didWelcomeKey = "did.welcome"
 
     /// Keeps the pane above ordinary windows.
     static let floatsAboveOtherApps = true

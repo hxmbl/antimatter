@@ -37,6 +37,28 @@ struct IntentTimerTests {
         #expect(IntentParser.parseTimer(".Timer 30s stretch") != nil)
     }
 
+    @Test func fullUnitWordsAreHonoured() {
+        #expect(IntentParser.parseTimer(".timer 5 minutes")?.duration == 300)
+        #expect(IntentParser.parseTimer(".timer 5 mins")?.duration == 300)
+        #expect(IntentParser.parseTimer(".timer 2 hours")?.duration == 7_200)
+        #expect(IntentParser.parseTimer(".timer 1 hour 30 minutes")?.duration == 5_400)
+        #expect(IntentParser.parseTimer(".timer 3 days")?.duration == 259_200)
+        #expect(IntentParser.parseTimer(".timer 45 seconds")?.duration == 45)
+    }
+
+    @Test func spacedNumberAndUnitLeaveTheLabelIntact() {
+        #expect(IntentParser.parseTimer(".timer 5 mins stand up") == IntentParser.Timer(duration: 300, label: "stand up"))
+        #expect(IntentParser.parseTimer(".timer 90 minutes tea")?.label == "tea")
+    }
+
+    @Test func timerCancelForms() {
+        #expect(IntentParser.isTimerCancel(".timer cancel") == true)
+        #expect(IntentParser.isTimerCancel(".timer cancel all") == true)
+        #expect(IntentParser.isTimerCancel(".TIMER CANCEL ALL") == true)
+        #expect(IntentParser.isTimerCancel(".timer 5") == false)
+        #expect(IntentParser.isTimerCancel(".timer cancel xyz") == false)
+    }
+
     @Test func nonTimersStayNil() {
         // A bare "timer" is just a word now; only the dot-command fires.
         for line in ["timer", "timer abc", "timer 0", "timers 5", "remind me at 5", "timer 5"] {
@@ -87,6 +109,7 @@ struct IntentCalculationTests {
 
     @Test func degenerateInputsStayText() {
         #expect(IntentParser.parseCalculation("42") == nil)          // identity rewrite
+        #expect(IntentParser.parseCalculation("1.") == nil)          // bare number, not a calculation
         #expect(IntentParser.parseCalculation("1 / 0") == nil)       // not finite
         #expect(IntentParser.parseCalculation("") == nil)
         #expect(IntentParser.parseCalculation("(2+3") == nil)        // unbalanced
@@ -138,5 +161,71 @@ struct ExpressionEvaluatorTests {
         for input in ["", "hello world", "384 * 27 more words", "()", "1 +", "$5 * 3"] {
             #expect(eval(input) == nil, "\(input) should not evaluate")
         }
+    }
+
+    @Test func bareNumberDetection() {
+        #expect(ExpressionEvaluator.isBareNumber("42"))
+        #expect(ExpressionEvaluator.isBareNumber("3.14"))
+        #expect(ExpressionEvaluator.isBareNumber("-5"))
+        #expect(!ExpressionEvaluator.isBareNumber("1 + 2"))
+        #expect(!ExpressionEvaluator.isBareNumber("sqrt(4)"))
+        #expect(!ExpressionEvaluator.isBareNumber(""))
+        #expect(!ExpressionEvaluator.isBareNumber("hello"))
+    }
+}
+
+struct ReminderIntentTests {
+    private let fixedNow = Date(timeIntervalSince1970: 1_789_000_000) // 2026-08 UTC
+
+    @Test func relativeMinutes() throws {
+        let result = try #require(ReminderIntent.parse(".remind in 10 mins stand up", now: fixedNow))
+        #expect(result.message == "stand up")
+        #expect(abs(result.date.timeIntervalSince(fixedNow) - 600) < 1)
+    }
+
+    @Test func relativeHoursAndSingleUnits() throws {
+        let hours = try #require(ReminderIntent.parse(".remind in 2h deploy", now: fixedNow))
+        #expect(abs(hours.date.timeIntervalSince(fixedNow) - 7_200) < 1)
+
+        let aMinute = try #require(ReminderIntent.parse(".remind in a minute blink", now: fixedNow))
+        #expect(abs(aMinute.date.timeIntervalSince(fixedNow) - 60) < 1)
+
+        let aDay = try #require(ReminderIntent.parse(".remind in a day stretch", now: fixedNow))
+        #expect(abs(aDay.date.timeIntervalSince(fixedNow) - 86_400) < 1)
+    }
+
+    @Test func absoluteTimesWork() throws {
+        let result = try #require(ReminderIntent.parse(".remind tomorrow call mom"))
+        let calendar = Calendar.current
+        let dayDelta = calendar.dateComponents([.day], from: calendar.startOfDay(for: Date()), to: calendar.startOfDay(for: result.date)).day
+        #expect(dayDelta == 1)
+        #expect(result.message == "call mom")
+    }
+
+    @Test func quotedMessagesStayVerbatim() throws {
+        let result = try #require(ReminderIntent.parse(".remind in 10 mins \"water the plants\"", now: fixedNow))
+        #expect(result.message == "water the plants")
+    }
+
+    @Test func toGlueIsDropped() throws {
+        let result = try #require(ReminderIntent.parse(".remind me in 10 minutes to stretch", now: fixedNow))
+        #expect(result.message == "stretch")
+    }
+
+    @Test func cancelAllForms() {
+        #expect(ReminderIntent.isCancelAll(".reminder cancel") == true)
+        #expect(ReminderIntent.isCancelAll(".reminder cancel all") == true)
+        #expect(ReminderIntent.isCancelAll(".remind cancel") == true)
+        #expect(ReminderIntent.isCancelAll(".remind cancel all") == true)
+        #expect(ReminderIntent.isCancelAll(".REMINDER CANCEL ALL") == true)
+        #expect(ReminderIntent.isCancelAll(".reminder cancel xyz") == false)
+        #expect(ReminderIntent.isCancelAll(".remind in 10 mins call mom") == false)
+    }
+
+    @Test func missingPartsAreRejected() {
+        #expect(ReminderIntent.parse(".remind", now: fixedNow) == nil)
+        #expect(ReminderIntent.parse(".remind in 10 mins", now: fixedNow) == nil)
+        #expect(ReminderIntent.parse(".timer 5", now: fixedNow) == nil)
+        #expect(ReminderIntent.parse("hello reminder", now: fixedNow) == nil)
     }
 }

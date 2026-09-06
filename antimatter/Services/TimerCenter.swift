@@ -27,25 +27,6 @@ final class TimerCenter: ObservableObject {
 
     @Published private(set) var timers: [ActiveTimer] = []
 
-    /// Transient user-facing notice (e.g. a clamped duration); auto-clears.
-    @Published private(set) var notice: String? {
-        didSet {
-            guard notice != nil else { return }
-            noticeClearTask?.cancel()
-            noticeClearTask = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(6))
-                guard !Task.isCancelled else { return }
-                self?.notice = nil
-            }
-        }
-    }
-
-    private var noticeClearTask: Task<Void, Never>?
-
-    func showNotice(_ message: String) {
-        notice = message
-    }
-
     private let fileURL: URL
     private let now: () -> Date
     private var fireTasks: [UUID: Task<Void, Never>] = [:]
@@ -109,6 +90,19 @@ final class TimerCenter: ObservableObject {
         fireTasks[id]?.cancel()
         fireTasks[id] = nil
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [id.uuidString])
+        persist()
+    }
+
+    /// `.timer cancel [all]`: stop every running countdown, fired or not.
+    func cancelAll() {
+        let identifiers = timers.map(\.id.uuidString)
+        timers.removeAll()
+        for task in fireTasks.values { task.cancel() }
+        fireTasks.removeAll()
+        if !identifiers.isEmpty {
+            UNUserNotificationCenter.current()
+                .removePendingNotificationRequests(withIdentifiers: identifiers)
+        }
         persist()
     }
 

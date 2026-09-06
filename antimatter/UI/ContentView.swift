@@ -5,13 +5,14 @@ struct ContentView: View {
     @StateObject private var store = ScratchStore.shared
     // Declared so a Settings-side change re-renders (and re-styles) the editor.
     @AppStorage("fontSize") private var fontSizeObservation = 15
+    @State private var footer = FooterStatus()
 
     var body: some View {
-        PaneEditor(text: $store.text)
+        PaneEditor(text: $store.text, status: $footer)
             .padding(.top, PaneStyle.titleBarInset)
             .padding(.leading, PaneStyle.padding)
             .padding(.trailing, PaneStyle.padding)
-            .padding(.bottom, PaneStyle.padding)
+            .padding(.bottom, PaneStyle.padding + PaneStyle.footerHeight)
             .frame(maxWidth: PaneStyle.maxWidth, maxHeight: PaneStyle.maxHeight)
             .background { PaneBackground() }
             .clipShape(RoundedRectangle(cornerRadius: PaneStyle.cornerRadius, style: .continuous))
@@ -21,9 +22,20 @@ struct ContentView: View {
             }
             .overlay(alignment: .topTrailing) { CaptureStrip().padding(.trailing, 10) }
             .overlay(alignment: .bottomLeading) { SaveErrorHint(error: store.saveError, token: store.saveErrorToken).padding(.leading, PaneStyle.padding) }
+            .overlay(alignment: .bottom) {
+                PaneFooter(status: footer)
+                    .padding(.horizontal, PaneStyle.padding)
+                    .padding(.bottom, 7)
+            }
             .background(WindowConfigurator())
             .background(HotKeyWindowBridge())
             .onChange(of: store.text) { _, _ in store.textDidChange() }
+            .onAppear {
+                if !UserDefaults.standard.bool(forKey: PaneStyle.didWelcomeKey) {
+                    UserDefaults.standard.set(true, forKey: PaneStyle.didWelcomeKey)
+                    NoticeCenter.shared.show("Antimatter — type `.help` for every command")
+                }
+            }
             // Debounced saves leave a small window where quitting would lose
             // the last keystrokes; flushing here closes it.
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
@@ -51,6 +63,8 @@ private struct HotKeyWindowBridge: View {
 private struct CaptureStrip: View {
     @ObservedObject private var center = TimerCenter.shared
     @ObservedObject private var stream = PasteStream.shared
+    @ObservedObject private var notices = NoticeCenter.shared
+    @ObservedObject private var reminders = ReminderCenter.shared
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
@@ -62,6 +76,13 @@ private struct CaptureStrip: View {
                                 center.dismiss(timer.id)
                             }
                         }
+                    }
+                }
+            }
+            if !reminders.reminders.isEmpty {
+                ForEach(reminders.reminders) { reminder in
+                    ReminderChip(reminder: reminder) {
+                        reminders.dismiss(reminder.id)
                     }
                 }
             }
@@ -84,7 +105,7 @@ private struct CaptureStrip: View {
                 .background(.ultraThinMaterial, in: Capsule())
                 .overlay(Capsule().strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: 0.5))
             }
-            if let notice = center.notice {
+            if let notice = notices.notice {
                 HStack(spacing: 6) {
                     Image(systemName: "info.circle")
                         .font(.system(size: 9, weight: .medium))
@@ -141,6 +162,36 @@ private struct TimerChip: View {
     }
 }
 
+/// A reminder waiting to ring, top-right of the pane.
+private struct ReminderChip: View {
+    let reminder: ActiveReminder
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "bell")
+                .font(.system(size: 9, weight: .medium))
+            Text(reminder.message)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Text(ReminderCenter.format(reminder.date.timeIntervalSinceNow))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+        }
+        .font(.caption)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: 0.5))
+    }
+}
+
 /// Transient notice when a flush failed; the store clears itself after a
 /// few seconds, so this simply renders whatever is current.
 private struct SaveErrorHint: View {
@@ -166,6 +217,58 @@ private struct SaveErrorHint: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: token)
+    }
+}
+
+/// Quiet status strip under the editor: a live "what ⏎ will do" preview,
+/// one-tap copy of a committed answer, and the pane's shortcuts.
+private struct PaneFooter: View {
+    let status: FooterStatus
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Group {
+                if let answer = status.answerToCopy {
+                    Button {
+                        copy(answer)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "doc.on.doc")
+                                .font(.system(size: 9, weight: .medium))
+                            Text("copy \(answer)")
+                                .monospacedDigit()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                } else if !status.preview.isEmpty {
+                    Text(status.preview)
+                } else {
+                    Text(".help for commands")
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            Spacer()
+            Text("⌘F find · Esc hide")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: PaneStyle.footerHeight)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: 0.5))
+        .animation(.easeInOut(duration: 0.15), value: status)
+    }
+
+    private func copy(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+        NoticeCenter.shared.show("Answer copied — \(value)")
     }
 }
 

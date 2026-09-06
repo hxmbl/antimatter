@@ -12,6 +12,9 @@ import AppKit
 final class PaneTextView: NSTextView {
     var onCancelOperation: (() -> Void)?
     var onDroppedImage: ((NSImage) -> Void)?
+    /// Return true when the keystroke was swallowed (the full-screen help
+    /// view eats every key except navigation and the way out).
+    var onHelpKeyDown: ((NSEvent) -> Bool)?
 
     private var pendingClick: (location: NSPoint, modifiers: NSEvent.ModifierFlags)?
 
@@ -136,6 +139,13 @@ final class PaneTextView: NSTextView {
 
     @objc private func revealScratchpad(_ sender: Any?) {
         NSWorkspace.shared.activateFileViewerSelecting([ScratchStore.defaultFileURL()])
+    }
+
+    // MARK: Help view keystroke interception
+
+    override func keyDown(with event: NSEvent) {
+        if onHelpKeyDown?(event) == true { return }
+        super.keyDown(with: event)
     }
 
     // MARK: Escape hides the pane

@@ -39,10 +39,24 @@ nonisolated enum IntentParser {
         var duration: TimeInterval = 0
         var matchedAny = false
         var index = 1
-        while index < words.count, let (value, unit) = durationToken(words[index]) {
-            duration += value * unit.seconds
-            matchedAny = true
-            index += 1
+        while index < words.count {
+            // "5 mins", "90 minutes", "2.5 h" — number and unit as separate
+            // words. Checked first so a bare number followed by a spelled-out
+            // unit is not eaten as "5 minutes" with the unit left labelled.
+            if let value = bareNumber(words[index]),
+               index + 1 < words.count,
+               let unit = DurationUnit(words[index + 1])
+            {
+                duration += value * unit.seconds
+                matchedAny = true
+                index += 2
+            } else if let (value, unit) = durationToken(words[index]) {
+                duration += value * unit.seconds
+                matchedAny = true
+                index += 1
+            } else {
+                break
+            }
         }
         guard matchedAny, duration > 0 else { return nil }
 
@@ -54,11 +68,27 @@ nonisolated enum IntentParser {
     /// Largest supported timer: 30 days.
     static let maxDuration: TimeInterval = 60 * 60 * 24 * 30
 
+    /// `.timer cancel` / `.timer cancel all` — cancel every running timer.
+    static func isTimerCancel(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return trimmed == commandPrefix + "timer cancel"
+            || trimmed == commandPrefix + "timer cancel all"
+    }
+
+    private static func bareNumber(_ word: String) -> Double? {
+        guard !word.isEmpty,
+              word.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == ".") }),
+              word.contains(where: \.isNumber)
+        else { return nil }
+        return Double(word)
+    }
+
     private static func durationToken(_ word: String) -> (value: Double, unit: DurationUnit)? {
         let digits = word.prefix(while: { $0.isASCII && ($0.isNumber || $0 == ".") })
         guard let value = Double(digits), digits.contains(where: \.isNumber), !word.isEmpty else { return nil }
         let suffix = String(word.dropFirst(digits.count)).lowercased()
-        guard let unit = DurationUnit(rawValue: suffix) ?? (suffix.isEmpty ? .minutes : nil) else { return nil }
+        if suffix.isEmpty { return (value, .minutes) }
+        guard let unit = DurationUnit(suffix) else { return nil }
         return (value, unit)
     }
 
@@ -79,13 +109,14 @@ nonisolated enum IntentParser {
             }
         }
 
-        init?(rawValue: String) {
-            switch rawValue {
-            case "ms": self = .milliseconds
-            case "s": self = .seconds
-            case "m": self = .minutes
-            case "h": self = .hours
-            case "d": self = .days
+        /// Full words and abbreviations; case-insensitive.
+        init?(_ rawValue: String) {
+            switch rawValue.lowercased() {
+            case "ms", "millisecond", "milliseconds": self = .milliseconds
+            case "s", "sec", "secs", "second", "seconds": self = .seconds
+            case "m", "min", "mins", "minute", "minutes": self = .minutes
+            case "h", "hr", "hrs", "hour", "hours": self = .hours
+            case "d", "day", "days": self = .days
             default: return nil
             }
         }
@@ -100,6 +131,8 @@ nonisolated enum IntentParser {
         guard !expression.isEmpty, let result = ExpressionEvaluator.evaluate(expression) else { return nil }
         // Skip pointless identity rewrites like `-5 =`.
         guard format(result) != expression else { return nil }
+        // Bare numbers never rewrite: `1.` is a list marker, not a calculation.
+        guard !ExpressionEvaluator.isBareNumber(expression) else { return nil }
         return Calculation(expression: expression, result: result)
     }
 
@@ -111,6 +144,8 @@ nonisolated enum IntentParser {
               let result = ExpressionEvaluator.evaluate(trimmed),
               format(result) != trimmed
         else { return nil }
+        // Bare numbers (e.g. `1.`, `42`) never auto-rewrite on return.
+        guard !ExpressionEvaluator.isBareNumber(trimmed) else { return nil }
         return Calculation(expression: trimmed, result: result)
     }
 

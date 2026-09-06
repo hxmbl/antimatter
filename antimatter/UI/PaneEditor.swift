@@ -1,12 +1,20 @@
 import SwiftUI
 import AppKit
 
+/// What the pane's footer says about the caret line: a live preview of what
+/// return would do, plus the copyable answer when the line is committed.
+struct FooterStatus: Equatable {
+    var preview = ""
+    var answerToCopy: String?
+}
+
 /// Plain-text Markdown editor backed by NSTextView, styled by `PaneStyle`.
 struct PaneEditor: NSViewRepresentable {
     @Binding var text: String
+    @Binding var status: FooterStatus
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
+        Coordinator(text: $text, status: $status)
     }
 
     func makeNSView(context: Context) -> OverlayScrollView {
@@ -46,6 +54,9 @@ struct PaneEditor: NSViewRepresentable {
         textView.onDroppedImage = { [weak coordinator = context.coordinator] image in
             coordinator?.recognizeAndInsert(image)
         }
+        textView.onHelpKeyDown = { [weak coordinator = context.coordinator] event in
+            coordinator?.handleHelpViewKey(event) ?? false
+        }
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
@@ -76,6 +87,9 @@ struct PaneEditor: NSViewRepresentable {
         guard let textView = scrollView.documentView as? PaneTextView else { return }
         // A settings-side font change arrives as a plain re-render.
         context.coordinator.applyFontSizeIfChanged(to: textView)
+        // The help view swaps the whole buffer; a SwiftUI re-render (timer
+        // chips, notices, settings) must not clobber it back to the note.
+        guard !context.coordinator.isInHelpView else { return }
         guard textView.string != text else { return }
         let selected = textView.selectedRanges.compactMap { proto -> NSValue? in
             var range = proto.rangeValue
@@ -116,6 +130,7 @@ struct PaneEditor: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var text: Binding<String>
+        var status: Binding<FooterStatus>
         let highlighter = MarkdownHighlighter()
         private var deferredPassTask: Task<Void, Never>?
         private var appliedFontSize: CGFloat = PaneStyle.fontSize
@@ -123,9 +138,22 @@ struct PaneEditor: NSViewRepresentable {
         /// down until a real keystroke arrives, so ⌘Z always wins and stays
         /// won no matter how slowly the user walks back through history.
         private var autoRewritesSuppressed = false
+        /// Start of the `.`-token the completion window is already parked on;
+        /// the window follows further typing on its own, so re-calling
+        /// `complete(_:)` would only close and re-open it.
+        private var completionAnchor: Int?
+        /// True while the pane shows the full-screen `.help` reference
+        /// (less-like view). Typing is swallowed; `q` or Escape restores the
+        /// note. The editor keeps its binding untouched so the note survives.
+        var isInHelpView = false
+        /// The note text and caret restored when leaving the help view.
+        private var helpSnapshot: (text: String, selection: NSRange)?
+        /// The text view hosting the help view, so `q`/Escape can restore it.
+        private weak var helpTextView: NSTextView?
 
-        init(text: Binding<String>) {
+        init(text: Binding<String>, status: Binding<FooterStatus>) {
             self.text = text
+            self.status = status
         }
 
         func textDidChange(_ notification: Notification) {
@@ -133,23 +161,39 @@ struct PaneEditor: NSViewRepresentable {
             // Programmatic updates never reach the delegate, so any
             // did-change is either a live keystroke or an undo/redo replay.
             autoRewritesSuppressed = textView.undoManager?.isUndoing == true
-            text.wrappedValue = textView.string
+            let newText = textView.string
             highlighter.refresh(textView)
             schedulePendingCalculation(textView)
             scheduleReactivePass(textView)
+            // A no-op write would still publish and ripple through SwiftUI;
+            // skip it so typing a character at a collapsed marker (which
+            // may emit a did-change with identical text) stays silent.
+            if text.wrappedValue != newText {
+                text.wrappedValue = newText
+            }
+            updateFooterStatus(textView)
+            scheduleCompletion(textView)
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             highlighter.refresh(textView)
+            guard !isInHelpView else { return }
+            updateFooterStatus(textView)
         }
 
         /// Return pressed: run any recognised intent on the caret's line
-        /// before the newline lands. The newline is never consumed.
+        /// before the newline lands. The newline is never consumed unless
+        /// the intent took over the buffer (`.help` opens the reference).
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            guard !isInHelpView else {
+                // Read-only reference view: navigation still scrolls the
+                // help text, every other command key is swallowed.
+                let name = NSStringFromSelector(commandSelector)
+                return !(name.hasPrefix("move") || name.hasPrefix("scroll") || name.hasPrefix("page"))
+            }
             guard commandSelector == #selector(NSResponder.insertNewline(_:)) else { return false }
-            executeLineIntent(textView)
-            return false
+            return executeLineIntent(textView)
         }
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
@@ -217,17 +261,39 @@ struct PaneEditor: NSViewRepresentable {
             applyCommits(IntentExecution.staleResultCommits(in: textView.string), to: textView)
         }
 
-        private func executeLineIntent(_ textView: NSTextView) {
-            guard let contentRange = caretLineRange(in: textView) else { return }
+        /// Returns true when the intent consumed the return key (the whole buffer
+        /// was taken over, so the default newline must not land).
+        @discardableResult
+        private func executeLineIntent(_ textView: NSTextView) -> Bool {
+            guard let contentRange = caretLineRange(in: textView) else { return false }
             let line = (textView.string as NSString).substring(with: contentRange)
             switch IntentExecution.action(forLine: line, in: textView.string) {
             case .startTimer(let timer):
                 TimerCenter.shared.start(duration: timer.duration, label: timer.label)
                 if timer.clamped {
-                    TimerCenter.shared.showNotice("Timers cap at 30 days — shortened.")
+                    NoticeCenter.shared.show("Timers cap at 30 days — shortened.")
                 }
+            case .startReminder(let reminder):
+                if ReminderCenter.shared.schedule(message: reminder.message, at: reminder.date) {
+                    NoticeCenter.shared.show("Reminder in \(ReminderCenter.format(reminder.date.timeIntervalSinceNow)) — \(reminder.message)")
+                } else {
+                    NoticeCenter.shared.show("Reminder needs a future time.")
+                }
+            case .cancelAllTimers:
+                let count = TimerCenter.shared.timers.count
+                TimerCenter.shared.cancelAll()
+                NoticeCenter.shared.show(count == 0 ? "No running timers to cancel." : (count == 1 ? "Timer cancelled." : "\(count) timers cancelled."))
+            case .cancelAllReminders:
+                let count = ReminderCenter.shared.reminders.count
+                ReminderCenter.shared.cancelAll()
+                NoticeCenter.shared.show(count == 0 ? "No pending reminders to cancel." : (count == 1 ? "Reminder cancelled." : "\(count) reminders cancelled."))
             case .startPasteStream:
                 PasteStream.shared.startStreaming()
+            case .showHelp:
+                enterHelpView(textView)
+                return true
+            case .hint(let message):
+                NoticeCenter.shared.show(message)
             case .insertAggregate(let kind):
                 if let commit = IntentExecution.aggregateCommit(kind, keyword: line, in: textView.string, at: contentRange) {
                     applyCommit(commit, to: textView)
@@ -239,6 +305,141 @@ struct PaneEditor: NSViewRepresentable {
                 textView.insertText(replacement, replacementRange: contentRange)
             case .nothing:
                 break
+            }
+            return false
+        }
+
+        /// Live footer: preview what return would do on the caret line, and
+        /// offer the committed answer for copying. Suppressed in help view.
+        private func updateFooterStatus(_ textView: NSTextView) {
+            guard !isInHelpView else { return }
+            guard let contentRange = caretLineRange(in: textView) else {
+                status.wrappedValue = FooterStatus()
+                return
+            }
+            let line = (textView.string as NSString).substring(with: contentRange)
+            status.wrappedValue = FooterStatus(
+                preview: IntentExecution.preview(forLine: line, in: textView.string) ?? "",
+                answerToCopy: IntentExecution.answer(fromLine: line))
+        }
+
+        // MARK: Full-screen help view
+
+        /// Enter the full-screen `.help` reference: the note is stashed,
+        /// the help text takes the whole buffer, and all keystrokes are
+        /// swallowed except navigation and `q`/Escape.
+        private func enterHelpView(_ textView: NSTextView) {
+            helpSnapshot = (textView.string, textView.selectedRange())
+            helpTextView = textView
+            isInHelpView = true
+            textView.breakUndoCoalescing()
+            textView.string = IntentExecution.helpText
+            highlighter.render(textView)
+            textView.setSelectedRange(NSRange(location: 0, length: 0))
+            textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+            textView.window?.makeFirstResponder(textView)
+            status.wrappedValue = FooterStatus(preview: "q to close", answerToCopy: nil)
+        }
+
+        /// Restore the stashed note and normal editing.
+        private func exitHelpView() {
+            guard isInHelpView, let textView = helpTextView, let snapshot = helpSnapshot else { return }
+            isInHelpView = false
+            helpSnapshot = nil
+            helpTextView = nil
+            textView.breakUndoCoalescing()
+            textView.string = snapshot.text
+            highlighter.render(textView)
+            textView.setSelectedRange(snapshot.selection)
+            textView.window?.makeFirstResponder(textView)
+            updateFooterStatus(textView)
+        }
+
+        /// Keystroke swallowed by the full-screen help view. Returns true
+        /// for `q`, Escape, and every printable key; false for arrows,
+        /// Page Up/Down, Home/End, and system shortcuts (⌘/⌃).
+        func handleHelpViewKey(_ event: NSEvent) -> Bool {
+            guard isInHelpView else { return false }
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            // System keys pass through: ⌘F still searches, ⌘Q still quits.
+            if flags.contains(.command) || flags.contains(.control) { return false }
+            // Escape: close the help view (instead of hiding the pane).
+            if event.keyCode == 53 { exitHelpView(); return true }
+            // `q` or `Q`: close.
+            if let characters = event.charactersIgnoringModifiers?.lowercased(),
+               characters == "q"
+            {
+                exitHelpView(); return true
+            }
+            // Arrow / Page Up / Page Down / Home / End still scroll the
+            // reference text.
+            let navKeyCodes: Set<UInt16> = [115, 116, 119, 121, 123, 124, 125, 126]
+            if navKeyCodes.contains(event.keyCode) { return false }
+            // Everything else is consumed so it never modifies the reference.
+            return true
+        }
+
+        // MARK: Dot-command autocompletion
+
+        /// Native completion list while typing a partial dot-command. The
+        /// range NSTextView reports starts at the letters after the dot, so
+        /// it is walked back to the token's start for the `.partial` prefix.
+        func textView(
+            _ textView: NSTextView,
+            completionsForPartialWordRange charRange: NSRange,
+            indexOfSelectedItem index: UnsafeMutablePointer<Int>?
+        ) -> [String]? {
+            guard let ns = textView.string as NSString? else { return nil }
+            var start = charRange.location
+            while start > 0 {
+                let character = ns.character(at: start - 1)
+                if character == unichar(" ") || character == unichar("\t") || character == unichar("\n") {
+                    break
+                }
+                start -= 1
+            }
+            let tokenRange = NSRange(location: start, length: NSMaxRange(charRange) - start)
+            guard tokenRange.length > 0 else { return nil }
+            let token = ns.substring(with: tokenRange)
+            guard let matches = IntentExecution.completions(for: token) else { return nil }
+            index?.pointee = 0
+            return matches
+        }
+
+        private var completionTask: Task<Void, Never>?
+
+        /// Auto-open the completion window once per `.partial` token via a
+        /// debounce, so the command list appears exactly when a tap on `.`
+        /// gets followed by a letter. `complete(_:)` closes an already-visible
+        /// window, which is why the anchor guards against re-calling it; the
+        /// window tracks further typing on its own.
+        private func scheduleCompletion(_ textView: NSTextView) {
+            completionTask?.cancel()
+            completionTask = Task { [weak self, weak textView] in
+                try? await Task.sleep(for: .milliseconds(240))
+                guard !Task.isCancelled, let self, let textView else { return }
+                guard !autoRewritesSuppressed,
+                      textView.window?.firstResponder == textView,
+                      textView.selectedRange().length == 0
+                else { return }
+                let ns = textView.string as NSString
+                let location = textView.selectedRange().location
+                guard location > 0, location <= ns.length else { return }
+                var start = location
+                while start > 0 {
+                    let character = ns.character(at: start - 1)
+                    if character == unichar(" ") || character == unichar("\t") || character == unichar("\n") {
+                        break
+                    }
+                    start -= 1
+                }
+                guard start != completionAnchor, location - start > 0 else { return }
+                let token = ns.substring(with: NSRange(location: start, length: location - start))
+                guard let matches = IntentExecution.completions(for: token),
+                      matches.contains(where: { $0.trimmingCharacters(in: .whitespaces) != token })
+                else { return }
+                completionAnchor = start
+                textView.complete(textView)
             }
         }
 

@@ -74,11 +74,14 @@ nonisolated enum ExpressionEvaluator {
 
         func flushNumber() {
             guard !digits.isEmpty else { return }
-            if let value = Double(String(digits)) {
-                tokens.append(.number(value))
-            } else {
+            let s = String(digits)
+            // Reject trailing dot: `1.` is a list marker, not a number.
+            guard !s.hasSuffix("."), let value = Double(s) else {
                 tokens.append(.op("\u{0}")) // poison token: never parses
+                digits.removeAll()
+                return
             }
+            tokens.append(.number(value))
             digits.removeAll()
         }
 
@@ -242,5 +245,19 @@ nonisolated enum ExpressionEvaluator {
         default:
             return nil
         }
+    }
+
+    /// True when `expression` is just a single number — no operators,
+    /// no function calls, no variable references. Bare numbers like `1.`,
+    /// `42`, or signed forms such as `-5` should never auto-rewrite on return.
+    static func isBareNumber(_ expression: String) -> Bool {
+        let tokens = tokenize(expression)
+        var cursor = 0
+        if tokens.count >= 2, case .op(let sign)? = tokens.first, sign == "-" || sign == "+" {
+            cursor = 1
+        }
+        guard cursor + 1 == tokens.count else { return false }
+        if case .number = tokens[cursor] { return true }
+        return false
     }
 }
