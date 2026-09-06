@@ -352,6 +352,38 @@ struct MarkdownTests {
     @Test func plainTextProducesNoElements() {
         #expect(parse("hello world").isEmpty)
     }
+
+    // MARK: Tracking-parameter stripping
+
+    @Test func trackingParametersAreStrippedFromInlineLinks() {
+        let elements = parse("[label](https://example.com/page?utm_source=x&id=42)")
+        #expect(elements.contains { $0.kind == .link("https://example.com/page?id=42") })
+    }
+
+    @Test func utmParametersAreStrippedFromAutolinks() {
+        let elements = parse("<https://example.com/?utm_campaign=summer&fbclid=abc>")
+        #expect(elements.contains { $0.kind == .link("https://example.com/") })
+    }
+
+    @Test func bareURLsDropTrackingParameters() {
+        let elements = parse("go to https://example.com/?gclid=xyz&utm_source=ad now")
+        #expect(elements.contains { $0.kind == .link("https://example.com/") })
+    }
+
+    @Test func stripTrackingKeepsNonTrackingParameters() {
+        let cleaned = Markdown.stripTrackingParameters(from: "https://example.com/page?a=1&utm_medium=email&b=2")
+        #expect(cleaned == "https://example.com/page?a=1&b=2")
+    }
+
+    @Test func stripTrackingLeavesCleanURLsUntouched() {
+        let url = "https://example.com/page?a=1"
+        #expect(Markdown.stripTrackingParameters(from: url) == url)
+    }
+
+    @Test func stripTrackingRemovesAllLeavingCleanBase() {
+        let cleaned = Markdown.stripTrackingParameters(from: "https://example.com/page?utm_source=x")
+        #expect(cleaned == "https://example.com/page")
+    }
 }
 
 @MainActor

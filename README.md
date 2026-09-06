@@ -25,10 +25,13 @@ remember to fix the relay   → just stays text. good.
 - **Stopwatches** — `.stopwatch` starts a counter that ticks up in the corner; `⏹` freezes its reading, `.stopwatch cancel` clears it. No end means no banners — the chip is the whole surface, and it keeps counting across relaunches.
 - **Reminders** — `.remind in 10 minutes` or `.remind tomorrow at 3pm`. One-shot system notifications, persisted.
 - **Dates & units, offline** — return on `2026-08-22` appends its weekday; `days until …` counts down; `12 kg -> lb` converts. Built-in table, no network.
+- **Currency & crypto, opt-in** — flip *Settings → Currency* and `100 USD → EUR` converts live rates; crypto works too (`1 BTC → USD`). The switch is off by default so the note never touches the network until you ask; rates refresh at most once an hour (Coinbase exchange rates, fiat + crypto).
 - **Capture** — `.paste` streams clipboard copies into the note until you dismiss it. Drop an image on the pane for on-device OCR (Apple Vision, fully local).
 - **Command palette (`⌘P`)** — fuzzy-search every dot-command, pick one, and it lands on its own line at the caret ready for arguments.
 - **Autosave** — every keystroke saved atomically to `Application Support/Antimatter/scratchpad.md` with a one-generation `.bak`. Type → quit → relaunch → it's still there. External edits are adopted instead of clobbered.
 - **Dot-command autocompletion** — native completion window appears as you type after a `.`.
+- **Export, no network** — `.export notes` sends the note to Apple Notes; `.export obsidian` saves it as a markdown file wherever you point.
+- **Typing that cleans up after you** — `--` becomes an en dash and an inline `---` an em dash as you type (`---` on its own line stays raw so Markdown still draws a horizontal rule), and URLs with `utm_*`, `fbclid`, `gclid` & friends lose their tracking parameters when rendered as links.
 - **Help & debug** — `.help` opens a full-screen command reference; `.debug` shows the event log.
 
 ## Dot-Commands
@@ -45,6 +48,8 @@ remember to fix the relay   → just stays text. good.
 | `.sum` / `.total` | Sum the note's numbers |
 | `.avg` / `.average` | Average the note's numbers |
 | `.count` | Count the note's numbers |
+| `.export notes` | Send the note to Apple Notes |
+| `.export obsidian` | Save the note as markdown in your vault |
 | `.settings` | Open settings |
 | `.debug` | Show diagnostics + event log |
 | `.help` | Show the command reference |
@@ -56,6 +61,7 @@ Not sure which command does what? Type `.` and autocomplete, or `⌘P` and fuzzy
 - **Hot key chord** — pick your own modifiers + key (default `⌃⌥Space`).
 - **Font size** — 11–26pt.
 - **Appearance** — System / Light / Dark.
+- **Currency conversion** — off by default; flip it on to fetch (and cache) live fiat + crypto exchange rates.
 
 ## Keyboard
 
@@ -73,9 +79,9 @@ Not sure which command does what? Type `.` and autocomplete, or `⌘P` and fuzzy
 antimatter/
 ├── App         app entry, window scene, hotkey wiring
 ├── UI          pane editor (NSTextView), command palette, chips, styling
-├── Parser      Markdown, expression evaluator, intent detection
+├── Parser      Markdown, expression evaluator, intent detection, smart dashes
 ├── Storage     autosaved scratchpad
-├── Services    timers, global hot key
+├── Services    timers, global hot key, currency rates, exports
 └── antimatterTests   Swift Testing
 ```
 
@@ -86,7 +92,7 @@ Simple operations are deterministic — timers use a timer, arithmetic uses a pa
 - **Language:** Swift
 - **UI:** SwiftUI + AppKit (`NSTextView` pane)
 - **Platform:** macOS
-- **Persistence:** plain Markdown file (`scratchpad.md` + `.bak`) and JSON for timers, in Application Support
+- **Persistence:** plain Markdown file (`scratchpad.md` + `.bak`) and JSON for timers and, when enabled, cached exchange rates, in Application Support
 - **OCR:** Apple Vision, on-device
 - **Tests:** Swift Testing
 

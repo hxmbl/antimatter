@@ -192,6 +192,36 @@ struct PaneEditor: NSViewRepresentable {
             updateFooterStatus(textView)
         }
 
+        /// Smart dashes as you type: `--` → `–`, inline `---` → `—`, and an
+        /// own-line `---` stays raw so Markdown renders a horizontal rule.
+        /// Only a single-character insert is intercepted; pastes and
+        /// multi-character substitutions pass straight through.
+        func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+            guard !isInHelpView,
+                  let replacement = replacementString,
+                  replacement.utf16.count == 1,
+                  affectedCharRange.length == 0
+            else { return true }
+            guard let typed = replacement.first else { return true }
+            let location = affectedCharRange.location
+            switch DashSubstitution.outcome(typing: typed, into: textView.string, at: location) {
+            case .accept:
+                return true
+            case .rewrite(let range, let text):
+                // `range` covers the hyphen run (and, for an inline `---`, the
+                // segment the third hyphen occupies); `text` already includes
+                // the typed character where one is being carried along. One
+                // edit, so undo walks back to the raw hyphens.
+                textView.breakUndoCoalescing()
+                if textView.shouldChangeText(in: range, replacementString: text) {
+                    textView.textStorage?.replaceCharacters(in: range, with: text)
+                    textView.didChangeText()
+                    textView.setSelectedRange(NSRange(location: range.location + (text as NSString).length, length: 0))
+                }
+                return false
+            }
+        }
+
         /// Return pressed: run any recognised intent on the caret's line
         /// before the newline lands. The newline is never consumed unless
         /// the intent took over the buffer (`.help` opens the reference).
@@ -305,6 +335,8 @@ struct PaneEditor: NSViewRepresentable {
                 NoticeCenter.shared.show(count == 0 ? "No pending reminders to cancel." : (count == 1 ? "Reminder cancelled." : "\(count) reminders cancelled."))
             case .startPasteStream:
                 PasteStream.shared.startStreaming()
+            case .export(let destination):
+                exportNote(to: destination)
             case .showHelp:
                 enterReferenceView(textView, content: IntentExecution.helpText)
                 return true
@@ -328,6 +360,21 @@ struct PaneEditor: NSViewRepresentable {
                 break
             }
             return false
+        }
+
+        /// `.export`: send the whole note somewhere local. Reuses the same
+        /// text the note owns; no network involved.
+        private func exportNote(to destination: ExportDestination) {
+            guard !isInHelpView else { return }
+            do {
+                let outcome = try ExportCenter.export(destination, text: text.wrappedValue)
+                NoticeCenter.shared.show(outcome)
+                DebugLog.log("export — \(destination.rawValue)")
+            } catch {
+                NoticeCenter.shared.show(error.localizedDescription.isEmpty
+                    ? "Export cancelled."
+                    : error.localizedDescription)
+            }
         }
 
         /// Live footer: preview what return would do on the caret line, and

@@ -701,7 +701,7 @@ enum Markdown {
               urlEnd > text.index(after: parenStart)
         else { return nil }
         let closeEnd = text.index(after: urlEnd)
-        let urlString = String(text[text.index(after: parenStart)..<urlEnd])
+        let urlString = Self.stripTrackingParameters(from: String(text[text.index(after: parenStart)..<urlEnd]))
         guard URL(string: urlString) != nil else { return nil }
         if let bang = imagePrefix {
             out.append(Element(kind: .hidden, range: NSRange(bang..<start, in: text)))
@@ -723,7 +723,7 @@ enum Markdown {
         }
         guard matched, let gt = findDelimiter(">", count: 1, from: innerStart, limit: limit, in: text), gt > innerStart else { return nil }
         let closeEnd = text.index(after: gt)
-        let urlString = String(text[innerStart..<gt])
+        let urlString = Self.stripTrackingParameters(from: String(text[innerStart..<gt]))
         guard URL(string: urlString) != nil else { return nil }
         appendHidden(start..<innerStart, text: text, into: &out)
         out.append(Element(kind: .link(urlString), range: NSRange(innerStart..<gt, in: text)))
@@ -763,10 +763,37 @@ enum Markdown {
             let host = text[text.index(start, offsetBy: 4)..<end]
             guard host.contains("."), host.count > 1 else { return nil }
         }
-        let urlString = hrefPrefix + String(text[start..<end])
+        let urlString = Self.stripTrackingParameters(from: hrefPrefix + String(text[start..<end]))
         guard URL(string: urlString) != nil else { return nil }
         out.append(Element(kind: .link(urlString), range: NSRange(start..<end, in: text)))
         return end
     }
+
+    // MARK: URL hygiene
+
+    /// A URL "shrunk" without a network call: tracking parameters are dropped
+    /// so the stored and displayed address is the clean canonical one. Used by
+    /// every link form (inline, autolink, bare) so pasting a campaign URL
+    /// never litters the note with `?utm_…`.
+    static func stripTrackingParameters(from urlString: String) -> String {
+        guard let url = URLComponents(string: urlString),
+              let items = url.queryItems, !items.isEmpty else { return urlString }
+        let kept = items.filter { !Self.trackingParameters.contains($0.name.lowercased()) }
+        guard kept.count != items.count else { return urlString }
+        var cleaned = url
+        cleaned.queryItems = kept.isEmpty ? nil : kept
+        return cleaned.string ?? urlString
+    }
+
+    /// Parameter names that exist only to track a referral, not to address a
+    /// resource. Common across every major campaign (UTM, social, ad, mail).
+    private static let trackingParameters: Set<String> = [
+        "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+        "utm_id", "utm_cid", "utm_reader", "utm_referrer", "utm_name", "utm_pubreferrer",
+        "fbclid", "gclid", "gclsrc", "dclid", "msclkid", "twclid", "yclid",
+        "igshid", "sc_campaign", "sc_channel", "sc_content", "sc_medium", "sc_outcome",
+        "mc_cid", "mc_eid", "_hsenc", "_hsmi", "vero_conv", "vero_id", "li_fat_id",
+        "s_cid", "spm", "spref", "si",
+    ]
 }
 
