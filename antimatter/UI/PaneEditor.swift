@@ -274,11 +274,6 @@ struct PaneEditor: NSViewRepresentable {
         /// Reactive results: once typing quiets down, committed lines whose
         /// stored answers drifted (a definition changed) are recomputed in
         /// place. Debounced so it never fights an active keystroke, and
-        /// suppressed after an undo — otherwise the pass would instantly
-        /// reapply whatever ⌘Z just removed.
-        /// Reactive results: once typing quiets down, committed lines whose
-        /// stored answers drifted (a definition changed) are recomputed in
-        /// place. Debounced so it never fights an active keystroke, and
         /// suppressed while undo is in play — the pass would otherwise
         /// instantly reapply whatever ⌘Z just removed.
         private func scheduleReactivePass(_ textView: NSTextView) {

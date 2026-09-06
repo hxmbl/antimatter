@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 
 /// The pane's text view.
 ///
@@ -35,51 +36,218 @@ final class PaneTextView: NSTextView {
     private var currentRepeatAction: (() -> Void)?
     private var currentInterval: TimeInterval = 0.35
     private var isAccelerating = false
-    private var smoothAnimationTimer: Timer?
 
-    /// Routes around any subclass override of `setSelectedRange` without
-    /// using `super`, which Swift does not allow inside an escaping closure.
-    private func setSelectionRaw(_ range: NSRange) {
-        super.setSelectedRange(range)
+    // MARK: Visual-only caret glide
+    //
+    // The real NSTextView selection/caret is authoritative and always moves
+    // to its final spot immediately — editing, IME, undo, accessibility and
+    // the delegate all see the true position. The animation below is a pure
+    // visual overlay: it glides/stretches a "ghost" caret between where the
+    // caret was and where it now is, drawn on top of the text. It never
+    // touches `setSelectedRange`, so while the ghost sweeps, the actual
+    // insertion point is already the destination. Small moves glide normally;
+    // larger gaps glide faster over the distance.
+
+    private struct Glide {
+        var from: CGRect
+        var to: CGRect
+        var startTime: CFTimeInterval
+        var duration: CFTimeInterval
     }
 
-    /// Smoothly eases the caret from its current spot to wherever `action`
-    /// leaves it. Intended only for small, single-step moves (one arrow press);
-    /// it is a no-op glider, so an action that jumps far is applied instantly
-    /// instead — nobody wants to watch the caret crawl from line 1 to line 500.
+    private var glide: Glide?
+    private var glideTimer: Timer?
+    private var selectionBeforeMouseDown = NSRange(location: 0, length: 0)
+    private var windowObserverToken: NSObjectProtocol?
+    private var inputSessionTimer: Timer?
+
+    private var caretIsActive: Bool {
+        window?.isKeyWindow == true && window?.firstResponder === self
+    }
+
+    /// Kicks off (or retargets) a ghost glide from `fromLocation` to
+    /// `toLocation`. Small moves earn a normal glide; larger gaps glide
+    /// faster over the distance so the animation never feels sluggish.
+    private func glideCaret(from fromLocation: Int, to toLocation: Int) {
+        // Only when a real, focused, collapsed caret is drawn — never while
+        // composing an IME string, never while a selection is visible.
+        guard caretIsActive, selectedRange().length == 0, !hasMarkedText() else {
+            cancelGlide()
+            return
+        }
+        guard fromLocation != toLocation else {
+            cancelGlide()
+            return
+        }
+        let fromRect = caretRect(forCharacterIndex: fromLocation)
+        let toRect = caretRect(forCharacterIndex: toLocation)
+        let distance = hypot(toRect.midX - fromRect.midX, toRect.midY - fromRect.midY)
+        startGlide(from: fromRect, to: toRect, distance: distance)
+    }
+
+    private func startGlide(from fromRect: CGRect, to toRect: CGRect, distance: CGFloat) {
+        cancelGlide()
+        // Keep duration roughly constant; larger gaps naturally get covered faster
+        // (speed = distance/duration). Very large jumps get slightly shorter duration.
+        let baseDuration: CFTimeInterval = 0.15
+        let distanceFactor = min(distance / 1000.0, 0.3) // Minimal scaling for huge jumps
+        let duration = baseDuration / (1.0 + distanceFactor)
+        glide = Glide(from: fromRect, to: toRect, startTime: CACurrentMediaTime(), duration: duration)
+        invalidateGlideArea()
+        glideTimer?.invalidate()
+        glideTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            self?.advanceGlide()
+        }
+        // Begin a minimal input session to suppress NSInputAnalytics warning
+        beginInputSession()
+    }
+
+    private func advanceGlide() {
+        // A selection, IME composition, or focus change that slips in mid-glide
+        // drops the ghost immediately — the real text system owns the caret.
+        guard caretIsActive, selectedRange().length == 0, !hasMarkedText() else {
+            cancelGlide()
+            return
+        }
+        guard let glide = glide else { return }
+        let t = (CACurrentMediaTime() - glide.startTime) / glide.duration
+        if t >= 1 {
+            finishGlide()
+        } else {
+            invalidateGlideArea()
+        }
+    }
+
+    private func finishGlide() {
+        guard glide != nil else { return }
+        invalidateGlideArea()
+        glide = nil
+        glideTimer?.invalidate()
+        glideTimer = nil
+        endInputSession()
+    }
+
+    /// Cancels any in-flight glide so no stale ghost lingers (focus loss,
+    /// large jump, selection, IME). The real caret is always ready to draw.
+    private func cancelGlide() {
+        guard glide != nil || glideTimer != nil else { return }
+        invalidateGlideArea()
+        glide = nil
+        glideTimer?.invalidate()
+        glideTimer = nil
+        endInputSession()
+    }
+
+    private func invalidateGlideArea() {
+        guard let glide = glide else { return }
+        setNeedsDisplay(glide.from.union(glide.to).insetBy(dx: -6, dy: -4))
+    }
+
+    private func currentGlideRect() -> CGRect? {
+        guard let glide = glide else { return nil }
+        let t = min(max((CACurrentMediaTime() - glide.startTime) / glide.duration, 0), 1)
+        let eased = 1 - pow(1 - t, 3)
+        return CGRect(
+            x: glide.from.minX + (glide.to.minX - glide.from.minX) * eased,
+            y: glide.from.minY + (glide.to.minY - glide.from.minY) * eased,
+            width: glide.to.width,
+            height: glide.from.height + (glide.to.height - glide.from.height) * eased
+        )
+    }
+    
+    /// Minimal input session management to suppress NSInputAnalytics warnings
+    private func beginInputSession() {
+        inputSessionTimer?.invalidate()
+        inputSessionTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in
+            self?.endInputSession()
+        }
+    }
+    
+    private func endInputSession() {
+        inputSessionTimer?.invalidate()
+        inputSessionTimer = nil
+    }
+
+    /// The caret rectangle (in the text view's drawing space) for a character
+    /// index, derived from the layout manager the same way AppKit does.
+    private func caretRect(forCharacterIndex index: Int) -> CGRect {
+        guard let layoutManager = layoutManager else { return .zero }
+        let length = textStorage?.length ?? 0
+        let clamped = min(max(index, 0), length)
+        let glyphIndex = layoutManager.glyphIndexForCharacter(at: clamped)
+        let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+        let glyphLocation = layoutManager.location(forGlyphAt: glyphIndex)
+        let origin = textContainerOrigin
+        let width: CGFloat = 2
+        return CGRect(x: origin.x + glyphLocation.x, y: origin.y + lineRect.minY, width: width, height: lineRect.height)
+    }
+
+    /// Suppresses the real caret while the ghost is sweeping (so the two never
+    /// overlap) and hands the authoritative destination rect over to the glide.
+    override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+        if glide != nil, caretIsActive, selectedRange().length == 0, !hasMarkedText() {
+            glide?.to = rect
+            return
+        }
+        super.drawInsertionPoint(in: rect, color: color, turnedOn: flag)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        drawCaretGlide()
+    }
+
+    /// Draws the gliding/stretching ghost caret on top of the text. Whenever
+    /// it is not animating the real AppKit caret shows through untouched.
+    private func drawCaretGlide() {
+        guard caretIsActive, selectedRange().length == 0, !hasMarkedText(),
+              let glide = glide, let head = currentGlideRect() else { return }
+        let color = insertionPointColor ?? .labelColor
+        // A tapered belt from the source caret to the moving head gives the
+        // terminal-like stretch as it sweeps toward the new position.
+        let base = glide.from
+        let belt = NSBezierPath()
+        belt.move(to: CGPoint(x: base.minX, y: base.minY))
+        belt.line(to: CGPoint(x: head.minX, y: head.minY))
+        belt.line(to: CGPoint(x: head.minX, y: head.maxY))
+        belt.line(to: CGPoint(x: base.minX, y: base.maxY))
+        belt.close()
+        color.withAlphaComponent(0.45).setFill()
+        belt.fill()
+        let headRect = CGRect(x: head.minX, y: head.minY, width: max(2, head.width), height: max(2, head.height))
+        color.setFill()
+        NSBezierPath(roundedRect: headRect, xRadius: 1, yRadius: 1).fill()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let windowObserverToken {
+            NotificationCenter.default.removeObserver(windowObserverToken)
+            self.windowObserverToken = nil
+        }
+        if let window = window {
+            windowObserverToken = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResignKeyNotification, object: window, queue: .main
+            ) { [weak self] _ in
+                self?.cancelGlide()
+            }
+        }
+    }
+
+    override func resignFirstResponder() -> Bool {
+        cancelGlide()
+        return super.resignFirstResponder()
+    }
+
+    /// Runs the action (letting the real caret land instantly) then glides a
+    /// visual ghost from where the caret was to where it now is. Small moves
+    /// glide normally; larger gaps glide faster over the distance.
     private func performSmoothAction(_ action: () -> Void) {
         let startRange = selectedRange()
         action()
         let endRange = selectedRange()
-        let startLength = textStorage?.length ?? startRange.length
-        guard startRange != endRange || ((textStorage?.length ?? startLength) != startLength) else { return }
-        let delta = abs(endRange.location - startRange.location)
-        // Big or medium jumps (word/line/document) go straight there —
-        // nobody wants to watch the caret crawl from line 1 to line 500 —
-        // and only a tiny single-character step earns the glide.
-        guard delta <= 1 else {
-            super.setSelectedRange(endRange)
-            return
-        }
-        super.setSelectedRange(startRange)
-        smoothAnimationTimer?.invalidate()
-        let steps = 8
-        let interval = 0.004
-        var step = 0
-        smoothAnimationTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timer in
-            guard let self = self else { timer.invalidate(); return }
-            step += 1
-            if step >= steps {
-                timer.invalidate()
-                self.smoothAnimationTimer = nil
-                self.setSelectionRaw(endRange)
-            } else {
-                let progress = Double(step) / Double(steps)
-                let eased = 1 - pow(1 - progress, 3)
-                let newLoc = Int(Double(startRange.location) + Double(endRange.location - startRange.location) * eased)
-                self.setSelectionRaw(NSRange(location: max(0, min(newLoc, self.textStorage?.length ?? newLoc)), length: 0))
-            }
-        }
+        guard startRange != endRange else { return }
+        glideCaret(from: startRange.location, to: endRange.location)
     }
 
     private static let acceleratedKeyCodes: Set<UInt16> = [
@@ -161,8 +329,16 @@ final class PaneTextView: NSTextView {
         // key; a click is what hands it typing, so make it key first. Without
         // this, the first click surfaces the window but keystrokes still beep.
         window?.makeKeyAndOrderFront(nil)
+        selectionBeforeMouseDown = selectedRange()
         pendingClick = (event.locationInWindow, event.modifierFlags.intersection(.deviceIndependentFlagsMask))
         super.mouseDown(with: event)
+        // The click already moved the REAL caret to the mouse point instantly;
+        // glide a visual ghost from wherever the caret was to show it routing.
+        // A drag-to-select or double-click forms a selection, so the guard
+        // (collapsed caret) cancels the ghost and shows the selection as-is.
+        if selectedRange().length == 0 {
+            glideCaret(from: selectionBeforeMouseDown.location, to: selectedRange().location)
+        }
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -285,6 +461,20 @@ final class PaneTextView: NSTextView {
             startAcceleration(for: event)
             return
         }
+        
+        // Handle delete/backspace with caret glide
+        let keyCode = event.keyCode
+        if keyCode == 51 || keyCode == 117 { // Backspace or Forward Delete
+            let startRange = selectedRange()
+            super.keyDown(with: event)
+            let endRange = selectedRange()
+            if startRange != endRange && startRange.length == 0 && endRange.length == 0 {
+                // Caret moved due to deletion, animate it
+                glideCaret(from: startRange.location, to: endRange.location)
+            }
+            return
+        }
+        
         super.keyDown(with: event)
     }
 
@@ -329,46 +519,35 @@ final class PaneTextView: NSTextView {
         let step = 2
         if direction > 0 {
             let spaces = String(repeating: " ", count: step)
-            guard replaceText(in: NSRange(location: line.location, length: 0), with: spaces) else { return false }
+            replaceText(in: NSRange(location: line.location, length: 0), with: spaces)
             let newCaret = selected.location == line.location ? line.location : selected.location + step
             setSelectedRange(NSRange(location: newCaret, length: 0))
             return true
         }
         let removed = min(step, spaceCount)
         guard removed > 0 else { return false }
-        guard replaceText(in: NSRange(location: line.location, length: removed), with: "") else { return false }
+        replaceText(in: NSRange(location: line.location, length: removed), with: "")
         setSelectedRange(NSRange(location: max(line.location, selected.location - removed), length: 0))
         return true
     }
 
     private func isListMarker(_ rest: Substring) -> Bool {
         guard let first = rest.first else { return false }
-        let afterFirst = rest.index(after: rest.startIndex)
-        guard afterFirst < rest.endIndex else { return false }
-        // Bullet lists: "- ", "+ ", "* " (must have space after)
-        if "-+*".contains(first) {
-            return rest[afterFirst] == " "
-        }
-        // Ordered lists: "1. ", "2) ", etc. (must have space after)
+        if "-+*".contains(first) { return true }
         var index = rest.startIndex
         while index < rest.endIndex, rest[index].isNumber {
             index = rest.index(after: index)
         }
-        guard index != rest.startIndex && index < rest.endIndex else { return false }
-        guard rest[index] == "." || rest[index] == ")" else { return false }
-        let afterMarker = rest.index(after: index)
-        return afterMarker < rest.endIndex && rest[afterMarker] == " "
+        return index != rest.startIndex && index < rest.endIndex
+            && (rest[index] == "." || rest[index] == ")")
     }
 
     /// A text change that flows through the editing machinery, so the
     /// delegate (binding sync, re-render, undo) sees it exactly like typing.
-    /// Returns false if the delegate rejected the change via shouldChangeText.
-    @discardableResult
-    private func replaceText(in range: NSRange, with replacement: String) -> Bool {
-        guard shouldChangeText(in: range, replacementString: replacement) else { return false }
+    private func replaceText(in range: NSRange, with replacement: String) {
+        guard shouldChangeText(in: range, replacementString: replacement) else { return }
         textStorage?.replaceCharacters(in: range, with: replacement)
         didChangeText()
-        return true
     }
 
     // MARK: Escape hides the pane
@@ -434,5 +613,13 @@ final class PaneTextView: NSTextView {
     /// is ever that small.
     private func isCollapsed(at index: Int, in storage: NSTextStorage) -> Bool {
         (storage.attribute(.font, at: index, effectiveRange: nil) as? NSFont).map { $0.pointSize <= 2 } ?? false
+    }
+
+    deinit {
+        glideTimer?.invalidate()
+        inputSessionTimer?.invalidate()
+        if let windowObserverToken {
+            NotificationCenter.default.removeObserver(windowObserverToken)
+        }
     }
 }

@@ -1,6 +1,54 @@
 import AppKit
 import Foundation
 
+// MARK: - Syntax Highlighter
+
+/// Lightweight syntax highlighter for code content.
+/// Processes code strings and returns highlighted attributed strings.
+enum CodeHighlighter {
+    /// Applies basic syntax highlighting to code content.
+    static func highlight(code: String, language: String?, baseFont: NSFont) -> NSAttributedString {
+        let highlighted = NSMutableAttributedString(string: code)
+        highlighted.addAttribute(.font, value: baseFont, range: NSRange(location: 0, length: highlighted.length))
+        
+        guard let language = language?.lowercased() else {
+            return highlighted
+        }
+        
+        // Minimal keyword highlighting only
+        let keywords: [String]
+        switch language {
+        case "swift":
+            keywords = ["func", "var", "let", "class", "struct", "if", "else", "return", "true", "false", "nil"]
+        case "python":
+            keywords = ["def", "class", "import", "return", "if", "else", "for", "while", "True", "False", "None"]
+        case "javascript", "js", "typescript", "ts":
+            keywords = ["function", "const", "let", "var", "return", "if", "else", "for", "while", "true", "false", "null"]
+        case "rust":
+            keywords = ["fn", "let", "mut", "pub", "impl", "struct", "return", "if", "else", "true", "false"]
+        case "go":
+            keywords = ["func", "var", "const", "return", "if", "else", "for", "true", "false", "nil"]
+        case "bash", "sh", "shell":
+            keywords = ["if", "then", "else", "fi", "for", "do", "done", "echo", "cd", "ls"]
+        default:
+            return highlighted
+        }
+        
+        let nsCode = code as NSString
+        for keyword in keywords {
+            var searchRange = NSRange(location: 0, length: nsCode.length)
+            while true {
+                let range = nsCode.range(of: keyword, options: .caseInsensitive, range: searchRange)
+                if range.location == NSNotFound { break }
+                highlighted.addAttribute(.foregroundColor, value: NSColor.systemPurple, range: range)
+                searchRange = NSRange(location: NSMaxRange(range), length: nsCode.length - NSMaxRange(range))
+            }
+        }
+        
+        return highlighted
+    }
+}
+
 // MARK: - Renderer
 
 /// Owns the rendered state of one text view: the parsed elements, the line
@@ -43,7 +91,8 @@ final class MarkdownHighlighter {
         self.elements = elements
         self.lineStarts = lineStarts
         self.activeLines = activeLines
-
+        
+        // First pass: apply all Markdown styling
         for element in elements {
             switch element.kind {
             case .heading(let level):
@@ -96,6 +145,9 @@ final class MarkdownHighlighter {
                 }
             }
         }
+        
+        // Second pass: apply syntax highlighting to code blocks with language identifiers
+        applyCodeHighlighting(to: storage, text: text, elements: elements, baseSize: baseSize)
     }
 
     /// Renders only what changed since the last render: falls back to a full
@@ -222,6 +274,47 @@ final class MarkdownHighlighter {
         style.headIndent = headIndent
         style.firstLineHeadIndent = firstLineHeadIndent
         return style
+    }
+    
+    // MARK: Code Highlighting
+    
+    private func applyCodeHighlighting(to storage: NSTextStorage, text: String, elements: [Markdown.Element], baseSize: CGFloat) {
+        var currentLanguage: String?
+        var codeBlockRange: NSRange?
+        
+        for element in elements {
+            switch element.kind {
+            case .language:
+                currentLanguage = (text as NSString).substring(with: element.range).trimmingCharacters(in: .whitespaces)
+            case .codeBlock:
+                codeBlockRange = element.range
+                if let language = currentLanguage, !language.isEmpty, let range = codeBlockRange {
+                    let codeContent = (text as NSString).substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !codeContent.isEmpty {
+                        let highlighted = CodeHighlighter.highlight(code: codeContent, language: language, baseFont: NSFont.monospacedSystemFont(ofSize: baseSize - 1, weight: .regular))
+                        let contentRange = (text as NSString).range(of: codeContent, options: [])
+                        if contentRange.location != NSNotFound {
+                            let adjustedRange = NSRange(location: range.location + contentRange.location, length: contentRange.length)
+                            if adjustedRange.location + adjustedRange.length <= storage.length {
+                                // Apply attributes from highlighted string to existing storage
+                                // without replacing the underlying text
+                                let fullRange = NSRange(location: 0, length: highlighted.length)
+                                highlighted.enumerateAttributes(in: fullRange, options: []) { attrs, attrRange, _ in
+                                    let storageRange = NSRange(location: adjustedRange.location + attrRange.location, length: attrRange.length)
+                                    if storageRange.location + storageRange.length <= storage.length {
+                                        storage.addAttributes(attrs, range: storageRange)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                currentLanguage = nil
+                codeBlockRange = nil
+            default:
+                break
+            }
+        }
     }
 }
 
