@@ -20,6 +20,8 @@ struct AntimatterApp: App {
                 .keyboardShortcut("r", modifiers: [.command])
             }
             CommandGroup(after: .textEditing) {
+                Button("Command Palette…") { PaneIntentSupport.perform(.showCommandPalette) }
+                    .keyboardShortcut("p", modifiers: [.command])
                 Button("Find…") { FindSupport.perform(.showFindInterface) }
                     .keyboardShortcut("f", modifiers: [.command])
                 Button("Find Next") { FindSupport.perform(.nextMatch) }
@@ -43,6 +45,28 @@ enum FindSupport {
         let item = NSMenuItem()
         item.tag = Int(action.rawValue)
         textView.performTextFinderAction(item)
+    }
+}
+
+/// A menu-level intent for the pane's text view.
+@MainActor
+enum PaneIntent {
+    case showCommandPalette
+}
+
+/// Bridges menu items to the pane's coordinator. Both the find bar and the
+/// palette live in the text view's delegate — the pane's key window,
+/// wherever the caret happened to be, is the entry point.
+@MainActor
+enum PaneIntentSupport {
+    static func perform(_ intent: PaneIntent) {
+        guard let textView = NSApplication.shared.keyWindow?.firstResponder as? NSTextView,
+              let coordinator = textView.delegate as? PaneEditor.Coordinator
+        else { return }
+        switch intent {
+        case .showCommandPalette:
+            coordinator.showCommandPalette(in: textView)
+        }
     }
 }
 
@@ -112,7 +136,8 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
     }
 }
 
-/// Appearance and Dock-icon policy chosen in Settings, applied at launch.
+/// Appearance policy chosen in Settings, applied at launch. The app always
+/// stays in the Dock for now; menu-bar (accessory) mode is a later feature.
 @MainActor
 enum LaunchPreferences {
     static func apply() {
@@ -121,9 +146,7 @@ enum LaunchPreferences {
         case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
         default: NSApp.appearance = nil
         }
-        if UserDefaults.standard.bool(forKey: "hideDockIcon") {
-            NSApp.setActivationPolicy(.accessory)
-        }
+        NSApp.setActivationPolicy(.regular)
     }
 
     static func appearanceChanged(_ value: String) {
@@ -132,9 +155,5 @@ enum LaunchPreferences {
         case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
         default: NSApp.appearance = nil
         }
-    }
-
-    static func dockIconHiddenChanged(_ hidden: Bool) {
-        NSApp.setActivationPolicy(hidden ? .accessory : .regular)
     }
 }

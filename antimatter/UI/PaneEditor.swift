@@ -533,6 +533,36 @@ struct PaneEditor: NSViewRepresentable {
             }
         }
 
+        // MARK: Command palette (⌘P)
+
+        /// The open palette, if any — ⌘P is a no-op while it's showing.
+        private var commandPalette: CommandPalette?
+
+        /// ⌘P: present the command palette. Picking inserts the command on
+        /// its own line at the caret, leaving the caret after it so arguments
+        /// are the next keystroke and return can run it.
+        func showCommandPalette(in textView: NSTextView) {
+            guard commandPalette == nil, let window = textView.window else { return }
+            let palette = CommandPalette()
+            commandPalette = palette
+            palette.present(anchoredTo: window) { [weak self, weak textView] command in
+                guard let self, let textView, textView.window != nil else { return }
+                let selection = textView.selectedRange()
+                let commit = IntentExecution.paletteInsertionCommit(
+                    for: command.name,
+                    selection: selection,
+                    in: textView.string)
+                textView.breakUndoCoalescing()
+                textView.insertText(commit.replacement, replacementRange: selection)
+                textView.setSelectedRange(NSRange(location: commit.caret, length: 0))
+                textView.window?.makeKeyAndOrderFront(nil)
+                textView.window?.makeFirstResponder(textView)
+                DebugLog.log("palette picked \(command.name)")
+            } onDismiss: { [weak self] in
+                self?.commandPalette = nil
+            }
+        }
+
         /// Applies commits bottom-up so earlier ranges survive later
         /// insertions, keeps one undo step, and restores the caret sensibly
         /// when it sat inside a rewritten line.

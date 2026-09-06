@@ -406,6 +406,53 @@ nonisolated enum IntentExecution {
         (".help", "show the command reference"),
     ]
 
+    // MARK: Command palette (⌘P)
+
+    /// A command as shown by the ⌘P palette: its `name` is inserted verbatim
+    /// (with a trailing space so arguments are the next keystroke); the
+    /// `description` explains what it does.
+    struct PaletteCommand: Equatable {
+        let name: String
+        let description: String
+    }
+
+    /// Everything the ⌘P palette offers, filtered by what was typed. An empty
+    /// query lists every command; otherwise the name and the description are
+    /// matched case-insensitively anywhere within.
+    static func paletteCommands(matching query: String) -> [PaletteCommand] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let commands = dotCommands.map { PaletteCommand(name: $0.name, description: $0.description) }
+        guard !needle.isEmpty else { return commands }
+        return commands.filter {
+            $0.name.lowercased().contains(needle) || $0.description.lowercased().contains(needle)
+        }
+    }
+
+    /// Where a palette-picked command lands and where the caret ends up. The
+    /// command always starts its own line so return can run it: when the
+    /// caret isn't already on a bare line, a newline is inserted in front.
+    /// Returns the text to replace `selection` with and the caret position
+    /// just past it.
+    static func paletteInsertionCommit(
+        for command: String,
+        selection: NSRange,
+        in text: String
+    ) -> (replacement: String, caret: Int) {
+        let ns = text as NSString
+        let caret = min(selection.location, ns.length)
+        var lineStart = caret
+        while lineStart > 0 {
+            let character = ns.character(at: lineStart - 1)
+            if character == 0x0A || character == 0x0D { break }
+            lineStart -= 1
+        }
+        let prefix = ns.substring(with: NSRange(location: lineStart, length: caret - lineStart))
+        let lineIsBare = prefix.trimmingCharacters(in: .whitespaces).isEmpty
+        let leadingNewline = lineIsBare ? "" : "\n"
+        let replacement = leadingNewline + command + " "
+        return (replacement, caret + (lineIsBare ? 0 : 1) + (command as NSString).length + 1)
+    }
+
     /// Completion strings for text typed after a dot, or nil when the caret
     /// token is not a partial dot-command (`.ti`, `.su`).
     static func completions(for prefix: String) -> [String]? {
