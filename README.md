@@ -32,6 +32,7 @@ remember to fix the relay   → just stays text. good.
 - **Dot-command autocompletion** — native completion window appears as you type after a `.`.
 - **Export, no network** — `.export notes` sends the note to Apple Notes; `.export obsidian` saves it as a markdown file wherever you point.
 - **Typing that cleans up after you** — `--` becomes an en dash and an inline `---` an em dash as you type (`---` on its own line stays raw so Markdown still draws a horizontal rule), and URLs with `utm_*`, `fbclid`, `gclid` & friends lose their tracking parameters when rendered as links.
+- **A smooth, quiet caret** — the caret glides between positions on a faint, fading spline (like the iPhone's text cursor) instead of teleporting, and it's still the same old accessible insertion point underneath.
 - **Help & debug** — `.help` opens a full-screen command reference; `.debug` shows the event log.
 
 ## Dot-Commands

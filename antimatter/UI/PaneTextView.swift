@@ -89,7 +89,7 @@ final class PaneTextView: NSTextView {
         cancelGlide()
         // Keep duration roughly constant; larger gaps naturally get covered faster
         // (speed = distance/duration). Very large jumps get slightly shorter duration.
-        let baseDuration: CFTimeInterval = 0.15
+        let baseDuration: CFTimeInterval = 0.10
         let distanceFactor = min(distance / 1000.0, 0.3) // Minimal scaling for huge jumps
         let duration = baseDuration / (1.0 + distanceFactor)
         glide = Glide(from: fromRect, to: toRect, startTime: CACurrentMediaTime(), duration: duration)
@@ -140,19 +140,26 @@ final class PaneTextView: NSTextView {
 
     private func invalidateGlideArea() {
         guard let glide = glide else { return }
-        setNeedsDisplay(glide.from.union(glide.to).insetBy(dx: -6, dy: -4))
+        setNeedsDisplay(glide.from.union(glide.to).insetBy(dx: -8, dy: -8))
     }
 
     private func currentGlideRect() -> CGRect? {
         guard let glide = glide else { return nil }
         let t = min(max((CACurrentMediaTime() - glide.startTime) / glide.duration, 0), 1)
-        let eased = 1 - pow(1 - t, 3)
+        let eased = easedCurve(t)
         return CGRect(
             x: glide.from.minX + (glide.to.minX - glide.from.minX) * eased,
             y: glide.from.minY + (glide.to.minY - glide.from.minY) * eased,
             width: glide.to.width,
             height: glide.from.height + (glide.to.height - glide.from.height) * eased
         )
+    }
+
+    /// Soft "fast departure, gentle landing" curve — the iPhone caret moves
+    /// briskly away and settles quietly, instead of the previous cubic that
+    /// dragged for most of its travel.
+    private func easedCurve(_ t: CGFloat) -> CGFloat {
+        pow(t, 0.65)
     }
     
     /// Minimal input session management to suppress NSInputAnalytics warnings
@@ -203,19 +210,31 @@ final class PaneTextView: NSTextView {
         guard caretIsActive, selectedRange().length == 0, !hasMarkedText(),
               let glide = glide, let head = currentGlideRect() else { return }
         let color = insertionPointColor ?? .labelColor
-        // A tapered belt from the source caret to the moving head gives the
-        // terminal-like stretch as it sweeps toward the new position.
+        let t = min(max((CACurrentMediaTime() - glide.startTime) / glide.duration, 0), 1)
+        let eased = easedCurve(t)
+
+        // A faint spline trails from the source caret to the moving head — a
+        // whisper of momentum rather than the old solid belt. It sags very
+        // slightly opposite to the travel direction and dissolves before the
+        // head lands, so nothing lingers once the caret stops.
         let base = glide.from
-        let belt = NSBezierPath()
-        belt.move(to: CGPoint(x: base.minX, y: base.minY))
-        belt.line(to: CGPoint(x: head.minX, y: head.minY))
-        belt.line(to: CGPoint(x: head.minX, y: head.maxY))
-        belt.line(to: CGPoint(x: base.minX, y: base.maxY))
-        belt.close()
-        color.withAlphaComponent(0.45).setFill()
-        belt.fill()
+        let from = CGPoint(x: base.midX, y: base.midY)
+        let to = CGPoint(x: head.midX, y: head.midY)
+        let length = hypot(to.x - from.x, to.y - from.y)
+        let sag = min(length * 0.12, 5)
+        let unitPerp = CGPoint(x: -(to.y - from.y) / max(length, 0.001),
+                               y: (to.x - from.x) / max(length, 0.001))
+        let control = CGPoint(x: (from.x + to.x) / 2 + unitPerp.x * sag,
+                              y: (from.y + to.y) / 2 + unitPerp.y * sag)
+        let trail = NSBezierPath()
+        trail.move(to: from)
+        trail.curve(to: to, controlPoint1: control, controlPoint2: control)
+        color.withAlphaComponent(0.32 * (1 - eased)).setStroke()
+        trail.lineWidth = 1
+        trail.stroke()
+
         let headRect = CGRect(x: head.minX, y: head.minY, width: max(2, head.width), height: max(2, head.height))
-        color.setFill()
+        color.withAlphaComponent(0.85).setFill()
         NSBezierPath(roundedRect: headRect, xRadius: 1, yRadius: 1).fill()
     }
 
