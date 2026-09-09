@@ -6,7 +6,7 @@ import Foundation
 /// keeps the side effects (undo coalescing, text insertion, timer starts).
 ///
 /// Subtlety that lives here:
-/// * **Caret line range** — the line under a collapsed caret, newline
+/// * **Caret line range** — the line under the caret, newline
 ///   stripped, nil for selections spanning characters.
 /// * **Return-key dispatch** — timers first, then dot-commands (`.sum`),
 ///   paste streaming, dates, units, variable definitions, calculations.
@@ -19,7 +19,7 @@ nonisolated enum IntentExecution {
 
     // MARK: Caret line range
 
-    /// The line under a collapsed caret with its trailing newline removed,
+    /// The line under the caret with its trailing newline removed,
     /// or nil when the selection spans characters or sits outside the text.
     /// An empty final line yields a zero-length range; callers decide
     /// whether that is worth acting on.

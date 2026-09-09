@@ -35,23 +35,18 @@ struct WindowConfigurator: NSViewRepresentable {
             return
         }
         window.identifier = NSUserInterfaceItemIdentifier(PaneStyle.windowIdentifier)
-        // Restores the saved frame synchronously; the size clamp below then
-        // reins in any frame saved before a smaller contentMaxSize existed.
-        // Note SwiftUI also keeps its own frame-restore keys in defaults
-        // ("NSWindow Frame …AppWindow…"); ours is applied later and wins.
+        // Restores the saved frame synchronously; the size and screen clamp
+        // below then reins in frames saved before a smaller contentMaxSize
+        // existed or on a display that is no longer connected.
         window.setFrameAutosaveName(PaneStyle.frameAutosaveName)
         let windowMaxSize = NSSize(width: PaneStyle.windowMaxWidth, height: PaneStyle.windowMaxHeight)
         let windowMinSize = NSSize(width: PaneStyle.windowMinWidth, height: PaneStyle.windowMinHeight)
         window.maxSize = windowMaxSize
         window.minSize = windowMinSize
         window.contentMaxSize = NSSize(width: PaneStyle.maxWidth, height: PaneStyle.maxHeight)
-        if window.frame.width > windowMaxSize.width || window.frame.height > windowMaxSize.height {
-            var frame = window.frame
-            frame.size.width = min(frame.width, windowMaxSize.width)
-            frame.size.height = min(frame.height, windowMaxSize.height)
-            window.setFrame(frame, display: true)
-        }
-        UserDefaults.standard.removeObject(forKey: "NSWindow Frame \(PaneStyle.frameAutosaveName)")
+        Self.restoreValidFrame(for: window, maxSize: windowMaxSize)
+        // SwiftUI may leave its own stale restore key behind. It must not
+        // override the explicit pane autosave key above.
         UserDefaults.standard.removeObject(forKey: "NSWindow Frame AppWindow")
         window.setFrameAutosaveName(PaneStyle.frameAutosaveName)
         window.tabbingMode = .disallowed
@@ -66,6 +61,45 @@ struct WindowConfigurator: NSViewRepresentable {
         window.contentView?.layer?.cornerCurve = .continuous
         window.contentView?.layer?.masksToBounds = true
         PaneWindowStyler.applyLive(to: window)
+    }
+
+    /// Keeps the user's position when it is still usable. A disconnected
+    /// monitor can leave AppKit with an origin that no current screen owns,
+    /// so recover to the main screen instead of opening the pane invisibly.
+    private static func restoreValidFrame(for window: NSWindow, maxSize: NSSize) {
+        var frame = window.frame
+        frame.size.width = min(max(frame.width, window.minSize.width), maxSize.width)
+        frame.size.height = min(max(frame.height, window.minSize.height), maxSize.height)
+
+        let screens = NSScreen.screens
+        let visibleFrames = screens.map(\.visibleFrame)
+        let hasUsableIntersection = visibleFrames.contains { visible in
+            let intersection = frame.intersection(visible)
+            let visibleWidth = min(frame.width, visible.width) * 0.25
+            let visibleHeight = min(frame.height, visible.height) * 0.25
+            return intersection.width >= visibleWidth && intersection.height >= visibleHeight
+        }
+
+        if !hasUsableIntersection {
+            let visible = NSScreen.main?.visibleFrame ?? screens.first?.visibleFrame
+            if let visible {
+                frame.origin = NSPoint(
+                    x: visible.midX - frame.width / 2,
+                    y: visible.midY - frame.height / 2
+                )
+            }
+        } else if let visible = visibleFrames.max(by: {
+            let lhs = frame.intersection($0)
+            let rhs = frame.intersection($1)
+            return lhs.width * lhs.height < rhs.width * rhs.height
+        }) {
+            frame.origin.x = min(max(frame.minX, visible.minX), visible.maxX - frame.width)
+            frame.origin.y = min(max(frame.minY, visible.minY), visible.maxY - frame.height)
+        }
+
+        if frame != window.frame {
+            window.setFrame(frame, display: true)
+        }
     }
 
     /// The pane is controlled by the global shortcut, not window controls.

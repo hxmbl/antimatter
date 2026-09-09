@@ -146,6 +146,7 @@ struct PaneEditor: NSViewRepresentable {
         var status: Binding<FooterStatus>
         let highlighter = MarkdownHighlighter()
         private var deferredPassTask: Task<Void, Never>?
+        private var pendingRender: DispatchWorkItem?
         private var appliedFontSize: CGFloat = PaneStyle.fontSize
         private var appliedThemeID = PaneTheme.current.id
         /// Set while undo replays are landing; automatic rewrites stand
@@ -178,7 +179,7 @@ struct PaneEditor: NSViewRepresentable {
             guard let textView = notification.object as? NSTextView else { return }
             autoRewritesSuppressed = textView.undoManager?.isUndoing == true
             let newText = textView.string
-            highlighter.refresh(textView)
+            scheduleRender(textView)
             schedulePendingCalculation(textView)
             scheduleReactivePass(textView)
             if text.wrappedValue != newText {
@@ -186,6 +187,20 @@ struct PaneEditor: NSViewRepresentable {
             }
             updateFooterStatus(textView)
             scheduleCompletion(textView)
+        }
+
+        /// Wait until AppKit finishes the current edit transaction before
+        /// applying Markdown attributes. Rendering synchronously from
+        /// `textDidChange` can influence the typing attributes used by the
+        /// same keystroke, making newly typed Unicode look corrupted.
+        private func scheduleRender(_ textView: NSTextView) {
+            pendingRender?.cancel()
+            let render = DispatchWorkItem { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                self.highlighter.refresh(textView)
+            }
+            pendingRender = render
+            DispatchQueue.main.async(execute: render)
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {

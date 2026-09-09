@@ -19,6 +19,7 @@ final class MenuBarController {
         if let button = statusItem?.button {
             button.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: "Antimatter")
             button.image?.isTemplate = true
+            button.toolTip = "Antimatter"
             button.action = #selector(togglePanel)
             button.target = self
         }
@@ -59,11 +60,11 @@ final class MenuBarController {
         let mode = PaneStyle.displayMode
 
         if mode == .dropdown {
-            if let screen = NSScreen.main {
+            if let screen = screenForStatusItem {
                 let screenFrame = screen.visibleFrame
                 panel.setFrameOrigin(NSPoint(
                     x: screenFrame.midX - panel.frame.width / 2,
-                    y: screenFrame.maxY - panel.frame.height
+                    y: screenFrame.maxY - panel.frame.height - 8
                 ))
             }
         } else {
@@ -79,6 +80,15 @@ final class MenuBarController {
         panel.orderFront(nil)
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: false)
+    }
+
+    private var screenForStatusItem: NSScreen? {
+        guard let button = statusItem?.button, let buttonWindow = button.window else {
+            return NSScreen.main
+        }
+        let buttonFrame = buttonWindow.convertToScreen(button.frame)
+        let point = NSPoint(x: buttonFrame.midX, y: buttonFrame.midY)
+        return NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.main
     }
 
     private func createPanel() {
@@ -108,6 +118,9 @@ final class MenuBarController {
         panel.hasShadow = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = true
+        panel.becomesKeyOnlyIfNeeded = false
+        panel.title = "Antimatter"
 
         // Dismiss on Escape while the panel is key.
         keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak panel] event in

@@ -403,15 +403,6 @@ enum CodeHighlighter {
                 continue
             }
 
-            // String literals
-            if char == 0x22 || char == 0x27 {
-                let delimiter = Character(UnicodeScalar(UInt32(char))!)
-                let stringEnd = findStringEnd(from: i + 1, delimiter: delimiter, in: nsCode, escaped: true)
-                highlighted.addAttribute(.foregroundColor, value: stringColor, range: NSRange(location: i, length: stringEnd - i))
-                i = stringEnd
-                continue
-            }
-
             // Triple-quoted strings (Python)
             if language == "python" && i + 2 < length {
                 let c0 = nsCode.character(at: i)
@@ -431,6 +422,15 @@ enum CodeHighlighter {
                     }
                     continue
                 }
+            }
+
+            // String literals
+            if char == 0x22 || char == 0x27 {
+                let delimiter = Character(UnicodeScalar(UInt32(char))!)
+                let stringEnd = findStringEnd(from: i + 1, delimiter: delimiter, in: nsCode, escaped: true)
+                highlighted.addAttribute(.foregroundColor, value: stringColor, range: NSRange(location: i, length: stringEnd - i))
+                i = stringEnd
+                continue
             }
 
             // Numbers
@@ -538,25 +538,26 @@ enum CodeHighlighter {
 
 /// Owns the rendered state of one text view: the parsed elements, the line
 /// table, and the lines the selection currently covers. Text edits trigger a
-/// full re-render; pure selection changes only re-style the collapsed syntax
-/// markers on lines that joined or left the selection, keeping caret moves
-/// O(markers touched) instead of O(document).
+/// full re-render. Selection changes never alter the document's glyph
+/// attributes, so caret movement cannot make Unicode graphemes reflow or
+/// expose display-only replacement artifacts.
 final class MarkdownHighlighter {
     private var source = ""
     private var elements: [Markdown.Element] = []
-    private var lineStarts: [Int] = []
-    private var activeLines: Set<Int> = []
 
     /// Re-parses the text and re-applies Markdown styling to the entire
     /// document. The raw string stays untouched, so editing, undo, copying,
     /// and persistence remain plain-text Markdown; only the display changes.
     ///
-    /// Lines under the selection render with their syntax visible (dimmed),
-    /// Notion-style; every other line keeps its syntax collapsed.
+    /// Markdown syntax remains visible but dimmed. Keeping marker attributes
+    /// stable avoids caret-dependent glyph changes in NSTextView.
     func render(_ textView: NSTextView) {
         guard let storage = textView.textStorage else { return }
         let text = textView.string
         let baseSize = PaneStyle.fontSize
+        let typingAttributes = textView.typingAttributes
+        let selectedRanges = textView.selectedRanges
+        storage.beginEditing()
         storage.setAttributes([
             .font: NSFont.systemFont(ofSize: baseSize),
             .foregroundColor: PaneStyle.textNSColor,
@@ -565,17 +566,8 @@ final class MarkdownHighlighter {
 
         let elements = Markdown.parse(text)
         let headings = elements.compactMap { Heading(element: $0) }
-        let lineStarts = Self.lineStartOffsets(text)
-        let activeLines = Self.activeLineIndexes(
-            selectedRanges: textView.selectedRanges,
-            lineStarts: lineStarts,
-            length: (text as NSString).length
-        )
-
         self.source = text
         self.elements = elements
-        self.lineStarts = lineStarts
-        self.activeLines = activeLines
         
         // First pass: apply all Markdown styling
         for element in elements {
@@ -621,48 +613,24 @@ final class MarkdownHighlighter {
             case .listItem(let level):
                 storage.addAttribute(.paragraphStyle, value: paragraphStyle(headIndent: CGFloat(16 * level), firstLineHeadIndent: 0), range: element.range)
             case .hidden, .escape:
-                if activeLines.contains(Self.lineIndex(at: element.range.location, lineStarts: lineStarts)) {
-                    storage.addAttribute(.font, value: NSFont.systemFont(ofSize: baseSize), range: element.range)
-                    storage.addAttribute(.foregroundColor, value: PaneStyle.secondaryTextNSColor, range: element.range)
-                } else {
-                    storage.addAttribute(.font, value: NSFont.systemFont(ofSize: 1), range: element.range)
-                    storage.addAttribute(.foregroundColor, value: NSColor.clear, range: element.range)
-                }
+                storage.addAttribute(.font, value: NSFont.systemFont(ofSize: baseSize), range: element.range)
+                storage.addAttribute(.foregroundColor, value: PaneStyle.secondaryTextNSColor, range: element.range)
             }
         }
         
         // Second pass: apply syntax highlighting to code blocks with language identifiers
         applyCodeHighlighting(to: storage, text: text, elements: elements, baseSize: baseSize)
+        storage.endEditing()
+        textView.typingAttributes = typingAttributes
+        textView.selectedRanges = selectedRanges
     }
 
-    /// Renders only what changed since the last render: falls back to a full
-    /// render after a text edit, otherwise re-styles just the markers on
-    /// lines the selection entered or left.
+    /// Re-renders after a text edit. Selection-only changes are intentionally
+    /// ignored because syntax attributes are stable across caret movement.
     func refresh(_ textView: NSTextView) {
         guard textView.string == source else {
             render(textView)
             return
-        }
-        let newActiveLines = Self.activeLineIndexes(
-            selectedRanges: textView.selectedRanges,
-            lineStarts: lineStarts,
-            length: (source as NSString).length
-        )
-        let entering = newActiveLines.subtracting(activeLines)
-        let leaving = activeLines.subtracting(newActiveLines)
-        guard !entering.isEmpty || !leaving.isEmpty else { return }
-        activeLines = newActiveLines
-        guard let storage = textView.textStorage else { return }
-        let baseSize = PaneStyle.fontSize
-        for element in elements where element.kind.isSyntaxMarker {
-            let line = Self.lineIndex(at: element.range.location, lineStarts: lineStarts)
-            if entering.contains(line) {
-                storage.addAttribute(.font, value: NSFont.systemFont(ofSize: baseSize), range: element.range)
-                storage.addAttribute(.foregroundColor, value: PaneStyle.secondaryTextNSColor, range: element.range)
-            } else if leaving.contains(line) {
-                storage.addAttribute(.font, value: NSFont.systemFont(ofSize: 1), range: element.range)
-                storage.addAttribute(.foregroundColor, value: NSColor.clear, range: element.range)
-            }
         }
     }
 
@@ -700,48 +668,6 @@ final class MarkdownHighlighter {
 
     private func italicFont(ofSize size: CGFloat) -> NSFont {
         NSFontManager.shared.convert(NSFont.systemFont(ofSize: size), toHaveTrait: .italicFontMask)
-    }
-
-    // MARK: Line geometry
-
-    private static func lineStartOffsets(_ text: String) -> [Int] {
-        var starts = [0]
-        var offset = 0
-        for unit in text.utf16 {
-            if unit == 0x0A { starts.append(offset + 1) }
-            offset += 1
-        }
-        return starts
-    }
-
-    private static func lineIndex(at location: Int, lineStarts: [Int]) -> Int {
-        var lower = 0
-        var upper = lineStarts.count - 1
-        while lower < upper {
-            let mid = (lower + upper + 1) / 2
-            if lineStarts[mid] <= location {
-                lower = mid
-            } else {
-                upper = mid - 1
-            }
-        }
-        return lower
-    }
-
-    private static func activeLineIndexes(selectedRanges: [NSValue], lineStarts: [Int], length: Int) -> Set<Int> {
-        var set: Set<Int> = []
-        for proto in selectedRanges {
-            let range = proto.rangeValue
-            guard range.length >= 0 else { continue }
-            let firstLocation = min(max(0, range.location), length)
-            let lastLocation = min(max(0, range.length > 0 ? NSMaxRange(range) - 1 : range.location), length)
-            let first = lineIndex(at: firstLocation, lineStarts: lineStarts)
-            let last = lineIndex(at: lastLocation, lineStarts: lineStarts)
-            for index in first...last where index >= 0 && index < lineStarts.count {
-                set.insert(index)
-            }
-        }
-        return set
     }
 
     // MARK: Paragraph style
@@ -798,8 +724,7 @@ final class MarkdownHighlighter {
 extension Markdown {
     /// Full render for callers without a persistent highlighter.
     ///
-    /// Lines under the selection render with their syntax visible (dimmed),
-    /// Notion-style; every other line keeps its syntax collapsed.
+    /// Syntax markers remain visible and dimmed regardless of selection.
     static func highlight(_ textView: NSTextView) {
         MarkdownHighlighter().render(textView)
     }

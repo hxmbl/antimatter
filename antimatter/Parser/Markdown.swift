@@ -34,14 +34,14 @@ enum Markdown {
             case code
             case strike
             case link(String)
-            /// Syntax characters the renderer collapses out of sight.
+            /// Syntax characters the renderer displays dimmed.
             case hidden
             /// Punctuation kept visible but dimmed.
             case marker
             /// The backslash of an escaped character.
             case escape
 
-            /// Elements whose display collapses unless the caret is on their line.
+            /// Elements that are syntax-only and rendered dimmed.
             nonisolated var isSyntaxMarker: Bool {
                 switch self {
                 case .hidden, .escape: true
@@ -617,7 +617,7 @@ enum Markdown {
     /// Reads a delimited span starting at `start`, returning the index just
     /// past the closing delimiter, or `nil` when no non-empty span closes.
     /// When `inclusive` is set the styled range also covers both delimiters,
-    /// which keeps background fills continuous around collapsed markers.
+    /// which keeps background fills continuous around syntax markers.
     private nonisolated static func readSpan(
         _ delimiter: Character,
         count required: Int,
