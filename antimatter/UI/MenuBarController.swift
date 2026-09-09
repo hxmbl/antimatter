@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class MenuBarController {
+final class MenuBarController: NSObject {
     static let shared = MenuBarController()
 
     private var statusItem: NSStatusItem?
@@ -22,6 +22,7 @@ final class MenuBarController {
             button.toolTip = "Antimatter"
             button.action = #selector(togglePanel)
             button.target = self
+            button.sendAction(on: [.leftMouseUp])
         }
     }
 
@@ -77,9 +78,13 @@ final class MenuBarController {
             }
         }
 
-        panel.orderFront(nil)
-        panel.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: false)
+        // Accessory applications do not become active from a normal
+        // makeKeyAndOrderFront call. Activate first, then force the panel
+        // forward so the first click also places the caret in the editor.
+        panel.hidesOnDeactivate = false
+        NSApp.activate(ignoringOtherApps: true)
+        panel.orderFrontRegardless()
+        panel.makeKey()
     }
 
     private var screenForStatusItem: NSScreen? {

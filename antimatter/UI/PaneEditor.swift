@@ -147,6 +147,7 @@ struct PaneEditor: NSViewRepresentable {
         let highlighter = MarkdownHighlighter()
         private var deferredPassTask: Task<Void, Never>?
         private var pendingRender: DispatchWorkItem?
+        private var pendingStatusUpdate: DispatchWorkItem?
         private var appliedFontSize: CGFloat = PaneStyle.fontSize
         private var appliedThemeID = PaneTheme.current.id
         /// Set while undo replays are landing; automatic rewrites stand
@@ -185,7 +186,7 @@ struct PaneEditor: NSViewRepresentable {
             if text.wrappedValue != newText {
                 text.wrappedValue = newText
             }
-            updateFooterStatus(textView)
+            scheduleStatusUpdate(textView)
             scheduleCompletion(textView)
         }
 
@@ -203,11 +204,24 @@ struct PaneEditor: NSViewRepresentable {
             DispatchQueue.main.async(execute: render)
         }
 
+        /// Footer state is SwiftUI state. Defer it until AppKit has finished
+        /// delivering the edit or selection notification so panel creation
+        /// and focus changes do not mutate SwiftUI during view updates.
+        private func scheduleStatusUpdate(_ textView: NSTextView) {
+            pendingStatusUpdate?.cancel()
+            let update = DispatchWorkItem { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                self.updateFooterStatus(textView)
+            }
+            pendingStatusUpdate = update
+            DispatchQueue.main.async(execute: update)
+        }
+
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             highlighter.refresh(textView)
             guard !isInHelpView else { return }
-            updateFooterStatus(textView)
+            scheduleStatusUpdate(textView)
         }
 
         /// Keep typed text literal. Automatic punctuation substitutions are
