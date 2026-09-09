@@ -13,8 +13,8 @@ struct ContentView: View {
     @AppStorage("pane.floats") private var floatsObservation = true
     @AppStorage("pane.hidesOnEscape") private var hidesOnEscapeObservation = true
     @AppStorage("pane.themeID") private var themeIDObservation = "default"
+    @AppStorage("appearance") private var appearanceObservation = "system"
     @State private var footer = FooterStatus()
-    @State private var showSearch = false
 
     var body: some View {
         PaneEditor(text: noteStore.activeText, status: $footer)
@@ -25,10 +25,6 @@ struct ContentView: View {
             .frame(maxWidth: PaneStyle.maxWidth, maxHeight: PaneStyle.maxHeight)
             .background { PaneBackground() }
             .clipShape(RoundedRectangle(cornerRadius: PaneStyle.cornerRadius, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: PaneStyle.cornerRadius, style: .continuous)
-                    .strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: PaneStyle.borderWidth)
-            }
             .overlay(alignment: .topTrailing) { CaptureStrip().padding(.trailing, 10) }
             .overlay(alignment: .bottomLeading) { SaveErrorHint(error: noteStore.saveError, token: noteStore.saveErrorToken).padding(.leading, PaneStyle.padding) }
             .overlay(alignment: .bottom) {
@@ -37,13 +33,6 @@ struct ContentView: View {
                     .padding(.bottom, 7)
             }
             .overlay(WindowDragEdge())
-            .overlay {
-                if showSearch {
-                    SearchOverlay(isPresented: $showSearch)
-                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                }
-            }
-            .animation(.easeInOut(duration: 0.15), value: showSearch)
             .background(WindowConfigurator())
         .background(HotKeyWindowBridge())
             .gesture(
@@ -69,9 +58,6 @@ struct ContentView: View {
                 guard (note.object as? NSWindow)?.identifier?.rawValue == PaneStyle.windowIdentifier else { return }
                 noteStore.flush()
             }
-            .onReceive(NotificationCenter.default.publisher(for: .toggleSearchOverlay)) { _ in
-                showSearch.toggle()
-            }
             // Settings that live on the NSWindow itself (level, fade, corner,
             // size clamp) are re-applied here; the rest take effect through
             // SwiftUI re-rendering.
@@ -80,6 +66,7 @@ struct ContentView: View {
             .onChange(of: windowAlphaObservation) { _, _ in PaneWindowStyler.applyToPane() }
             .onChange(of: floatsObservation) { _, _ in PaneWindowStyler.applyToPane() }
             .onChange(of: themeIDObservation) { _, _ in PaneWindowStyler.applyToPane() }
+            .onChange(of: appearanceObservation) { _, _ in PaneWindowStyler.applyToPane() }
     }
 }
 
@@ -218,7 +205,7 @@ private struct CaptureStrip: View {
                 .overlay(Capsule().strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: 0.5))
             }
         }
-        .padding(.top, PaneStyle.titleBarInset - 8)
+        .padding(.top, 0)
     }
 }
 

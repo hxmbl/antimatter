@@ -521,6 +521,17 @@ struct MarkdownHighlightTests {
 @MainActor
 struct MarkdownHighlighterTests {
 
+    @Test func renderingNeverChangesMarkdownSource() {
+        let text = "# Café — 2\n\n`naïve` **世界**"
+        let textView = NSTextView()
+        let highlighter = MarkdownHighlighter()
+        textView.string = text
+
+        highlighter.render(textView)
+
+        #expect(textView.string == text)
+    }
+
     @Test func selectionChangesRestyleOnlyMarkersNotTheDocument() {
         let textView = NSTextView()
         let highlighter = MarkdownHighlighter()

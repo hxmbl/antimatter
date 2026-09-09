@@ -188,9 +188,9 @@ struct DateIntentTests {
 
     @Test func bareDateGainsWeekday() {
         let out = commit("2026-08-22", now: fixedNow)
-        #expect(out != nil && out!.contains("·"))
+        #expect(out != nil && out!.contains(" = "))
         #expect(commit("  2026-08-22", now: fixedNow)?.hasPrefix("  ") == true) // indent kept
-        #expect(out!.contains("2026-08-22 · "))
+        #expect(out!.contains("2026-08-22 = "))
     }
 
     @Test func daysUntilCountsFromToday() {
@@ -221,7 +221,7 @@ struct DateIntentTests {
         newYork.locale = Locale(identifier: "en_US")
         newYork.timeZone = TimeZone(identifier: "America/New_York")!
         let out = DateIntent.commit("2026-08-22", now: fixedNow, calendar: newYork)
-        #expect(out?.contains("· Saturday") == true)
+        #expect(out?.contains("= Saturday") == true)
     }
 
     @Test func daysUntilCountsInTheCallersCalendar() {

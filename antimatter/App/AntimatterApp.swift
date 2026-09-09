@@ -34,11 +34,6 @@ struct AntimatterApp: App {
                     .keyboardShortcut("g", modifiers: [.command])
                 Button("Find Previous") { FindSupport.perform(.previousMatch) }
                     .keyboardShortcut("G", modifiers: [.shift, .command])
-                Divider()
-                Button("Search All Notes") {
-                    NotificationCenter.default.post(name: .toggleSearchOverlay, object: nil)
-                }
-                .keyboardShortcut("f", modifiers: [.command, .shift])
             }
         }
         Settings {
@@ -143,6 +138,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UNUserNotificationCenter.current().delegate = notificationRouter
         LaunchPreferences.apply()
         CurrencyCenter.shared.activate()
+    }
+
+    // The pane is a summoned utility: a hidden panel or a closed window must
+    // not take the whole app down. Without this, AppKit's
+    // `_scheduleCheckForTerminateAfterLastWindowClosed` timer calls
+    // `terminate:` a few seconds after the last visible window goes away —
+    // e.g. the accessory-mode panel is ordered out at launch or Escape hides
+    // the pane — and the app silently quits. ⌘Q still terminates normally.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 
     func applicationWillTerminate(_ notification: Notification) {

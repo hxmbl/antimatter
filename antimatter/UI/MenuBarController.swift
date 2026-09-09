@@ -89,17 +89,19 @@ final class MenuBarController {
 
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 400, height: 500),
-            styleMask: [.nonactivatingPanel, .titled, .closable, .resizable],
+            styleMask: [.nonactivatingPanel, .titled, .resizable],
             backing: .buffered,
             defer: true
         )
         panel.contentView = hostingView
         panel.identifier = NSUserInterfaceItemIdentifier(PaneStyle.windowIdentifier)
         panel.isFloatingPanel = true
-        panel.hidesOnDeactivate = true
         panel.level = .floating
         panel.titlebarAppearsTransparent = true
         panel.titleVisibility = .hidden
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
         panel.isMovableByWindowBackground = true
         panel.backgroundColor = .clear
         panel.isOpaque = false

@@ -80,9 +80,8 @@ final class TimerCenter: ObservableObject {
     }
 
     private func pruneStaleNotifications() {
-        let center = UNUserNotificationCenter.current()
         let keep = Set(timers.filter { $0.firedAt == nil }.map(\.id.uuidString))
-        center.getPendingNotificationRequests { requests in
+        UNUserNotificationCenter.current().getPendingNotificationRequests { requests in
             // Scoped to requests this center owns: anything carrying a
             // `timerID` that no live timer references. UUID-shaped requests
             // from other suites (a reminder, say) must survive the sweep —
@@ -95,7 +94,7 @@ final class TimerCenter: ObservableObject {
                 return request.identifier
             }
             guard !stale.isEmpty else { return }
-            center.removePendingNotificationRequests(withIdentifiers: stale)
+            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: stale)
         }
     }
 

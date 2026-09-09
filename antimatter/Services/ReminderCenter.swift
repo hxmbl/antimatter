@@ -43,9 +43,8 @@ final class ReminderCenter: ObservableObject {
     /// reminder is no longer running — scoped to `reminderID`, so requests
     /// from other suites (a timer, say) are never caught in the sweep.
     private func pruneStaleNotifications() {
-        let center = UNUserNotificationCenter.current()
         let keep = Set(reminders.filter { $0.firedAt == nil }.map(\.id.uuidString))
-        center.getPendingNotificationRequests { requests in
+        UNUserNotificationCenter.current().getPendingNotificationRequests { requests in
             let stale = requests.compactMap { request -> String? in
                 guard let reminderID = request.content.userInfo["reminderID"] as? String,
                       !keep.contains(reminderID)
@@ -53,7 +52,7 @@ final class ReminderCenter: ObservableObject {
                 return request.identifier
             }
             guard !stale.isEmpty else { return }
-            center.removePendingNotificationRequests(withIdentifiers: stale)
+            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: stale)
         }
     }
 

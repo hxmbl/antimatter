@@ -129,7 +129,7 @@ struct ReturnKeyActionTests {
             Issue.record("date should rewrite")
             return
         }
-        #expect(replacement.contains("·"))
+        #expect(replacement.contains(" = "))
         if case .rewriteLine = IntentExecution.action(forLine: "days until 2026-09-01") {} else {
             Issue.record("days until should rewrite")
         }
@@ -267,7 +267,7 @@ struct LivePreviewTests {
         #expect(IntentExecution.answer(fromLine: "384 * 27 = 10368") == "10368")
         #expect(IntentExecution.answer(fromLine: ".sum = 46") == "46")
         #expect(IntentExecution.answer(fromLine: "days until 2026-09-01 = 8") == "8")
-        #expect(IntentExecution.answer(fromLine: "2026-08-22 · Saturday") == "Saturday")
+        #expect(IntentExecution.answer(fromLine: "2026-08-22 = Saturday") == "Saturday")
         #expect(IntentExecution.answer(fromLine: "hello world") == nil)
         #expect(IntentExecution.answer(fromLine: "12 kg -> lb") == nil) // not committed yet
         #expect(IntentExecution.answer(fromLine: "price = 4 * 12 = 48") == "48")

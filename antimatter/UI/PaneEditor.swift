@@ -41,9 +41,9 @@ struct PaneEditor: NSViewRepresentable {
         textView.defaultParagraphStyle = Self.paragraphStyle
         textView.typingAttributes = Self.makeTypingAttributes()
         textView.linkTextAttributes = Self.linkTextAttributes
-        // Markdown source must survive typing verbatim: smart quotes would
-        // curl `"`, smart dashes would turn `--` into an en dash, and
-        // automatic link detection would fight our own parser.
+        // Markdown source must survive typing verbatim: smart quotes,
+        // automatic dashes, replacements, links, data detection, and
+        // spelling correction are all disabled.
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
@@ -128,7 +128,7 @@ struct PaneEditor: NSViewRepresentable {
     private static func makeTypingAttributes(fontSize: CGFloat = PaneStyle.fontSize) -> [NSAttributedString.Key: Any] {
         [
             .font: NSFont.systemFont(ofSize: fontSize),
-            .foregroundColor: NSColor.labelColor,
+            .foregroundColor: PaneStyle.textNSColor,
             .paragraphStyle: paragraphStyle
         ]
     }
@@ -167,40 +167,11 @@ struct PaneEditor: NSViewRepresentable {
         /// The text view hosting the reference, so `q`/Escape can restore it.
         private weak var helpTextView: NSTextView?
         weak var ownedTextView: PaneTextView?
-        private var searchJumpObserver: NSObjectProtocol?
 
         init(text: Binding<String>, status: Binding<FooterStatus>) {
             self.text = text
             self.status = status
             super.init()
-            searchJumpObserver = NotificationCenter.default.addObserver(
-                forName: .searchJumpToLine,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                self?.handleSearchJump(notification)
-            }
-        }
-
-        deinit {
-            if let searchJumpObserver {
-                NotificationCenter.default.removeObserver(searchJumpObserver)
-            }
-        }
-
-        private func handleSearchJump(_ notification: Notification) {
-            guard let textView = ownedTextView,
-                  let lineNumber = notification.userInfo?["lineNumber"] as? Int else { return }
-            let nsString = textView.string as NSString
-            let totalLines = nsString.components(separatedBy: "\n").count
-            guard lineNumber > 0, lineNumber <= totalLines else { return }
-            var lineStart = 0
-            for _ in 1..<lineNumber {
-                nsString.getLineStart(&lineStart, end: nil, contentsEnd: nil, for: NSRange(location: lineStart, length: 0))
-            }
-            textView.scrollRangeToVisible(NSRange(location: lineStart, length: 0))
-            textView.setSelectedRange(NSRange(location: lineStart, length: 0))
-            textView.window?.makeFirstResponder(textView)
         }
 
         func textDidChange(_ notification: Notification) {
@@ -224,10 +195,9 @@ struct PaneEditor: NSViewRepresentable {
             updateFooterStatus(textView)
         }
 
-        /// Smart dashes as you type: `--` → `–`, inline `---` → `—`, and an
-        /// own-line `---` stays raw so Markdown renders a horizontal rule.
-        /// Only a single-character insert is intercepted; pastes and
-        /// multi-character substitutions pass straight through.
+        /// Keep typed text literal. Automatic punctuation substitutions are
+        /// deliberately disabled so ordinary hyphens, flags, and pasted text
+        /// never turn into unexpected Unicode characters.
         func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
             guard !isInHelpView else { return true }
             if let replacement = replacementString, replacement == "\n" {
@@ -244,24 +214,7 @@ struct PaneEditor: NSViewRepresentable {
                     }
                 }
             }
-            guard let replacement = replacementString,
-                  replacement.utf16.count == 1,
-                  affectedCharRange.length == 0
-            else { return true }
-            guard let typed = replacement.first else { return true }
-            let location = affectedCharRange.location
-            switch DashSubstitution.outcome(typing: typed, into: textView.string, at: location) {
-            case .accept:
-                return true
-            case .rewrite(let range, let text):
-                textView.breakUndoCoalescing()
-                if textView.shouldChangeText(in: range, replacementString: text) {
-                    textView.textStorage?.replaceCharacters(in: range, with: text)
-                    textView.didChangeText()
-                    textView.setSelectedRange(NSRange(location: range.location + (text as NSString).length, length: 0))
-                }
-                return false
-            }
+            return true
         }
 
         /// Return pressed: run any recognised intent on the caret's line
@@ -289,7 +242,8 @@ struct PaneEditor: NSViewRepresentable {
         func applyFontSizeIfChanged(to textView: NSTextView) {
             let size = PaneStyle.fontSize
             let themeID = PaneTheme.current.id
-            guard size != appliedFontSize || themeID != appliedThemeID else { return }
+            let textColorChanged = !(textView.textColor?.isEqual(PaneStyle.textNSColor) ?? false)
+            guard size != appliedFontSize || themeID != appliedThemeID || textColorChanged else { return }
             appliedFontSize = size
             appliedThemeID = themeID
             textView.font = .systemFont(ofSize: size)

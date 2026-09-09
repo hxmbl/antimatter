@@ -102,7 +102,7 @@ private struct GeneralSettingsView: View {
                     }
                 }
 
-                Text("Notes are encrypted on your device before syncing to iCloud. No account required.")
+                Text("Notes are encrypted on your device before syncing to iCloud. An iCloud account and configured container are required.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {

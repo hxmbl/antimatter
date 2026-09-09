@@ -235,6 +235,6 @@ nonisolated enum IntentParser {
         if value == value.rounded(), abs(value) < 1e15 {
             return String(Int64(value))
         }
-        return String(format: "%.12g", value)
+        return String(format: "%.12g", locale: Locale(identifier: "en_US_POSIX"), value)
     }
 }

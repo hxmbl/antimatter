@@ -474,15 +474,17 @@ nonisolated enum IntentExecution {
 
     /// The copyable answer embedded in a committed line: the trailing number
     /// of `expr = 48`, `.sum = 46`, or `days until … = 8`, or the weekday of
-    /// `2026-08-22 · Saturday`. Plain prose is nil.
+    /// `2026-08-22 = Saturday`. Plain prose is nil.
     static func answer(fromLine line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         let parts = trimmed.components(separatedBy: " = ")
         if let last = parts.last, parts.count >= 2, Double(last.trimmingCharacters(in: .whitespaces)) != nil {
             return last.trimmingCharacters(in: .whitespaces)
         }
-        if let marker = trimmed.range(of: " · "), marker.upperBound < trimmed.endIndex {
-            return String(trimmed[marker.upperBound...]).trimmingCharacters(in: .whitespaces)
+        if parts.count == 2,
+           IntentParser.looksLikeDate(parts[0]),
+           !parts[1].trimmingCharacters(in: .whitespaces).isEmpty {
+            return parts[1].trimmingCharacters(in: .whitespaces)
         }
         return nil
     }

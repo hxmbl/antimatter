@@ -64,10 +64,8 @@ enum PaneStyle {
     /// Height of the quiet status strip under the editor.
     static let footerHeight: CGFloat = 26
 
-    /// Space reserved at the top so text starts below the traffic lights.
-    /// The pane itself extends to the window's top edge, so the title bar
-    /// area uses the exact same material as the typing surface.
-    static let titleBarInset: CGFloat = 12
+    /// Small top breathing room; the pane has no window controls.
+    static let titleBarInset: CGFloat = 8
     static var maxWidth: CGFloat {
         CGFloat((UserDefaults.standard.object(forKey: "pane.maxWidth") as? Double) ?? 600)
     }
@@ -81,7 +79,6 @@ enum PaneStyle {
 
     static let border: Color = .white
     static let borderOpacity: Double = 0.16
-    static let borderWidth: CGFloat = 0.5
 
     // MARK: Theme
 

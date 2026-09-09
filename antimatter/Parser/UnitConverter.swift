@@ -18,8 +18,8 @@ nonisolated enum UnitConverter {
     ]
 
     /// Characters treated as a conversion arrow: `→`, the digraph `->`, and
-    /// the en/em dashes `–`/`—` (typed `--`/`---` become those dashes, so a
-    /// conversion can be written with plain hyphens too).
+    /// existing en/em dash forms. Plain typed hyphens remain literal; these
+    /// extra forms are accepted only for notes that already contain them.
     private static let arrows: Set<String> = ["→", "->", "–", "—", "—-", "—>"]
 
     static func commit(_ rawLine: String) -> String? {
@@ -55,8 +55,8 @@ nonisolated enum UnitConverter {
 
     // MARK: Parsing
 
-    /// `<number> <unit> <arrow> <unit>` — arrow may be `→`, `->`, or the
-    /// en/em dashes `–`/`—`; a bare `>` is deliberately not an arrow, so
+    /// `<number> <unit> <arrow> <unit>` — arrow may be `→`, `->`, or an
+    /// existing en/em dash; a bare `>` is deliberately not an arrow, so
     /// comparison-shaped lines stay text.
     static func parse(_ line: String) -> (value: Double, from: String, to: String)? {
         let words = splitPreservingArrow(line)
@@ -118,6 +118,6 @@ nonisolated enum UnitConverter {
 
     private static func format(_ value: Double) -> String {
         guard value.isFinite else { return "" }
-        return String(format: "%.6g", value)
+        return String(format: "%.6g", locale: Locale(identifier: "en_US_POSIX"), value)
     }
 }

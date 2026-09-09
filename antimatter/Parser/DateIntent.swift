@@ -3,7 +3,7 @@ import Foundation
 /// Date-shaped lines become answers instead of staying inert text.
 ///
 /// * A bare ISO date (`2026-08-22`) quietly gains its weekday:
-///   `2026-08-22 · Saturday`.
+///   `2026-08-22 = Saturday`.
 /// * `days until 2026-09-01` gains the day count from today:
 ///   `days until 2026-09-01 = 8`.
 ///
@@ -18,7 +18,7 @@ nonisolated enum DateIntent {
         let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
         if let components = parseISO(trimmed), let date = calendar.date(from: components) {
             let weekday = calendar.weekdaySymbols[calendar.component(.weekday, from: date) - 1]
-            return indentPrefix(of: rawLine) + trimmed + " · " + weekday
+            return indentPrefix(of: rawLine) + trimmed + " = " + weekday
         }
         if trimmed.lowercased().hasPrefix("days until ") {
             let token = String(trimmed.dropFirst("days until ".count))

@@ -93,7 +93,8 @@ nonisolated enum Aggregates {
     private static func mathCore(ofCommittedLine line: String) -> String? {
         let parts = line.components(separatedBy: " = ")
         guard parts.count >= 2,
-              Double(parts.last!.trimmingCharacters(in: .whitespaces)) != nil
+              let result = parts.last,
+              Double(result.trimmingCharacters(in: .whitespaces)) != nil
         else { return nil }
         var core = parts.dropLast().joined(separator: " = ")
         if let separator = core.range(of: "=") {

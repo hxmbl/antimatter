@@ -13,7 +13,6 @@ final class NoteStore: ObservableObject {
     @Published var saveErrorToken: Int = 0
 
     private let fileURL: URL
-    private var lastWritten: String?
     private var saveTask: Task<Void, Never>?
     private var voidTask: Task<Void, Never>?
 
@@ -163,7 +162,6 @@ final class NoteStore: ObservableObject {
             let data = try JSONEncoder().encode(snapshot)
             let err = Persistence.writeData(data, to: fileURL)
             if let err { throw err }
-            lastWritten = String(data: data, encoding: .utf8)
             saveError = nil
             syncIfNeeded()
         } catch {
@@ -172,8 +170,7 @@ final class NoteStore: ObservableObject {
         }
     }
 
-    /// Pushes every note to iCloud when sync is switched on. Only the store
-    /// that actually owns the data calls this — never the legacy ScratchStore.
+    /// Pushes every note to iCloud when sync is switched on.
     func syncIfNeeded() {
         guard CloudKitSync.shared.isEnabled else { return }
         let toSync = notes

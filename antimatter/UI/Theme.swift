@@ -13,12 +13,36 @@ struct PaneTheme: Identifiable, Codable, Equatable {
     var cornerRadius: Double
     var fontSize: Int
 
-    var background: Color { Color(hex: backgroundColor) }
-    var text: Color { Color(hex: textColor) }
+    private var followsSystemAppearance: Bool { id == "default" }
+
+    private var isDarkAppearance: Bool {
+        NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    }
+
+    var background: Color {
+        if followsSystemAppearance && isDarkAppearance {
+            return Color(hex: "#1C1C1E")
+        }
+        return Color(hex: backgroundColor)
+    }
+
+    var text: Color {
+        if followsSystemAppearance && isDarkAppearance {
+            return Color(hex: "#E5E5E7")
+        }
+        return Color(hex: textColor)
+    }
+
     var accent: Color { Color(hex: accentColor) }
     var tint: Color { Color(hex: tintColor) }
 
-    var textNSColor: NSColor { NSColor(hex: textColor) }
+    var textNSColor: NSColor {
+        if followsSystemAppearance && isDarkAppearance {
+            return NSColor(hex: "#E5E5E7")
+        }
+        return NSColor(hex: textColor)
+    }
+
     var accentNSColor: NSColor { NSColor(hex: accentColor) }
     var tintNSColor: NSColor { NSColor(hex: tintColor) }
 }

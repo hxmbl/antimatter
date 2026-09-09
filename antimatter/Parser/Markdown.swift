@@ -775,7 +775,7 @@ enum Markdown {
     /// so the stored and displayed address is the clean canonical one. Used by
     /// every link form (inline, autolink, bare) so pasting a campaign URL
     /// never litters the note with `?utm_…`.
-    static func stripTrackingParameters(from urlString: String) -> String {
+    nonisolated static func stripTrackingParameters(from urlString: String) -> String {
         guard let url = URLComponents(string: urlString),
               let items = url.queryItems, !items.isEmpty else { return urlString }
         let kept = items.filter { !Self.trackingParameters.contains($0.name.lowercased()) }
@@ -787,7 +787,7 @@ enum Markdown {
 
     /// Parameter names that exist only to track a referral, not to address a
     /// resource. Common across every major campaign (UTM, social, ad, mail).
-    private static let trackingParameters: Set<String> = [
+    private nonisolated static let trackingParameters: Set<String> = [
         "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
         "utm_id", "utm_cid", "utm_reader", "utm_referrer", "utm_name", "utm_pubreferrer",
         "fbclid", "gclid", "gclsrc", "dclid", "msclkid", "twclid", "yclid",
@@ -796,4 +796,3 @@ enum Markdown {
         "s_cid", "spm", "spref", "si",
     ]
 }
-

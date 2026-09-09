@@ -367,8 +367,15 @@ final class PaneTextView: NSTextView {
         // key; a click is what hands it typing, so make it key first. Without
         // this, the first click surfaces the window but keystrokes still beep.
         window?.makeKeyAndOrderFront(nil)
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if modifiers.contains(.command), let window {
+            // Command-drag is the explicit move gesture. Keep it ahead of
+            // NSTextView's selection handling so the note remains untouched.
+            window.performDrag(with: event)
+            return
+        }
         selectionBeforeMouseDown = selectedRange()
-        pendingClick = (event.locationInWindow, event.modifierFlags.intersection(.deviceIndependentFlagsMask))
+        pendingClick = (event.locationInWindow, modifiers)
         super.mouseDown(with: event)
         DispatchQueue.main.async { [weak self] in
             self?.toggleTaskIfOnMarker()
