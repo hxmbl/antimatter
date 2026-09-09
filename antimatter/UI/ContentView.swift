@@ -15,30 +15,27 @@ struct ContentView: View {
     @State private var footer = FooterStatus()
 
     var body: some View {
-        ZStack(alignment: .top) {
-            PaneEditor(text: $store.text, status: $footer)
-                .padding(.top, PaneStyle.titleBarInset)
-                .padding(.leading, PaneStyle.padding)
-                .padding(.trailing, PaneStyle.padding)
-                .padding(.bottom, PaneStyle.padding + PaneStyle.footerHeight)
-                .frame(maxWidth: PaneStyle.maxWidth, maxHeight: PaneStyle.maxHeight)
-                .background { PaneBackground() }
-                .clipShape(RoundedRectangle(cornerRadius: PaneStyle.cornerRadius, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: PaneStyle.cornerRadius, style: .continuous)
-                        .strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: PaneStyle.borderWidth)
-                }
-                .overlay(alignment: .topTrailing) { CaptureStrip().padding(.trailing, 10) }
-                .overlay(alignment: .bottomLeading) { SaveErrorHint(error: store.saveError, token: store.saveErrorToken).padding(.leading, PaneStyle.padding) }
-                .overlay(alignment: .bottom) {
-                    PaneFooter(status: footer)
-                        .padding(.horizontal, PaneStyle.padding)
-                        .padding(.bottom, 7)
-                }
-                .overlay(WindowDragEdge())
-            TitleBarBackground()
-        }
-        .background(WindowConfigurator())
+        PaneEditor(text: $store.text, status: $footer)
+            .padding(.top, PaneStyle.titleBarInset)
+            .padding(.leading, PaneStyle.padding)
+            .padding(.trailing, PaneStyle.padding)
+            .padding(.bottom, PaneStyle.padding + PaneStyle.footerHeight)
+            .frame(maxWidth: PaneStyle.maxWidth, maxHeight: PaneStyle.maxHeight)
+            .background { PaneBackground() }
+            .clipShape(RoundedRectangle(cornerRadius: PaneStyle.cornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: PaneStyle.cornerRadius, style: .continuous)
+                    .strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: PaneStyle.borderWidth)
+            }
+            .overlay(alignment: .topTrailing) { CaptureStrip().padding(.trailing, 10) }
+            .overlay(alignment: .bottomLeading) { SaveErrorHint(error: store.saveError, token: store.saveErrorToken).padding(.leading, PaneStyle.padding) }
+            .overlay(alignment: .bottom) {
+                PaneFooter(status: footer)
+                    .padding(.horizontal, PaneStyle.padding)
+                    .padding(.bottom, 7)
+            }
+            .overlay(WindowDragEdge())
+            .background(WindowConfigurator())
         .background(HotKeyWindowBridge())
             .onChange(of: store.text) { _, _ in store.textDidChange() }
             .onAppear {
@@ -119,17 +116,6 @@ private struct WindowDragEdge: View {
                     window.performDrag(with: event)
                 }
             }
-    }
-}
-
-/// Extends the surface material across the top strip so the title area and
-/// the typing surface read as a single pane (no separate bar).
-private struct TitleBarBackground: View {
-    var body: some View {
-        PaneBackground()
-            .frame(height: PaneStyle.titleBarInset)
-            .clipShape(RoundedRectangle(cornerRadius: PaneStyle.cornerRadius, style: .continuous))
-            .allowsHitTesting(false)
     }
 }
 
