@@ -115,24 +115,36 @@ final class PaneHotKey {
 
     /// Shows the pane when hidden or closed, hides it when visible.
     func togglePane() {
-        if let window = Self.paneWindow {
-            if window.isVisible {
-                window.orderOut(nil)
-                return
+        let mode = PaneStyle.displayMode
+        switch mode {
+        case .dock:
+            if let window = Self.paneWindow {
+                if window.isVisible {
+                    window.orderOut(nil)
+                    return
+                }
+                revealPane()
+            } else {
+                openWindow?()
             }
-            revealPane()
-        } else {
-            openWindow?()
+        case .menuBar, .dropdown:
+            MenuBarController.shared.togglePanel()
         }
     }
 
     /// Brings the pane forward (hot key when hidden, notification clicks).
     func revealPane() {
-        NSApplication.shared.activate()
-        if let window = Self.paneWindow {
-            window.makeKeyAndOrderFront(nil)
-        } else {
-            openWindow?()
+        let mode = PaneStyle.displayMode
+        switch mode {
+        case .dock:
+            NSApplication.shared.activate()
+            if let window = Self.paneWindow {
+                window.makeKeyAndOrderFront(nil)
+            } else {
+                openWindow?()
+            }
+        case .menuBar, .dropdown:
+            MenuBarController.shared.showPanel()
         }
     }
 

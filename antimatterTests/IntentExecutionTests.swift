@@ -52,10 +52,47 @@ struct ReturnKeyActionTests {
     }
 
     @Test func timersWinOnTheirLines() {
-        #expect(action(".timer 5 laundry") == .startTimer(IntentParser.Timer(duration: 300, label: "laundry")))
-        #expect(action(".timer 90s") == .startTimer(IntentParser.Timer(duration: 90, label: "")))
-        #expect(action(".timer 5 mins") == .startTimer(IntentParser.Timer(duration: 300, label: "")))
-        #expect(action(".timer 2 hours tea") == .startTimer(IntentParser.Timer(duration: 7_200, label: "tea")))
+        #expect(action(".timer 5 laundry") == .startTimer(IntentParser.Timer(duration: 300, label: "laundry", name: nil, fullScreen: false)))
+        #expect(action(".timer 90s") == .startTimer(IntentParser.Timer(duration: 90, label: "", name: nil, fullScreen: false)))
+        #expect(action(".timer 5 mins") == .startTimer(IntentParser.Timer(duration: 300, label: "", name: nil, fullScreen: false)))
+        #expect(action(".timer 2 hours tea") == .startTimer(IntentParser.Timer(duration: 7_200, label: "tea", name: nil, fullScreen: false)))
+    }
+
+    @Test func namedTimersParseCorrectly() {
+        if case .startTimer(let timer) = action(".timer 5 soup name Dinner") {
+            #expect(timer.duration == 300)
+            #expect(timer.label == "soup")
+            #expect(timer.name == "Dinner")
+        } else {
+            Issue.record("named timer should start")
+        }
+    }
+
+    @Test func fullScreenTimersParseCorrectly() {
+        if case .startTimer(let timer) = action(".timer 10 work full-screen") {
+            #expect(timer.duration == 600)
+            #expect(timer.label == "work")
+            #expect(timer.fullScreen == true)
+        } else {
+            Issue.record("full-screen timer should start")
+        }
+    }
+
+    @Test func pomodoroDispatchesCorrectly() {
+        if case .startPomodoro(let work, let rest, let cycles) = action(".pomodoro 25/5/4") {
+            #expect(work == 1500)
+            #expect(rest == 300)
+            #expect(cycles == 4)
+        } else {
+            Issue.record(".pomodoro should dispatch")
+        }
+        if case .startPomodoro(let work, let rest, let cycles) = action(".pomodoro 50/10") {
+            #expect(work == 3000)
+            #expect(rest == 600)
+            #expect(cycles == 4)
+        } else {
+            Issue.record(".pomodoro with default cycles should dispatch")
+        }
     }
 
     @Test func stopwatchesStartOnTheirLines() {
@@ -132,6 +169,7 @@ struct ReturnKeyActionTests {
         }
         #expect(IntentExecution.helpText.contains(".timer"))
         #expect(IntentExecution.helpText.contains(".stopwatch"))
+        #expect(IntentExecution.helpText.contains(".pomodoro"))
         #expect(IntentExecution.helpText.contains(".sum"))
         #expect(IntentExecution.helpText.contains(".paste"))
         #expect(IntentExecution.helpText.contains(".help"))
@@ -278,6 +316,7 @@ struct CommandCompletionTests {
     @Test func partialDotCommandsMatch() {
         #expect(completions(".ti") == [".timer "])
         #expect(completions(".sto") == [".stopwatch "])
+        #expect(completions(".pom") == [".pomodoro "])
         #expect(completions(".su")?.contains(".sum ") == true)
         #expect(completions(".h")?.contains(".help ") == true)
     }

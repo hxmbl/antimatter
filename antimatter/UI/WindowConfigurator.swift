@@ -19,6 +19,18 @@ struct WindowConfigurator: NSViewRepresentable {
     private func configure(_ window: NSWindow?) {
         guard let window, !Self.configuredWindows.contains(window) else { return }
         Self.configuredWindows.add(window)
+        // In menu-bar / dropdown modes the pane lives in MenuBarController's
+        // panel, not this SwiftUI window. Skip the window-level chrome (frame
+        // autosave in particular) so it doesn't fight the panel, keep the
+        // SwiftUI window hidden, and still apply the live styling so the
+        // panel honors the appearance settings.
+        guard PaneStyle.displayMode == .dock else {
+            if !(window is NSPanel) {
+                window.orderOut(nil)
+            }
+            PaneWindowStyler.applyLive(to: window)
+            return
+        }
         window.identifier = NSUserInterfaceItemIdentifier(PaneStyle.windowIdentifier)
         // Restores the saved frame synchronously; the size clamp below then
         // reins in any frame saved before a smaller contentMaxSize existed.
@@ -61,9 +73,16 @@ struct WindowConfigurator: NSViewRepresentable {
 @MainActor
 enum PaneWindowStyler {
     static func applyToPane() {
-        guard let window = NSApplication.shared.windows.first(where: {
-            $0.identifier?.rawValue == PaneStyle.windowIdentifier
-        }) else { return }
+        let window: NSWindow?
+        switch PaneStyle.displayMode {
+        case .dock:
+            window = NSApplication.shared.windows.first(where: {
+                $0.identifier?.rawValue == PaneStyle.windowIdentifier
+            })
+        case .menuBar, .dropdown:
+            window = MenuBarController.shared.panel
+        }
+        guard let window else { return }
         applyLive(to: window)
     }
 

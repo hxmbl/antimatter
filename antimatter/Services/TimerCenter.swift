@@ -6,10 +6,37 @@ import UserNotifications
 struct ActiveTimer: Identifiable, Codable, Equatable {
     let id: UUID
     var label: String
+    var name: String?
     let duration: TimeInterval
     let endDate: Date
     let createdAt: Date
     var firedAt: Date?
+    var fullScreen: Bool
+}
+
+/// A running `.pomodoro` session, persisted so the cycle survives relaunch:
+/// the phase timers themselves are ordinary `ActiveTimer`s, and this records
+/// where in the cycle the next transition should land. When the phase chip is
+/// still counting down the runner waits it out; when the app was closed past
+/// it, the runner advances to the next phase once.
+struct PomodoroSession: Codable, Equatable {
+    /// 1-based current cycle.
+    var cycle: Int
+    /// Total cycles requested.
+    var cycles: Int
+    /// True for a work phase, false for a break phase.
+    var isWork: Bool
+    /// When the current phase began, for recomputing the remainder.
+    var phaseStartedAt: Date
+    /// Work phase length.
+    var workDuration: TimeInterval
+    /// Break phase length.
+    var breakDuration: TimeInterval
+
+    var label: String {
+        let phase = isWork ? "Work" : "Break"
+        return "Pomodoro \(cycle)/\(cycles) — \(phase)"
+    }
 }
 
 /// Runs scratchpad timers. `.timer 25 soup` schedules a countdown here; the
@@ -28,11 +55,18 @@ final class TimerCenter: ObservableObject {
     @Published private(set) var timers: [ActiveTimer] = []
 
     private let fileURL: URL
+    private let pomodoroFileURL: URL
     private let now: () -> Date
     private var fireTasks: [UUID: Task<Void, Never>] = [:]
+    private var pomodoroTask: Task<Void, Never>?
 
     init(fileURL: URL = TimerCenter.defaultFileURL(), now: @escaping () -> Date = Date.init) {
         self.fileURL = fileURL
+        // Sibling of the timers file, not of its directory: multiple
+        // TimerCenters (each test, each window) must never share one pomodoro
+        // file — a leftover session would resume in every instance.
+        self.pomodoroFileURL = fileURL.deletingLastPathComponent()
+            .appendingPathComponent(fileURL.deletingPathExtension().lastPathComponent + "-pomodoro.json")
         self.now = now
         // Requests scheduled by a previous session are rebuilt below; only
         // stale timer requests are removed — scoped, so any non-timer
@@ -42,6 +76,7 @@ final class TimerCenter: ObservableObject {
         for timer in timers {
             scheduleFire(timer, announce: false)
         }
+        resumePomodoroIfNeeded()
     }
 
     private func pruneStaleNotifications() {
@@ -71,7 +106,15 @@ final class TimerCenter: ObservableObject {
     /// Starts a countdown. Returns false for invalid durations or an
     /// accidental duplicate (pressing return twice on the same line).
     @discardableResult
-    func start(duration: TimeInterval, label: String) -> Bool {
+    func start(duration: TimeInterval, label: String, name: String? = nil, fullScreen: Bool = false) -> Bool {
+        start(duration: duration, label: label, name: name, fullScreen: fullScreen, announce: true)
+    }
+
+    /// The shared start path. `announce: false` keeps a timer silent at the
+    /// end (no Glass chime) — used by the pomodoro runner, which owns its own
+    /// transition sound.
+    @discardableResult
+    private func start(duration: TimeInterval, label: String, name: String? = nil, fullScreen: Bool = false, announce: Bool) -> Bool {
         guard duration > 0, duration <= IntentParser.maxDuration else { return false }
         let timestamp = now()
         if timers.contains(where: {
@@ -81,13 +124,15 @@ final class TimerCenter: ObservableObject {
         let timer = ActiveTimer(
             id: UUID(),
             label: label,
+            name: name,
             duration: duration,
             endDate: timestamp.addingTimeInterval(duration),
             createdAt: timestamp,
-            firedAt: nil
+            firedAt: nil,
+            fullScreen: fullScreen
         )
         timers.insert(timer, at: 0)
-        scheduleFire(timer, announce: true)
+        scheduleFire(timer, announce: announce)
         persist()
         Self.requestNotificationAuthorizationIfNeeded()
         DebugLog.log("timer started — \(label.isEmpty ? "unlabelled" : label) (\(Self.format(duration)))")
@@ -102,8 +147,12 @@ final class TimerCenter: ObservableObject {
         persist()
     }
 
-    /// `.timer cancel [all]`: stop every running countdown, fired or not.
+    /// `.timer cancel [all]`: stop every running countdown, fired or not, and
+    /// any pomodoro session driving them.
     func cancelAll() {
+        pomodoroTask?.cancel()
+        pomodoroTask = nil
+        clearPomodoroSession()
         let identifiers = timers.map(\.id.uuidString)
         timers.removeAll()
         for task in fireTasks.values { task.cancel() }
@@ -114,6 +163,107 @@ final class TimerCenter: ObservableObject {
         }
         persist()
         DebugLog.log("timers cancelled — \(identifiers.count)")
+    }
+
+    // MARK: Pomodoro
+
+    /// `.pomodoro 25/5/4` — work/break lengths in minutes and the number of
+    /// cycles. Each phase is an ordinary `ActiveTimer`; the session record
+    /// (cycle, phase) survives relaunch so the runner resumes in place.
+    func startPomodoro(work: TimeInterval, rest: TimeInterval, cycles: Int) {
+        let session = PomodoroSession(
+            cycle: 1,
+            cycles: cycles,
+            isWork: true,
+            phaseStartedAt: now(),
+            workDuration: work,
+            breakDuration: rest
+        )
+        beginPomodoro(session)
+    }
+
+    /// Starts a fresh session or resumes a persisted one. Reconciles the
+    /// current phase against the loaded timers: a chip still counting down is
+    /// left alone, one that already elapsed while closed advances the session
+    /// to the next phase instead of replaying a finished one.
+    private func beginPomodoro(_ session: PomodoroSession) {
+        pomodoroTask?.cancel()
+        var running = session
+        if let existing = timers.first(where: { $0.label == session.label }) {
+            if existing.firedAt != nil, let next = nextPhase(after: running) {
+                running = next
+                beginPhase(next)
+            }
+        } else {
+            beginPhase(running)
+        }
+        persistPomodoroSession(running)
+        pomodoroTask = Task { [weak self] in
+            await self?.runPomodoro(running)
+        }
+    }
+
+    /// Starts the phase timer for `session`. Silent: the runner owns the
+    /// transition sound, so the phase timers do not double-chime.
+    private func beginPhase(_ session: PomodoroSession) {
+        let duration = session.isWork ? session.workDuration : session.breakDuration
+        start(duration: duration, label: session.label, announce: false)
+    }
+
+    /// The phase that follows `session`, or nil when the work of the last
+    /// cycle finished (no trailing break).
+    private func nextPhase(after session: PomodoroSession) -> PomodoroSession? {
+        var next = session
+        if next.isWork {
+            guard next.cycle < next.cycles else { return nil }
+            next.isWork = false
+        } else {
+            next.isWork = true
+            next.cycle += 1
+        }
+        next.phaseStartedAt = now()
+        return next
+    }
+
+    private func runPomodoro(_ initial: PomodoroSession) async {
+        var session = initial
+        while !Task.isCancelled {
+            let duration = session.isWork ? session.workDuration : session.breakDuration
+            let elapsed = max(0, self.now().timeIntervalSince(session.phaseStartedAt))
+            try? await Task.sleep(for: .seconds(max(0.05, duration - elapsed)))
+            guard !Task.isCancelled else { return }
+            NSSound(named: "Glass")?.play()
+            guard let next = nextPhase(after: session) else {
+                clearPomodoroSession()
+                return
+            }
+            session = next
+            beginPhase(next)
+            persistPomodoroSession(session)
+        }
+    }
+
+    // MARK: Pomodoro persistence
+
+    private func resumePomodoroIfNeeded() {
+        guard let session = loadPomodoroSession() else { return }
+        beginPomodoro(session)
+    }
+
+    private func loadPomodoroSession() -> PomodoroSession? {
+        guard let data = try? Data(contentsOf: pomodoroFileURL),
+              let stored = try? JSONDecoder().decode(PomodoroSession.self, from: data)
+        else { return nil }
+        return stored
+    }
+
+    private func persistPomodoroSession(_ session: PomodoroSession) {
+        guard let data = try? JSONEncoder().encode(session) else { return }
+        try? data.write(to: pomodoroFileURL, options: .atomic)
+    }
+
+    private func clearPomodoroSession() {
+        try? FileManager.default.removeItem(at: pomodoroFileURL)
     }
 
     // MARK: Firing
@@ -142,6 +292,9 @@ final class TimerCenter: ObservableObject {
         timers[index].firedAt = max(now(), timer.endDate)
         if announce {
             NSSound(named: "Glass")?.play()
+        }
+        if announce, timer.fullScreen {
+            TimerOverlayWindow.shared.show(timer: timers[index])
         }
         persist()
     }

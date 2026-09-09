@@ -6,6 +6,9 @@ import AppKit
 struct FooterStatus: Equatable {
     var preview = ""
     var answerToCopy: String?
+    var wordCount: Int = 0
+    var charCount: Int = 0
+    var readingEase: Double? = nil
 }
 
 /// Plain-text Markdown editor backed by NSTextView, styled by `PaneStyle`.
@@ -21,6 +24,7 @@ struct PaneEditor: NSViewRepresentable {
         let textView = PaneTextView()
         textView.delegate = context.coordinator
         textView.string = text
+        textView.isIncrementalSearchingEnabled = true
         // Editing state is made explicit instead of inherited: a pane text
         // view that ever ends up non-editable silently swallows every
         // keystroke with an alert beep, so guard the invariant here.
@@ -31,8 +35,8 @@ struct PaneEditor: NSViewRepresentable {
         textView.allowsUndo = true
         textView.drawsBackground = false
         textView.backgroundColor = .clear
-        textView.textColor = .labelColor
-        textView.insertionPointColor = .labelColor
+        textView.textColor = PaneStyle.textNSColor
+        textView.insertionPointColor = PaneStyle.textNSColor
         textView.font = .systemFont(ofSize: PaneStyle.fontSize)
         textView.defaultParagraphStyle = Self.paragraphStyle
         textView.typingAttributes = Self.makeTypingAttributes()
@@ -83,6 +87,7 @@ struct PaneEditor: NSViewRepresentable {
         scrollView.autoresizingMask = [.width, .height]
 
         context.coordinator.highlighter.render(textView)
+        context.coordinator.ownedTextView = textView
         DispatchQueue.main.async {
             scrollView.window?.makeFirstResponder(textView)
         }
@@ -130,7 +135,7 @@ struct PaneEditor: NSViewRepresentable {
 
     private static var linkTextAttributes: [NSAttributedString.Key: Any] {
         [
-            .foregroundColor: NSColor.linkColor,
+            .foregroundColor: PaneStyle.accentNSColor,
             .underlineStyle: NSUnderlineStyle.single.rawValue
         ]
     }
@@ -142,6 +147,7 @@ struct PaneEditor: NSViewRepresentable {
         let highlighter = MarkdownHighlighter()
         private var deferredPassTask: Task<Void, Never>?
         private var appliedFontSize: CGFloat = PaneStyle.fontSize
+        private var appliedThemeID = PaneTheme.current.id
         /// Set while undo replays are landing; automatic rewrites stand
         /// down until a real keystroke arrives, so ⌘Z always wins and stays
         /// won no matter how slowly the user walks back through history.
@@ -160,24 +166,50 @@ struct PaneEditor: NSViewRepresentable {
         private var helpSnapshot: (text: String, selection: NSRange, font: NSFont, isHorizontallyResizable: Bool, widthTracksTextView: Bool, containerSize: NSSize)?
         /// The text view hosting the reference, so `q`/Escape can restore it.
         private weak var helpTextView: NSTextView?
+        weak var ownedTextView: PaneTextView?
+        private var searchJumpObserver: NSObjectProtocol?
 
         init(text: Binding<String>, status: Binding<FooterStatus>) {
             self.text = text
             self.status = status
+            super.init()
+            searchJumpObserver = NotificationCenter.default.addObserver(
+                forName: .searchJumpToLine,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                self?.handleSearchJump(notification)
+            }
+        }
+
+        deinit {
+            if let searchJumpObserver {
+                NotificationCenter.default.removeObserver(searchJumpObserver)
+            }
+        }
+
+        private func handleSearchJump(_ notification: Notification) {
+            guard let textView = ownedTextView,
+                  let lineNumber = notification.userInfo?["lineNumber"] as? Int else { return }
+            let nsString = textView.string as NSString
+            let totalLines = nsString.components(separatedBy: "\n").count
+            guard lineNumber > 0, lineNumber <= totalLines else { return }
+            var lineStart = 0
+            for _ in 1..<lineNumber {
+                nsString.getLineStart(&lineStart, end: nil, contentsEnd: nil, for: NSRange(location: lineStart, length: 0))
+            }
+            textView.scrollRangeToVisible(NSRange(location: lineStart, length: 0))
+            textView.setSelectedRange(NSRange(location: lineStart, length: 0))
+            textView.window?.makeFirstResponder(textView)
         }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
-            // Programmatic updates never reach the delegate, so any
-            // did-change is either a live keystroke or an undo/redo replay.
             autoRewritesSuppressed = textView.undoManager?.isUndoing == true
             let newText = textView.string
             highlighter.refresh(textView)
             schedulePendingCalculation(textView)
             scheduleReactivePass(textView)
-            // A no-op write would still publish and ripple through SwiftUI;
-            // skip it so typing a character at a collapsed marker (which
-            // may emit a did-change with identical text) stays silent.
             if text.wrappedValue != newText {
                 text.wrappedValue = newText
             }
@@ -197,8 +229,22 @@ struct PaneEditor: NSViewRepresentable {
         /// Only a single-character insert is intercepted; pastes and
         /// multi-character substitutions pass straight through.
         func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
-            guard !isInHelpView,
-                  let replacement = replacementString,
+            guard !isInHelpView else { return true }
+            if let replacement = replacementString, replacement == "\n" {
+                let ns = textView.string as NSString
+                var lineStart = 0, lineEnd = 0, contentsEnd = 0
+                ns.getLineStart(&lineStart, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: affectedCharRange.location, length: 0))
+                let line = ns.substring(with: NSRange(location: lineStart, length: contentsEnd - lineStart))
+                let patterns = ["- [ ] ", "- [x] ", "- [X] ", "* [ ] ", "* [x] ", "* [X] ",
+                                "+ [ ] ", "+ [x] ", "+ [X] "]
+                for pattern in patterns {
+                    if line.hasPrefix(pattern) {
+                        textView.insertText("\n\(pattern)", replacementRange: affectedCharRange)
+                        return false
+                    }
+                }
+            }
+            guard let replacement = replacementString,
                   replacement.utf16.count == 1,
                   affectedCharRange.length == 0
             else { return true }
@@ -208,10 +254,6 @@ struct PaneEditor: NSViewRepresentable {
             case .accept:
                 return true
             case .rewrite(let range, let text):
-                // `range` covers the hyphen run (and, for an inline `---`, the
-                // segment the third hyphen occupies); `text` already includes
-                // the typed character where one is being carried along. One
-                // edit, so undo walks back to the raw hyphens.
                 textView.breakUndoCoalescing()
                 if textView.shouldChangeText(in: range, replacementString: text) {
                     textView.textStorage?.replaceCharacters(in: range, with: text)
@@ -246,10 +288,15 @@ struct PaneEditor: NSViewRepresentable {
         /// re-render everything at the new size.
         func applyFontSizeIfChanged(to textView: NSTextView) {
             let size = PaneStyle.fontSize
-            guard size != appliedFontSize else { return }
+            let themeID = PaneTheme.current.id
+            guard size != appliedFontSize || themeID != appliedThemeID else { return }
             appliedFontSize = size
+            appliedThemeID = themeID
             textView.font = .systemFont(ofSize: size)
+            textView.textColor = PaneStyle.textNSColor
+            textView.insertionPointColor = PaneStyle.textNSColor
             textView.typingAttributes = PaneEditor.makeTypingAttributes(fontSize: size)
+            textView.linkTextAttributes = PaneEditor.linkTextAttributes
             highlighter.render(textView)
         }
 
@@ -304,10 +351,15 @@ struct PaneEditor: NSViewRepresentable {
             let line = (textView.string as NSString).substring(with: contentRange)
             switch IntentExecution.action(forLine: line, in: textView.string) {
             case .startTimer(let timer):
-                TimerCenter.shared.start(duration: timer.duration, label: timer.label)
+                TimerCenter.shared.start(duration: timer.duration, label: timer.label, name: timer.name, fullScreen: timer.fullScreen)
                 if timer.clamped {
                     NoticeCenter.shared.show("Timers cap at 30 days — shortened.")
                 }
+                if timer.fullScreen, let active = TimerCenter.shared.timers.first {
+                    TimerOverlayWindow.shared.show(timer: active)
+                }
+            case .startPomodoro(let work, let rest, let cycles):
+                TimerCenter.shared.startPomodoro(work: work, rest: rest, cycles: cycles)
             case .startStopwatch(let label):
                 StopwatchCenter.shared.start(label: label)
             case .cancelStopwatches:
@@ -339,6 +391,14 @@ struct PaneEditor: NSViewRepresentable {
                 (NSApplication.shared.delegate as? AppDelegate)?.openSettings(nil)
             case .showDebug:
                 enterReferenceView(textView, content: debugReport())
+                return true
+            case .showFindPanel:
+                let item = NSMenuItem()
+                item.tag = Int(NSTextFinder.Action.showFindInterface.rawValue)
+                textView.performTextFinderAction(item)
+                return true
+            case .replaceAll(let find, let replace):
+                performGlobalReplace(find: find, replacement: replace, textView: textView)
                 return true
             case .hint(let message):
                 NoticeCenter.shared.show(message)
@@ -372,6 +432,39 @@ struct PaneEditor: NSViewRepresentable {
             }
         }
 
+        private func performGlobalReplace(find: String, replacement: String, textView: NSTextView) {
+            // Strip the command line first, then count and replace against the
+            // remaining body — otherwise an occurrence inside the command line
+            // itself inflates both the count and the rewritten text.
+            let commandLine = (textView.string as NSString).lineRange(for: textView.selectedRange())
+            if textView.shouldChangeText(in: commandLine, replacementString: "") {
+                textView.textStorage?.replaceCharacters(in: commandLine, with: "")
+                textView.didChangeText()
+            }
+            let current = textView.string
+            let ns = current as NSString
+            var count = 0
+            var searchRange = NSRange(location: 0, length: ns.length)
+            while true {
+                let foundRange = ns.range(of: find, options: [], range: searchRange)
+                if foundRange.location == NSNotFound { break }
+                count += 1
+                let nextStart = foundRange.location + foundRange.length
+                guard nextStart <= ns.length else { break }
+                searchRange = NSRange(location: nextStart, length: ns.length - nextStart)
+            }
+            guard count > 0 else {
+                NoticeCenter.shared.show("\"\(find)\" not found")
+                return
+            }
+            let result = ns.replacingOccurrences(of: find, with: replacement)
+            if textView.shouldChangeText(in: NSRange(location: 0, length: ns.length), replacementString: result) {
+                textView.textStorage?.replaceCharacters(in: NSRange(location: 0, length: ns.length), with: result)
+                textView.didChangeText()
+            }
+            NoticeCenter.shared.show("Replaced \(count) occurrence\(count == 1 ? "" : "s") of \"\(find)\"")
+        }
+
         /// Live footer: preview what return would do on the caret line, and
         /// offer the committed answer for copying. Suppressed in help view.
         private func updateFooterStatus(_ textView: NSTextView) {
@@ -381,9 +474,40 @@ struct PaneEditor: NSViewRepresentable {
                 return
             }
             let line = (textView.string as NSString).substring(with: contentRange)
+            let text = textView.string
+            let words = text.split(separator: /\s+/).count
+            let chars = text.count
+            let ease = Self.fleschKincaidEase(text)
             status.wrappedValue = FooterStatus(
                 preview: IntentExecution.preview(forLine: line, in: textView.string) ?? "",
-                answerToCopy: IntentExecution.answer(fromLine: line))
+                answerToCopy: IntentExecution.answer(fromLine: line),
+                wordCount: words,
+                charCount: chars,
+                readingEase: ease)
+        }
+
+        private static func fleschKincaidEase(_ text: String) -> Double {
+            guard !text.isEmpty else { return 0 }
+            let sentences = text.components(separatedBy: CharacterSet(charactersIn: ".!?")).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count
+            let words = text.split(separator: /\s+/)
+            let syllables = words.reduce(0) { $0 + Self.countSyllables(String($1)) }
+            guard sentences > 0, !words.isEmpty else { return 0 }
+            let score = 206.835 - 1.015 * (Double(words.count) / Double(sentences)) - 84.6 * (Double(syllables) / Double(words.count))
+            return max(0, min(100, score))
+        }
+
+        private static func countSyllables(_ word: String) -> Int {
+            let vowels = "aeiouy"
+            let lowered = word.lowercased()
+            var count = 0
+            var prevVowel = false
+            for char in lowered {
+                let isVowel = vowels.contains(char)
+                if isVowel && !prevVowel { count += 1 }
+                prevVowel = isVowel
+            }
+            if lowered.hasSuffix("e") && count > 1 { count -= 1 }
+            return max(1, count)
         }
 
         // MARK: Full-screen reference view (help / debug)
@@ -417,7 +541,7 @@ struct PaneEditor: NSViewRepresentable {
             textView.string = content
             textView.textStorage?.setAttributes([
                 .font: mono,
-                .foregroundColor: NSColor.labelColor,
+                .foregroundColor: PaneStyle.textNSColor,
             ], range: NSRange(location: 0, length: (content as NSString).length))
             textView.setSelectedRange(NSRange(location: 0, length: 0))
             textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
@@ -483,8 +607,14 @@ struct PaneEditor: NSViewRepresentable {
             var out: [String] = []
             out.append("Antimatter — debug")
             out.append("")
-            let fileURL = ScratchStore.defaultFileURL()
-            out.append("note:    \(fileURL.path)")
+            let fileURL = StorageLocation.directory(named: "notes").appendingPathComponent("notes.json")
+            out.append("notes:   \(fileURL.path) (\(NoteStore.shared.notes.count))")
+            let active = NoteStore.shared.activeNote
+            if !active.title.isEmpty {
+                out.append("active:  \(active.title)")
+            } else {
+                out.append("active:  <empty note>")
+            }
             if let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) {
                 out.append("         \(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))")
             }

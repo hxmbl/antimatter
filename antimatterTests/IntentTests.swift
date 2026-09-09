@@ -5,7 +5,7 @@ import Testing
 struct IntentTimerTests {
 
     @Test func bareNumberMeansMinutes() {
-        #expect(IntentParser.parseTimer(".timer 5") == IntentParser.Timer(duration: 300, label: ""))
+        #expect(IntentParser.parseTimer(".timer 5") == IntentParser.Timer(duration: 300, label: "", name: nil, fullScreen: false))
     }
 
     @Test func unitsAreHonoured() {
@@ -28,8 +28,8 @@ struct IntentTimerTests {
     }
 
     @Test func remainderBecomesTheLabel() {
-        #expect(IntentParser.parseTimer(".timer 5 laundry") == IntentParser.Timer(duration: 300, label: "laundry"))
-        #expect(IntentParser.parseTimer(".timer 1h 20m stand up") == IntentParser.Timer(duration: 4_800, label: "stand up"))
+        #expect(IntentParser.parseTimer(".timer 5 laundry") == IntentParser.Timer(duration: 300, label: "laundry", name: nil, fullScreen: false))
+        #expect(IntentParser.parseTimer(".timer 1h 20m stand up") == IntentParser.Timer(duration: 4_800, label: "stand up", name: nil, fullScreen: false))
     }
 
     @Test func keywordIsCaseInsensitive() {
@@ -47,7 +47,7 @@ struct IntentTimerTests {
     }
 
     @Test func spacedNumberAndUnitLeaveTheLabelIntact() {
-        #expect(IntentParser.parseTimer(".timer 5 mins stand up") == IntentParser.Timer(duration: 300, label: "stand up"))
+        #expect(IntentParser.parseTimer(".timer 5 mins stand up") == IntentParser.Timer(duration: 300, label: "stand up", name: nil, fullScreen: false))
         #expect(IntentParser.parseTimer(".timer 90 minutes tea")?.label == "tea")
     }
 
@@ -64,6 +64,51 @@ struct IntentTimerTests {
         for line in ["timer", "timer abc", "timer 0", "timers 5", "remind me at 5", "timer 5"] {
             #expect(IntentParser.parseTimer(line) == nil, "\(line) should not be a timer")
         }
+    }
+
+    @Test func namedTimersExtractName() {
+        let named = IntentParser.parseTimer(".timer 5 soup name Dinner")
+        #expect(named?.label == "soup")
+        #expect(named?.name == "Dinner")
+        let multiWord = IntentParser.parseTimer(".timer 10 work name Focus Session")
+        #expect(multiWord?.label == "work")
+        #expect(multiWord?.name == "Focus Session")
+    }
+
+    @Test func fullScreenKeywordIsRecognized() {
+        let fs = IntentParser.parseTimer(".timer 5 soup full-screen")
+        #expect(fs?.label == "soup")
+        #expect(fs?.fullScreen == true)
+        let noFs = IntentParser.parseTimer(".timer 5 soup")
+        #expect(noFs?.fullScreen == false)
+    }
+}
+
+struct IntentPomodoroTests {
+
+    @Test func basicPomodoroParses() {
+        let p = IntentParser.parsePomodoro(".pomodoro 25/5/4")
+        #expect(p?.workDuration == 1500)
+        #expect(p?.breakDuration == 300)
+        #expect(p?.cycles == 4)
+    }
+
+    @Test func defaultCycleCount() {
+        let p = IntentParser.parsePomodoro(".pomodoro 50/10")
+        #expect(p?.workDuration == 3000)
+        #expect(p?.breakDuration == 600)
+        #expect(p?.cycles == 4)
+    }
+
+    @Test func cyclesAreCapped() {
+        let p = IntentParser.parsePomodoro(".pomodoro 25/5/20")
+        #expect(p?.cycles == 12)
+    }
+
+    @Test func nonPomodoroLinesStayNil() {
+        #expect(IntentParser.parsePomodoro(".timer 5") == nil)
+        #expect(IntentParser.parsePomodoro("pomodoro 25/5") == nil)
+        #expect(IntentParser.parsePomodoro(".pomodoro") == nil)
     }
 }
 

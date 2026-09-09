@@ -22,6 +22,8 @@ struct SettingsView: View {
 private struct GeneralSettingsView: View {
     @AppStorage("appearance") private var appearance = "system"
     @AppStorage("conversion.network") private var currencyNetworkEnabled = false
+    @AppStorage("pane.displayMode") private var displayMode = "dock"
+    @AppStorage("codeBlocks.lineNumbers") private var showLineNumbers = false
 
     private var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
@@ -46,6 +48,22 @@ private struct GeneralSettingsView: View {
             }
 
             Section {
+                Picker("Mode", selection: $displayMode) {
+                    Text("Dock").tag("dock")
+                    Text("Menu Bar").tag("menuBar")
+                    Text("Dropdown").tag("dropdown")
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: displayMode) { _, _ in
+                    LaunchPreferences.apply()
+                }
+            } header: {
+                Label("Display Mode", systemImage: "macwindow.on.rectangle")
+            } footer: {
+                Text("Dock keeps the app in the Dock and Cmd+Tab. Menu Bar puts it in the system menu bar with a dropdown panel. Dropdown shows the panel from the top center of the screen, like Spotlight.")
+            }
+
+            Section {
                 Toggle("Live currency & crypto conversion", isOn: $currencyNetworkEnabled)
                     .onChange(of: currencyNetworkEnabled) { _, enabled in
                         if enabled { CurrencyCenter.shared.activate() }
@@ -54,6 +72,41 @@ private struct GeneralSettingsView: View {
                 Label("Conversion", systemImage: "dollarsign.circle")
             } footer: {
                 Text("Fetches exchange rates (fiat and crypto) from a third party once an hour and converts lines like `100 USD → EUR` or `1 btc → usd`. Off by default — keep it off for a fully offline note.")
+            }
+
+            Section {
+                Toggle("Show line numbers in code blocks", isOn: $showLineNumbers)
+            } header: {
+                Label("Code Blocks", systemImage: "chevron.left.forwardslash.chevron.right")
+            } footer: {
+                Text("Syntax highlighting supports Swift, Python, JavaScript, TypeScript, Rust, Go, Bash, C, C++, Java, Ruby, HTML, CSS, JSON, YAML, SQL, and Markdown. Strings, comments, and numbers are highlighted by default.")
+            }
+
+            Section {
+                Toggle("Enable iCloud Sync", isOn: Binding(
+                    get: { CloudKitSync.shared.isEnabled },
+                    set: { _ in CloudKitSync.shared.toggleSync() }
+                ))
+
+                if CloudKitSync.shared.isEnabled {
+                    if let lastSync = CloudKitSync.shared.lastSyncDate {
+                        Text("Last synced \(lastSync, style: .relative) ago")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    switch CloudKitSync.shared.syncStatus {
+                    case .idle: Text("Synced").foregroundStyle(.green)
+                    case .syncing: Text("Syncing...").foregroundStyle(.orange)
+                    case .error(let msg): Text("Error: \(msg)").foregroundStyle(.red)
+                    }
+                }
+
+                Text("Notes are encrypted on your device before syncing to iCloud. No account required.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Label("iCloud Sync", systemImage: "icloud")
             }
 
             Section {
@@ -70,6 +123,9 @@ private struct GeneralSettingsView: View {
         appearance = "system"
         LaunchPreferences.appearanceChanged("system")
         currencyNetworkEnabled = false
+        displayMode = "dock"
+        showLineNumbers = false
+        LaunchPreferences.apply()
     }
 }
 
@@ -159,6 +215,7 @@ private struct HotKeySettingsView: View {
 // MARK: - Appearance
 
 private struct AppearanceSettingsView: View {
+    @AppStorage("pane.themeID") private var themeID = "default"
     @AppStorage("fontSize") private var fontSize = 15
     @AppStorage("pane.cornerRadius") private var cornerRadius = 18.0
     @AppStorage("pane.maxWidth") private var maxWidth = 600.0
@@ -170,6 +227,42 @@ private struct AppearanceSettingsView: View {
 
     var body: some View {
         Form {
+            Section {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 80))], spacing: 12) {
+                    ForEach(PaneTheme.builtIn) { theme in
+                        Button {
+                            PaneTheme.set(theme)
+                        } label: {
+                            VStack(spacing: 4) {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(theme.background)
+                                    .overlay {
+                                        if theme.gridPaper {
+                                            ThemeSwatchGrid()
+                                        }
+                                    }
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .strokeBorder(themeID == theme.id ? theme.accent : Color.clear, lineWidth: 2)
+                                    )
+                                    .frame(width: 60, height: 40)
+                                Text(theme.name)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .help("\(theme.name) — \(theme.backgroundColor)")
+                    }
+                }
+                .padding(.vertical, 4)
+            } header: {
+                Label("Theme", systemImage: "paintpalette")
+            } footer: {
+                Text("Switching themes restyles the pane's colors, material, and grid instantly. Font size, corner radius, and translucency below override the theme until you change theme.")
+            }
+
             Section {
                 HStack(spacing: 12) {
                     Text("Aa")
@@ -231,6 +324,7 @@ private struct AppearanceSettingsView: View {
     }
 
     private func restoreDefaults() {
+        PaneTheme.set(PaneTheme.builtIn[0])
         fontSize = 15
         cornerRadius = 18
         maxWidth = 600
@@ -239,6 +333,29 @@ private struct AppearanceSettingsView: View {
         windowAlpha = 1.0
         floatsAboveOtherApps = true
         hidesOnEscape = true
+    }
+}
+
+/// A tiny grid overlay for theme swatches that use grid paper.
+private struct ThemeSwatchGrid: View {
+    var body: some View {
+        Canvas { context, size in
+            let path = Path { path in
+                var x: CGFloat = 5
+                while x < size.width {
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x, y: size.height))
+                    x += 5
+                }
+                var y: CGFloat = 5
+                while y < size.height {
+                    path.move(to: CGPoint(x: 0, y: y))
+                    path.addLine(to: CGPoint(x: size.width, y: y))
+                    y += 5
+                }
+            }
+            context.stroke(path, with: .color(.gray.opacity(0.3)), lineWidth: 0.5)
+        }
     }
 }
 

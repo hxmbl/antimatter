@@ -1,40 +1,124 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import antimatter
 
 @MainActor
-struct ScratchStoreTests {
+struct NoteStoreTests {
 
     private func tempURL() -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("antimatter-tests-\(UUID().uuidString)", isDirectory: true)
-            .appendingPathComponent("scratchpad.md")
+            .appendingPathComponent("notes.json")
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         return url
     }
 
     @Test func missingFileLoadsAsEmpty() {
-        let store = ScratchStore(fileURL: tempURL())
-        #expect(store.text == "")
+        let store = NoteStore(fileURL: tempURL())
+        #expect(store.notes.count == 1)
+        #expect(store.activeNote.text == "")
+    }
+
+    @Test func createInsertsNewestFirstAndActivates() {
+        let store = NoteStore(fileURL: tempURL())
+        let first = store.create(text: "alpha")
+        let second = store.create(text: "beta")
+        #expect(store.notes.count == 3)
+        #expect(store.notes[0].id == second.id)
+        #expect(store.activeNoteID == second.id)
+        store.cycleNote(direction: 1)
+        #expect(store.activeNoteID == first.id)
+        _ = first
     }
 
     @Test func textRoundTripsThroughDisk() {
         let url = tempURL()
         let source = "# scratch\n- [x] milk\n384 * 27"
-        let writer = ScratchStore(fileURL: url)
-        writer.text = source
+        let writer = NoteStore(fileURL: url)
+        var note = writer.activeNote
+        note.text = source
+        writer.activeNote = note
         writer.flush()
-        #expect(ScratchStore(fileURL: url).text == source)
+        let reader = NoteStore(fileURL: url)
+        #expect(reader.activeNote.text == source)
     }
 
     @Test func flushWritesImmediatelyEvenWithPendingDebounce() throws {
         let url = tempURL()
-        let store = ScratchStore(fileURL: url)
-        store.text = "typed just now"
-        store.textDidChange()   // schedules a debounced write…
-        store.flush()           // …but closing/quit must not wait for it
-        let onDisk = try String(contentsOf: url, encoding: .utf8)
-        #expect(onDisk == "typed just now")
+        let store = NoteStore(fileURL: url)
+        var note = store.activeNote
+        note.text = "typed just now"
+        store.activeNote = note
+        store.activeText.wrappedValue = "typed just now"   // triggers debounced write…
+        store.flush()                                      // …but quit must not wait for it
+        let onDisk = try JSONDecoder().decode(NoteStore.Snapshot.self, from: Data(contentsOf: url))
+        #expect(onDisk.notes.contains { $0.text == "typed just now" })
+    }
+
+    @Test func deleteMovesNoteToTrashAndAdvancesActive() {
+        let store = NoteStore(fileURL: tempURL())
+        let first = store.create(text: "keep me")
+        let doomed = store.create(text: "delete me")
+        store.delete(doomed)
+        #expect(!store.notes.contains { $0.id == doomed.id })
+        #expect(store.trash.contains { $0.id == doomed.id })
+        #expect(store.activeNoteID == first.id)
+    }
+
+    @Test func restoreBringsNoteBackFromVoid() {
+        let store = NoteStore(fileURL: tempURL())
+        let doomed = store.create(text: "resurrect me")
+        store.delete(doomed)
+        store.restore(doomed)
+        #expect(store.notes.contains { $0.id == doomed.id })
+        #expect(!store.trash.contains { $0.id == doomed.id })
+    }
+
+    @Test func emptyVoidClearsTrash() {
+        let store = NoteStore(fileURL: tempURL())
+        let doomed = store.create(text: "gone")
+        store.delete(doomed)
+        store.emptyVoid()
+        #expect(store.trash.isEmpty)
+    }
+
+    @Test func cycleNoteWrapsInBothDirections() {
+        let store = NoteStore(fileURL: tempURL())
+        let first = store.create(text: "first")
+        let second = store.create(text: "second")
+        let third = store.create(text: "third")
+        #expect(store.activeNoteID == third.id)
+        store.cycleNote(direction: 1)
+        #expect(store.activeNoteID == second.id)
+        store.cycleNote(direction: 1)
+        #expect(store.activeNoteID == first.id)
+        store.cycleNote(direction: -1)
+        #expect(store.activeNoteID == second.id)
+    }
+
+    @Test func promoteToSlotMarksNoteAndReplacesExistingSlot() {
+        let store = NoteStore(fileURL: tempURL())
+        let a = store.create(text: "slot a")
+        store.promoteToSlot(a, at: 2)
+        #expect(store.notes.first { $0.id == a.id }?.isSlot == true)
+        #expect(store.notes.first { $0.id == a.id }?.slotIndex == 2)
+        #expect(store.slotNotes().count == 1)
+
+        let b = store.create(text: "slot b")
+        store.promoteToSlot(b, at: 2)
+        #expect(!store.notes.contains { $0.id == a.id })
+        #expect(store.slotNotes().count == 1)
+        #expect(store.slotNotes()[0].id == b.id)
+    }
+
+    @Test func promoteToSlotRejectsOutOfRange() {
+        let store = NoteStore(fileURL: tempURL())
+        let a = store.create(text: "no slot")
+        store.promoteToSlot(a, at: 9)
+        #expect(store.notes.first { $0.id == a.id }?.isSlot == false)
+        store.promoteToSlot(a, at: -1)
+        #expect(store.notes.first { $0.id == a.id }?.isSlot == false)
     }
 }
 
@@ -47,9 +131,9 @@ struct TimerCenterPruneTests {
         let clock = Date(timeIntervalSince1970: 1_000_000)
         // Fired two hours ago and never dismissed: too old to keep around.
         let stale = ActiveTimer(
-            id: UUID(), label: "stale", duration: 10,
+            id: UUID(), label: "stale", name: nil, duration: 10,
             endDate: clock.addingTimeInterval(-7_200), createdAt: clock.addingTimeInterval(-7_210),
-            firedAt: clock.addingTimeInterval(-7_200)
+            firedAt: clock.addingTimeInterval(-7_200), fullScreen: false
         )
         try JSONEncoder().encode([stale]).write(to: url)
 
@@ -62,8 +146,9 @@ struct TimerCenterPruneTests {
             .appendingPathComponent("antimatter-timers-\(UUID().uuidString).json")
         let clock = Date(timeIntervalSince1970: 1_000_000)
         let tea = ActiveTimer(
-            id: UUID(), label: "tea", duration: 60,
-            endDate: clock.addingTimeInterval(60), createdAt: clock, firedAt: nil
+            id: UUID(), label: "tea", name: nil, duration: 60,
+            endDate: clock.addingTimeInterval(60), createdAt: clock, firedAt: nil,
+            fullScreen: false
         )
         // Last good generation lives in the .bak; the primary is garbage.
         try JSONEncoder().encode([tea]).write(to: Persistence.backupURL(for: url))
@@ -79,8 +164,9 @@ struct TimerCenterPruneTests {
         let backup = Persistence.backupURL(for: url)
         let clock = Date(timeIntervalSince1970: 1_000_000)
         let tea = ActiveTimer(
-            id: UUID(), label: "tea", duration: 60,
-            endDate: clock.addingTimeInterval(60), createdAt: clock, firedAt: nil
+            id: UUID(), label: "tea", name: nil, duration: 60,
+            endDate: clock.addingTimeInterval(60), createdAt: clock, firedAt: nil,
+            fullScreen: false
         )
         try JSONEncoder().encode([tea]).write(to: backup)
         try Data([0xFF]).write(to: url)   // primary is garbage
@@ -168,6 +254,37 @@ struct TimerCenterTests {
         // The elapsed timer comes back already fired — silently, no sound.
         #expect(tea?.firedAt != nil)
         #expect(dough?.firedAt == nil)
+    }
+
+    @Test func pomodoroSurvivesRelaunchOnItsWorkPhase() {
+        var clock = Date(timeIntervalSince1970: 1_000_000)
+        let url = tempFile()
+
+        let first = TimerCenter(fileURL: url, now: { clock })
+        first.startPomodoro(work: 60, rest: 10, cycles: 4)
+
+        #expect(first.timers.map(\.label) == ["Pomodoro 1/4 — Work"])
+
+        clock = clock.addingTimeInterval(5)   // a few seconds later, app relaunches
+        let second = TimerCenter(fileURL: url, now: { clock })
+
+        // The work phase comes back active, not dismissed and not fired.
+        #expect(second.timers.map(\.label) == ["Pomodoro 1/4 — Work"])
+        #expect(second.timers[0].firedAt == nil)
+        #expect(second.timers[0].endDate == clock.addingTimeInterval(55))
+    }
+
+    @Test func cancelAllClearsPersistedPomodoro() {
+        let clock = Date(timeIntervalSince1970: 1_000_000)
+        let url = tempFile()
+
+        let center = TimerCenter(fileURL: url, now: { clock })
+        center.startPomodoro(work: 60, rest: 10, cycles: 4)
+        center.cancelAll()
+
+        #expect(center.timers.isEmpty)
+        let reloaded = TimerCenter(fileURL: url, now: { clock })
+        #expect(reloaded.timers.isEmpty)
     }
 }
 

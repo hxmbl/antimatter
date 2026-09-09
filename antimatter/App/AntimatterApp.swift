@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import UserNotifications
 
 @main
@@ -9,13 +10,20 @@ struct AntimatterApp: App {
         Window("Antimatter", id: PaneStyle.windowIdentifier) {
             ContentView()
                 .containerBackground(.clear, for: .window)
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                    if PaneStyle.displayMode == .dock {
+                        PaneHotKey.shared.revealPane()
+                    }
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .windowBackgroundDragBehavior(.enabled)
         .commands {
             CommandGroup(after: .newItem) {
-                Button("Reveal Scratchpad in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([ScratchStore.defaultFileURL()])
+                Button("Reveal Notes in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([
+                        StorageLocation.directory(named: "notes").appendingPathComponent("notes.json")
+                    ])
                 }
                 .keyboardShortcut("r", modifiers: [.command])
             }
@@ -26,6 +34,11 @@ struct AntimatterApp: App {
                     .keyboardShortcut("g", modifiers: [.command])
                 Button("Find Previous") { FindSupport.perform(.previousMatch) }
                     .keyboardShortcut("G", modifiers: [.shift, .command])
+                Divider()
+                Button("Search All Notes") {
+                    NotificationCenter.default.post(name: .toggleSearchOverlay, object: nil)
+                }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
             }
         }
         Settings {
@@ -82,8 +95,8 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
     }
 }
 
-/// Appearance policy chosen in Settings, applied at launch. The app always
-/// stays in the Dock for now; menu-bar (accessory) mode is a later feature.
+/// Appearance and display-mode policy chosen in Settings, applied at launch
+/// and again whenever the display mode changes (no restart needed).
 @MainActor
 enum LaunchPreferences {
     static func apply() {
@@ -92,7 +105,24 @@ enum LaunchPreferences {
         case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
         default: NSApp.appearance = nil
         }
-        NSApp.setActivationPolicy(.regular)
+
+        let mode = PaneStyle.displayMode
+        switch mode {
+        case .dock:
+            NSApp.setActivationPolicy(.regular)
+            MenuBarController.shared.teardown()
+            // Switching back to Dock leaves the SwiftUI pane window ordered
+            // out from a previous accessory-mode session; bring it forward.
+            PaneHotKey.shared.revealPane()
+        case .menuBar, .dropdown:
+            NSApp.setActivationPolicy(.accessory)
+            MenuBarController.shared.setup()
+            // The SwiftUI pane window would otherwise float in addition to the
+            // panel; keep it out of the way in accessory modes.
+            NSApplication.shared.windows
+                .first { $0.identifier?.rawValue == PaneStyle.windowIdentifier }?
+                .orderOut(nil)
+        }
     }
 
     static func appearanceChanged(_ value: String) {
@@ -116,7 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        ScratchStore.shared.flush()
+        NoteStore.shared.flush()
     }
 
     @objc func openSettings(_ sender: Any?) {

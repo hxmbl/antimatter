@@ -3,6 +3,11 @@ import Darwin
 import Foundation
 import AppKit
 
+/// DEPRECATED — replaced by `NoteStore`. Kept only so other agents that still
+/// reference it continue to compile; multi-note persistence now lives in
+/// NoteStore (notes.json). The legacy single-note scratchpad (`scratchpad.md`)
+/// is auto-imported into NoteStore on first launch.
+///
 /// Owns the pane's text and keeps it on disk in Application Support.
 ///
 /// Typing triggers a debounced save so persistence never lands on the keystroke
@@ -20,6 +25,7 @@ import AppKit
 /// churn, no watcher events, nothing. `lastWritten` tracks what the primary
 /// file is believed to contain; it is re-synced from disk whenever an
 /// external event lands.
+@available(*, deprecated, message: "Use NoteStore instead")
 @MainActor
 final class ScratchStore: ObservableObject {
     static let shared = ScratchStore()

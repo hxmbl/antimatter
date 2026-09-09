@@ -5,11 +5,24 @@ import AppKit
 /// UserDefaults at render time, so Settings changes apply live without a
 /// restart; the baked-in fallback is the first-launch default.
 enum PaneStyle {
+    // MARK: Display Mode
+
+    enum DisplayMode: String, CaseIterable {
+        case dock = "dock"
+        case menuBar = "menuBar"
+        case dropdown = "dropdown"
+    }
+
+    static var displayMode: DisplayMode {
+        let raw = UserDefaults.standard.string(forKey: "pane.displayMode") ?? "dock"
+        return DisplayMode(rawValue: raw) ?? .dock
+    }
+
     // MARK: Transparency
 
     /// System blur behind the pane. `false` is a flat tint only (raise `tintOpacity`).
     static var usesBlur: Bool {
-        UserDefaults.standard.object(forKey: "pane.usesBlur") as? Bool ?? true
+        UserDefaults.standard.object(forKey: "pane.usesBlur") as? Bool ?? PaneTheme.current.usesBlur
     }
 
     /// Blur recipe. More see-through → more solid:
@@ -21,7 +34,17 @@ enum PaneStyle {
     static let blending: NSVisualEffectView.BlendingMode = .behindWindow
 
     /// Extra wash on top of the blur. `0` is blur-only (most transparent).
-    static let tint: Color = Color(nsColor: .labelColor)
+    /// Neutral-theme presets (default, grid light/dark) keep the original
+    /// label-color wash so the pane stays gray-on-gray; only colorful themes
+    /// tint with their accent.
+    static var tint: Color {
+        switch PaneTheme.current.id {
+        case "default", "grid-light", "grid-dark":
+            return Color(nsColor: .labelColor)
+        default:
+            return PaneTheme.current.tint
+        }
+    }
     static var tintOpacity: Double {
         (UserDefaults.standard.object(forKey: "pane.tintOpacity") as? Double) ?? 0.10
     }
@@ -34,7 +57,7 @@ enum PaneStyle {
     // MARK: Chrome
 
     static var cornerRadius: CGFloat {
-        CGFloat((UserDefaults.standard.object(forKey: "pane.cornerRadius") as? Double) ?? 18)
+        CGFloat((UserDefaults.standard.object(forKey: "pane.cornerRadius") as? Double) ?? PaneTheme.current.cornerRadius)
     }
     static let padding: CGFloat = 16
 
@@ -44,7 +67,7 @@ enum PaneStyle {
     /// Space reserved at the top so text starts below the traffic lights.
     /// The pane itself extends to the window's top edge, so the title bar
     /// area uses the exact same material as the typing surface.
-    static let titleBarInset: CGFloat = 30
+    static let titleBarInset: CGFloat = 12
     static var maxWidth: CGFloat {
         CGFloat((UserDefaults.standard.object(forKey: "pane.maxWidth") as? Double) ?? 600)
     }
@@ -60,11 +83,23 @@ enum PaneStyle {
     static let borderOpacity: Double = 0.16
     static let borderWidth: CGFloat = 0.5
 
+    // MARK: Theme
+
+    static var backgroundColor: Color { PaneTheme.current.background }
+    static var textColor: Color { PaneTheme.current.text }
+    static var accentColor: Color { PaneTheme.current.accent }
+    static var textNSColor: NSColor { PaneTheme.current.textNSColor }
+    static var accentNSColor: NSColor { PaneTheme.current.accentNSColor }
+    /// Syntax markers and code comments stay the system "secondary" gray —
+    /// accenting them would tint whole notes and fight the plain-text ethos.
+    static var secondaryTextNSColor: NSColor { NSColor.secondaryLabelColor }
+    static var gridPaper: Bool { PaneTheme.current.gridPaper }
+
     // MARK: Type
 
-    /// Runtime-adjustable (Settings); falls back to 15 until set.
+    /// Runtime-adjustable (Settings); falls back to the theme until set.
     static var fontSize: CGFloat {
-        CGFloat((UserDefaults.standard.object(forKey: "fontSize") as? Int) ?? 15)
+        CGFloat((UserDefaults.standard.object(forKey: "fontSize") as? Int) ?? PaneTheme.current.fontSize)
     }
     static let lineSpacing: CGFloat = 4
 
@@ -90,6 +125,9 @@ enum PaneStyle {
     /// Escape hides the pane (the hot key brings it back).
     static var hidesOnEscape: Bool {
         UserDefaults.standard.object(forKey: "pane.hidesOnEscape") as? Bool ?? true
+    }
+    static var showWordCount: Bool {
+        UserDefaults.standard.object(forKey: "pane.showWordCount") as? Bool ?? false
     }
 
     /// UserDefaults key the pane's frame is autosaved under; relaunches

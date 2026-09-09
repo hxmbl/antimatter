@@ -56,7 +56,7 @@ final class PaneTextView: NSTextView {
     }
 
     private var glide: Glide?
-    private var glideTimer: Timer?
+    private var glideLink: CADisplayLink?
     private var selectionBeforeMouseDown = NSRange(location: 0, length: 0)
     private var windowObserverToken: NSObjectProtocol?
     private var inputSessionTimer: Timer?
@@ -89,20 +89,25 @@ final class PaneTextView: NSTextView {
         cancelGlide()
         // Keep duration roughly constant; larger gaps naturally get covered faster
         // (speed = distance/duration). Very large jumps get slightly shorter duration.
-        let baseDuration: CFTimeInterval = 0.10
-        let distanceFactor = min(distance / 1000.0, 0.3) // Minimal scaling for huge jumps
+        // 0.15 s lands enough frames that even a 60 Hz display smooths the
+        // ease out; ProMotion gets every frame for the trail to linger in.
+        let baseDuration: CFTimeInterval = 0.15
+        let distanceFactor = min(distance / 1200.0, 0.3) // Minimal scaling for huge jumps
         let duration = baseDuration / (1.0 + distanceFactor)
         glide = Glide(from: fromRect, to: toRect, startTime: CACurrentMediaTime(), duration: duration)
         invalidateGlideArea()
-        glideTimer?.invalidate()
-        glideTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            self?.advanceGlide()
-        }
+        // Drive redraws off the display's refresh (vsync-aligned, follows
+        // ProMotion) instead of a loose 60 Hz Timer, so the glide never
+        // stutters or quantizes against the screen.
+        glideLink?.invalidate()
+        let link = displayLink(target: self, selector: #selector(advanceGlide(_:)))
+        link.add(to: .main, forMode: .common)
+        glideLink = link
         // Begin a minimal input session to suppress NSInputAnalytics warning
         beginInputSession()
     }
 
-    private func advanceGlide() {
+    @objc private func advanceGlide(_ link: CADisplayLink) {
         // A selection, IME composition, or focus change that slips in mid-glide
         // drops the ghost immediately — the real text system owns the caret.
         guard caretIsActive, selectedRange().length == 0, !hasMarkedText() else {
@@ -122,25 +127,25 @@ final class PaneTextView: NSTextView {
         guard glide != nil else { return }
         invalidateGlideArea()
         glide = nil
-        glideTimer?.invalidate()
-        glideTimer = nil
+        glideLink?.invalidate()
+        glideLink = nil
         endInputSession()
     }
 
     /// Cancels any in-flight glide so no stale ghost lingers (focus loss,
     /// large jump, selection, IME). The real caret is always ready to draw.
     private func cancelGlide() {
-        guard glide != nil || glideTimer != nil else { return }
+        guard glide != nil || glideLink != nil else { return }
         invalidateGlideArea()
         glide = nil
-        glideTimer?.invalidate()
-        glideTimer = nil
+        glideLink?.invalidate()
+        glideLink = nil
         endInputSession()
     }
 
     private func invalidateGlideArea() {
         guard let glide = glide else { return }
-        setNeedsDisplay(glide.from.union(glide.to).insetBy(dx: -8, dy: -8))
+        setNeedsDisplay(glide.from.union(glide.to).insetBy(dx: -10, dy: -10))
     }
 
     private func currentGlideRect() -> CGRect? {
@@ -155,11 +160,12 @@ final class PaneTextView: NSTextView {
         )
     }
 
-    /// Soft "fast departure, gentle landing" curve — the iPhone caret moves
-    /// briskly away and settles quietly, instead of the previous cubic that
-    /// dragged for most of its travel.
+    /// Soft "fast departure, gentle landing" curve. The previous `pow(t, 0.65)`
+    /// launched with infinite initial velocity, which snapped the caret off
+    /// the line on the first frame. This curve departs briskly but smoothly
+    /// and lands with zero velocity, so the final pixels ease to a stop.
     private func easedCurve(_ t: CGFloat) -> CGFloat {
-        pow(t, 0.65)
+        1 - pow(1 - t, 2.6)
     }
     
     /// Minimal input session management to suppress NSInputAnalytics warnings
@@ -210,13 +216,44 @@ final class PaneTextView: NSTextView {
         guard caretIsActive, selectedRange().length == 0, !hasMarkedText(),
               let glide = glide, let head = currentGlideRect() else { return }
         let color = insertionPointColor ?? .labelColor
+        let t = min(max((CACurrentMediaTime() - glide.startTime) / glide.duration, 0), 1)
+        let eased = easedCurve(t)
 
-        // A faint glow surrounds the head caret during the glide.
+        // A fading comet trails from the source caret to the moving head: a
+        // gently curved spline of dots, brightest and densest just behind the
+        // head and dissolving toward the tail. The whole trail evaporates as
+        // the caret reaches its resting spot, so it never lingers.
+        let fromPoint = CGPoint(x: glide.from.midX, y: glide.from.midY)
+        let toPoint = CGPoint(x: head.midX, y: head.midY)
+        let length = hypot(toPoint.x - fromPoint.x, toPoint.y - fromPoint.y)
+        if length >= 4, eased > 0.02 {
+            let sag = min(length * 0.06, 4)
+            let perpX = -(toPoint.y - fromPoint.y) / length
+            let perpY = (toPoint.x - fromPoint.x) / length
+            let dissolve = (1 - eased) * 0.6
+            let dots = 16
+            for i in 1...dots {
+                let p = CGFloat(i) / CGFloat(dots)
+                let along = 1 - pow(1 - p, 0.75)
+                let x = fromPoint.x + (toPoint.x - fromPoint.x) * along
+                let y = fromPoint.y + (toPoint.y - fromPoint.y) * along
+                let arc = sag * sin(p * .pi)
+                let alpha = pow(1 - p, 1.5) * dissolve
+                guard alpha > 0.02 else { continue }
+                color.withAlphaComponent(alpha).setFill()
+                let r: CGFloat = 1
+                NSBezierPath(ovalIn: CGRect(x: x + perpX * arc - r, y: y + perpY * arc - r, width: r * 2, height: r * 2)).fill()
+            }
+        }
+
+        // The head caret. It brightens to the insertion point's full opacity
+        // as it lands while the halo fades out, so handing off to the real
+        // caret is seamless — no visible pulse on arrival.
         let headRect = CGRect(x: head.minX, y: head.minY, width: max(2, head.width), height: max(2, head.height))
-        color.withAlphaComponent(0.15).setFill()
-        NSBezierPath(roundedRect: headRect, xRadius: 1, yRadius: 1).fill()
-
-        color.withAlphaComponent(0.6).setFill()
+        let headAlpha = 0.6 + 0.4 * eased
+        color.withAlphaComponent(0.12 * (1 - eased)).setFill()
+        NSBezierPath(roundedRect: headRect.insetBy(dx: -1, dy: -1), xRadius: 2, yRadius: 2).fill()
+        color.withAlphaComponent(headAlpha).setFill()
         NSBezierPath(roundedRect: headRect, xRadius: 1, yRadius: 1).fill()
     }
 
@@ -333,12 +370,45 @@ final class PaneTextView: NSTextView {
         selectionBeforeMouseDown = selectedRange()
         pendingClick = (event.locationInWindow, event.modifierFlags.intersection(.deviceIndependentFlagsMask))
         super.mouseDown(with: event)
+        DispatchQueue.main.async { [weak self] in
+            self?.toggleTaskIfOnMarker()
+        }
         // The click already moved the REAL caret to the mouse point instantly;
         // glide a visual ghost from wherever the caret was to show it routing.
         // A drag-to-select or double-click forms a selection, so the guard
         // (collapsed caret) cancels the ghost and shows the selection as-is.
         if selectedRange().length == 0 {
             glideCaret(from: selectionBeforeMouseDown.location, to: selectedRange().location)
+        }
+    }
+
+    private func toggleTaskIfOnMarker() {
+        let location = selectedRange().location
+        guard location != NSNotFound, let textStorage = textStorage else { return }
+
+        let nsString = textStorage.string as NSString
+        var lineStart = 0, lineEnd = 0, contentsEnd = 0
+        nsString.getLineStart(&lineStart, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: location, length: 0))
+        let line = nsString.substring(with: NSRange(location: lineStart, length: contentsEnd - lineStart))
+
+        let patterns = ["- [ ] ", "- [x] ", "- [X] ", "* [ ] ", "* [x] ", "* [X] ",
+                        "+ [ ] ", "+ [x] ", "+ [X] "]
+        for pattern in patterns {
+            if line.hasPrefix(pattern) {
+                let replacement: String
+                if line.contains("[ ]") {
+                    replacement = line.replacingOccurrences(of: "[ ]", with: "[x]")
+                } else {
+                    replacement = line.replacingOccurrences(of: "[x]", with: "[ ]").replacingOccurrences(of: "[X]", with: "[ ]")
+                }
+                let editRange = NSRange(location: lineStart, length: contentsEnd - lineStart)
+                if shouldChangeText(in: editRange, replacementString: replacement) {
+                    textStorage.replaceCharacters(in: editRange, with: replacement)
+                    didChangeText()
+                }
+                setSelectedRange(NSRange(location: min(location, textStorage.length), length: 0))
+                return
+            }
         }
     }
 
@@ -417,7 +487,9 @@ final class PaneTextView: NSTextView {
     }
 
     @objc private func revealScratchpad(_ sender: Any?) {
-        NSWorkspace.shared.activateFileViewerSelecting([ScratchStore.defaultFileURL()])
+        NSWorkspace.shared.activateFileViewerSelecting([
+            StorageLocation.directory(named: "notes").appendingPathComponent("notes.json")
+        ])
     }
 
     // MARK: Help view keystroke interception
@@ -545,6 +617,15 @@ final class PaneTextView: NSTextView {
             return
         }
         
+        if event.modifierFlags.contains(.command) {
+            switch event.charactersIgnoringModifiers {
+            case "b": toggleBold(); return
+            case "i": toggleItalic(); return
+            case "u": toggleUnderline(); return
+            default: break
+            }
+        }
+
         // Handle delete/backspace with caret glide
         let keyCode = event.keyCode
         if keyCode == 51 || keyCode == 117 { // Backspace or Forward Delete
@@ -615,6 +696,115 @@ final class PaneTextView: NSTextView {
         }
     }
 
+    // MARK: Line reordering (Option+Up/Down)
+
+    override func moveUp(_ sender: Any?) {
+        if NSEvent.modifierFlags.contains(.option) {
+            moveLineUp()
+            return
+        }
+        super.moveUp(sender)
+    }
+
+    override func moveDown(_ sender: Any?) {
+        if NSEvent.modifierFlags.contains(.option) {
+            moveLineDown()
+            return
+        }
+        super.moveDown(sender)
+    }
+
+    private func moveLineUp() {
+        guard let textStorage = textStorage else { return }
+        let fullText = textStorage.string as NSString
+        let cursorLocation = selectedRange().location
+        guard cursorLocation != NSNotFound, fullText.length > 0 else { return }
+
+        let swiftText = fullText as String
+        let lines = swiftText.components(separatedBy: "\n")
+
+        var charCount = 0
+        var currentLineIndex = 0
+        for (i, line) in lines.enumerated() {
+            let lineLen = (line as NSString).length
+            if charCount + lineLen >= cursorLocation {
+                currentLineIndex = i
+                break
+            }
+            charCount += lineLen + 1
+        }
+
+        guard currentLineIndex > 0 else { return }
+
+        var mutableLines = lines
+        mutableLines.swapAt(currentLineIndex, currentLineIndex - 1)
+
+        let newString = mutableLines.joined(separator: "\n")
+        let prevLineLength = (lines[currentLineIndex - 1] as NSString).length
+        let newCursorLocation = cursorLocation - prevLineLength - 1
+
+        let originalText = swiftText
+        let originalCursor = cursorLocation
+        undoManager?.registerUndo(withTarget: self) { tv in
+            tv.string = originalText
+            tv.setSelectedRange(NSRange(location: originalCursor, length: 0))
+            tv.delegate?.textDidChange?(Notification(name: NSText.didChangeNotification, object: tv))
+        }
+        undoManager?.setActionName("Move Line Up")
+
+        textStorage.beginEditing()
+        textStorage.replaceCharacters(in: NSRange(location: 0, length: fullText.length), with: newString)
+        textStorage.endEditing()
+        setSelectedRange(NSRange(location: max(0, newCursorLocation), length: 0))
+        delegate?.textDidChange?(Notification(name: NSText.didChangeNotification, object: self))
+    }
+
+    private func moveLineDown() {
+        guard let textStorage = textStorage else { return }
+        let fullText = textStorage.string as NSString
+        let cursorLocation = selectedRange().location
+        guard cursorLocation != NSNotFound, fullText.length > 0 else { return }
+
+        let swiftText = fullText as String
+        let lines = swiftText.components(separatedBy: "\n")
+        guard lines.count > 1 else { return }
+
+        var charCount = 0
+        var currentLineIndex = 0
+        for (i, line) in lines.enumerated() {
+            let lineLen = (line as NSString).length
+            if charCount + lineLen >= cursorLocation {
+                currentLineIndex = i
+                break
+            }
+            charCount += lineLen + 1
+        }
+
+        guard currentLineIndex < lines.count - 1 else { return }
+
+        var mutableLines = lines
+        mutableLines.swapAt(currentLineIndex, currentLineIndex + 1)
+
+        let newString = mutableLines.joined(separator: "\n")
+        let currentLineLength = (lines[currentLineIndex] as NSString).length
+        let newCursorLocation = cursorLocation + currentLineLength + 1
+
+        let originalText = swiftText
+        let originalCursor = cursorLocation
+        undoManager?.registerUndo(withTarget: self) { tv in
+            tv.string = originalText
+            tv.setSelectedRange(NSRange(location: originalCursor, length: 0))
+            tv.delegate?.textDidChange?(Notification(name: NSText.didChangeNotification, object: tv))
+        }
+        undoManager?.setActionName("Move Line Down")
+
+        textStorage.beginEditing()
+        textStorage.replaceCharacters(in: NSRange(location: 0, length: fullText.length), with: newString)
+        textStorage.endEditing()
+        setSelectedRange(NSRange(location: min((newString as NSString).length, newCursorLocation), length: 0))
+        delegate?.textDidChange?(Notification(name: NSText.didChangeNotification, object: self))
+    }
+
     /// Returns a caret position past the neighbouring run of collapsed
     /// markers when moving would otherwise step into one, else nil.
     private func jumpTarget(step: Int) -> Int? {
@@ -652,8 +842,86 @@ final class PaneTextView: NSTextView {
         (storage.attribute(.font, at: index, effectiveRange: nil) as? NSFont).map { $0.pointSize <= 2 } ?? false
     }
 
+    // MARK: Formatting shortcuts
+
+    private func toggleBold() { toggleMarker("**") }
+    private func toggleItalic() { toggleMarker("*") }
+    private func toggleUnderline() { toggleMarker("__") }
+
+    private func toggleMarker(_ marker: String) {
+        guard let textStorage = textStorage else { return }
+        let range = selectedRange()
+        let fullText = textStorage.string as NSString
+
+        let replacement: String
+        let newSelection: NSRange
+        if range.length > 0 {
+            let selectedText = fullText.substring(with: range)
+            if selectedText.hasPrefix(marker) && selectedText.hasSuffix(marker) && selectedText.count > marker.count * 2 {
+                let inner = String(selectedText.dropFirst(marker.count).dropLast(marker.count))
+                replacement = inner
+                newSelection = NSRange(location: range.location, length: (inner as NSString).length)
+            } else {
+                replacement = "\(marker)\(selectedText)\(marker)"
+                newSelection = NSRange(location: range.location + marker.count, length: (selectedText as NSString).length)
+            }
+        } else {
+            replacement = "\(marker)\(marker)"
+            newSelection = NSRange(location: range.location + marker.count, length: 0)
+        }
+
+        if shouldChangeText(in: range, replacementString: replacement) {
+            textStorage.replaceCharacters(in: range, with: replacement)
+            didChangeText()
+        }
+        setSelectedRange(newSelection)
+    }
+
+    // MARK: Auto markdown link on paste
+
+    override func paste(_ sender: Any?) {
+        let pasteboard = NSPasteboard.general
+        guard let text = pasteboard.string(forType: .string) else {
+            super.paste(sender)
+            return
+        }
+
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let url = URL(string: trimmed),
+           let scheme = url.scheme,
+           ["http", "https", "ftp"].contains(scheme),
+           url.host != nil {
+            let markdown = "[\(trimmed)](\(trimmed))"
+            let range = selectedRange()
+            if shouldChangeText(in: range, replacementString: markdown) {
+                textStorage?.replaceCharacters(in: range, with: markdown)
+                didChangeText()
+            }
+            setSelectedRange(NSRange(location: range.location + (markdown as NSString).length, length: 0))
+            return
+        }
+
+        super.paste(sender)
+    }
+
+    // MARK: Copy current line when nothing selected
+
+    override func copy(_ sender: Any?) {
+        if selectedRange().length == 0 {
+            let nsString = string as NSString
+            var lineStart = 0, lineEnd = 0
+            nsString.getLineStart(&lineStart, end: nil, contentsEnd: &lineEnd, for: NSRange(location: selectedRange().location, length: 0))
+            let lineText = nsString.substring(with: NSRange(location: lineStart, length: lineEnd - lineStart))
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(lineText, forType: .string)
+        } else {
+            super.copy(sender)
+        }
+    }
+
     deinit {
-        glideTimer?.invalidate()
+        glideLink?.invalidate()
         inputSessionTimer?.invalidate()
         if let windowObserverToken {
             NotificationCenter.default.removeObserver(windowObserverToken)

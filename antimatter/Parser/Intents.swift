@@ -17,6 +17,8 @@ nonisolated enum IntentParser {
     struct Timer: Equatable {
         let duration: TimeInterval
         let label: String
+        let name: String?
+        let fullScreen: Bool
         /// True when the requested duration exceeded the cap and was
         /// shortened — surfaced to the user as a transient notice.
         var clamped = false
@@ -60,9 +62,30 @@ nonisolated enum IntentParser {
         }
         guard matchedAny, duration > 0 else { return nil }
 
-        let label = index < words.count ? words[index...].joined(separator: " ") : ""
+        let remaining = index < words.count ? words[index...] : []
+        let lowercased = remaining.joined(separator: " ").lowercased()
+        let fullScreen = lowercased.contains("full-screen")
+
+        var labelParts: [String] = []
+        var name: String?
+        var i = 0
+        let remainingArray = Array(remaining)
+        while i < remainingArray.count {
+            let word = remainingArray[i]
+            if word.lowercased() == "name" && i + 1 < remainingArray.count {
+                name = remainingArray[(i + 1)...].joined(separator: " ")
+                break
+            }
+            if word.lowercased() == "full-screen" {
+                i += 1
+                continue
+            }
+            labelParts.append(word)
+            i += 1
+        }
+        let label = labelParts.joined(separator: " ")
         let capped = duration > maxDuration
-        return Timer(duration: min(duration, maxDuration), label: label, clamped: capped)
+        return Timer(duration: min(duration, maxDuration), label: label, name: name, fullScreen: fullScreen, clamped: capped)
     }
 
     /// Largest supported timer: 30 days.
@@ -73,6 +96,28 @@ nonisolated enum IntentParser {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return trimmed == commandPrefix + "timer cancel"
             || trimmed == commandPrefix + "timer cancel all"
+    }
+
+    // MARK: Pomodoro
+
+    struct Pomodoro: Equatable {
+        let workDuration: TimeInterval
+        let breakDuration: TimeInterval
+        let cycles: Int
+    }
+
+    static func parsePomodoro(_ line: String) -> Pomodoro? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.lowercased().hasPrefix(commandPrefix + "pomodoro") else { return nil }
+        let rest = String(trimmed.dropFirst((commandPrefix + "pomodoro").count))
+            .trimmingCharacters(in: .whitespaces)
+        let parts = rest.split(separator: "/").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard parts.count >= 2,
+              let workMin = Double(parts[0]),
+              let breakMin = Double(parts[1])
+        else { return nil }
+        let cycles = parts.count >= 3 ? (Int(parts[2]) ?? 4) : 4
+        return Pomodoro(workDuration: workMin * 60, breakDuration: breakMin * 60, cycles: min(cycles, 12))
     }
 
     // MARK: Stopwatches

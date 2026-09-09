@@ -31,9 +31,16 @@ enum StorageLocation {
 /// successful write of bad content (or a user's accidental deletion of the
 /// primary) leaves the previous good save recoverable.
 enum Persistence {
-    /// The `<name>.<ext>.bak` sibling of `url`.
+    /// The `<name>.bak` sibling of `url` — a one-generation backup for any
+    /// persisted file (scratchpad.md → scratchpad.md.bak, notes.json →
+    /// notes.json.bak), not just the scratchpad.
     static func backupURL(for url: URL) -> URL {
-        url.deletingPathExtension().appendingPathExtension(url.pathExtension + ".bak")
+        url.appendingPathExtension("bak")
+    }
+
+    /// Checks whether a file exists at the given URL.
+    static func fileExists(at url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path)
     }
 
     /// Reads `url`, falling back to its `.bak` when the primary file is
@@ -43,6 +50,13 @@ enum Persistence {
             return text
         }
         return try? String(contentsOf: backupURL(for: url), encoding: .utf8)
+    }
+
+    /// Reads binary data from `url`, falling back to its `.bak`.
+    /// Returns nil when neither can be read.
+    static func readData(from url: URL) -> Data? {
+        if let data = try? Data(contentsOf: url) { return data }
+        return try? Data(contentsOf: backupURL(for: url))
     }
 
     /// Reads only the primary file — no fallback. Used to learn what is

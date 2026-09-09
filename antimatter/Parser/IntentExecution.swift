@@ -188,6 +188,8 @@ nonisolated enum IntentExecution {
         case cancelAllTimers
         /// Cancel every pending reminder (`.reminder cancel [all]`).
         case cancelAllReminders
+        /// Start a pomodoro cycle (`.pomodoro 25/5/4`).
+        case startPomodoro(workDuration: TimeInterval, breakDuration: TimeInterval, cycles: Int)
         /// Hand the line to the calculation rewriter.
         case rewriteCalculation
         /// Replace the caret line wholesale (dates, units, definitions).
@@ -204,6 +206,10 @@ nonisolated enum IntentExecution {
         case showSettings
         /// Expand `.debug` into a diagnostics + log reference block.
         case showDebug
+        /// Trigger the text view's native find panel.
+        case showFindPanel
+        /// Global replace in the current note.
+        case replaceAll(find: String, replacement: String)
         /// Say something through a transient notice instead of acting
         /// (unknown dot-command, missing argument, empty aggregate).
         case hint(String)
@@ -219,6 +225,9 @@ nonisolated enum IntentExecution {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.hasSuffix("=") else { return .nothing }
 
+        if let pomodoro = IntentParser.parsePomodoro(trimmed) {
+            return .startPomodoro(workDuration: pomodoro.workDuration, breakDuration: pomodoro.breakDuration, cycles: pomodoro.cycles)
+        }
         if trimmed.lowercased().hasPrefix(IntentParser.commandPrefix + "timer") {
             if IntentParser.isTimerCancel(trimmed) {
                 return .cancelAllTimers
@@ -270,6 +279,20 @@ nonisolated enum IntentExecution {
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "debug" {
             return .showDebug
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "find" {
+            return .showFindPanel
+        }
+        if trimmed.lowercased().hasPrefix(IntentParser.commandPrefix + "replace ") {
+            let rest = String(trimmed.dropFirst((IntentParser.commandPrefix + "replace ").count))
+            if let arrow = rest.range(of: " → ") {
+                let find = String(rest[..<arrow.lowerBound])
+                let replace = String(rest[arrow.upperBound...])
+                if !find.isEmpty {
+                    return .replaceAll(find: find, replacement: replace)
+                }
+            }
+            return .hint(".replace needs a pattern — `.replace find → replace`")
         }
         if let replacement = DateIntent.commit(line) {
             return .rewriteLine(replacement)
@@ -339,6 +362,7 @@ nonisolated enum IntentExecution {
           .timer cancel [all]     cancel all running timers
           .stopwatch [label]      stopwatch counting up (chip in the corner)
           .stopwatch cancel       cancel running stopwatches
+          .pomodoro 25/5/4        work/break in minutes, 4 cycles (max 12)
           .remind in 10 mins …    natural-language reminder ("call mom", "tomorrow at 3pm …")
           .remind tomorrow 3pm …  absolute times work too
           .reminder cancel [all]  cancel all pending reminders
@@ -348,6 +372,8 @@ nonisolated enum IntentExecution {
           .sum  .total            sum the numbers in this note
           .avg  .average          average the note's numbers
           .count                  count the note's numbers
+          .find                   open the find bar (also ⌘F)
+          .replace find → replace global replace in the note
           .settings               open the settings window
           .debug                  show diagnostics and the event log
           .help                   open this reference full-screen (press q to close)
@@ -375,6 +401,9 @@ nonisolated enum IntentExecution {
 
         if IntentParser.isTimerCancel(trimmed) {
             return "⏎ cancels all running timers"
+        }
+        if IntentParser.parsePomodoro(trimmed) != nil {
+            return "⏎ starts a pomodoro cycle"
         }
         if IntentParser.parseTimer(trimmed) != nil {
             return "⏎ starts a timer"
@@ -411,6 +440,20 @@ nonisolated enum IntentExecution {
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "debug" {
             return "⏎ shows diagnostics and the event log"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "find" {
+            return "⏎ opens the find bar"
+        }
+        if trimmed.lowercased().hasPrefix(IntentParser.commandPrefix + "replace ") {
+            let rest = String(trimmed.dropFirst((IntentParser.commandPrefix + "replace ").count))
+            if let arrow = rest.range(of: " → ") {
+                let find = String(rest[..<arrow.lowerBound])
+                let replace = String(rest[arrow.upperBound...])
+                if !find.isEmpty {
+                    return "⏎ replace \"\(find)\" → \"\(replace)\""
+                }
+            }
+            return nil
         }
         if let replacement = DateIntent.commit(line) {
             return "⏎ " + replacement.trimmingCharacters(in: .whitespaces)
@@ -453,12 +496,15 @@ nonisolated enum IntentExecution {
         (".stopwatch", "start or cancel a stopwatch"),
         (".remind", "set a natural-language reminder"),
         (".reminder", "cancel reminders (`.reminder cancel all`)"),
+        (".pomodoro", "start a pomodoro cycle (`.pomodoro 25/5/4`)"),
         (".paste", "stream clipboard into the note"),
         (".export notes", "send the note to Apple Notes"),
         (".export obsidian", "save the note as markdown in a vault"),
         (".sum", "sum the note's numbers"),
         (".avg", "average the note's numbers"),
         (".count", "count the note's numbers"),
+        (".find", "open the find bar"),
+        (".replace", "global replace (`.replace find → replace`)"),
         (".settings", "open the settings window"),
         (".debug", "show diagnostics and the event log"),
         (".help", "show the command reference"),

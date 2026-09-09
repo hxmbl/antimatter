@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 struct ContentView: View {
-    @StateObject private var store = ScratchStore.shared
+    @StateObject private var noteStore = NoteStore.shared
     // Declared so a Settings-side change re-renders (and re-styles) the editor.
     @AppStorage("fontSize") private var fontSizeObservation = 15
     @AppStorage("pane.cornerRadius") private var cornerRadiusObservation = 18.0
@@ -12,10 +12,12 @@ struct ContentView: View {
     @AppStorage("pane.windowAlpha") private var windowAlphaObservation = 1.0
     @AppStorage("pane.floats") private var floatsObservation = true
     @AppStorage("pane.hidesOnEscape") private var hidesOnEscapeObservation = true
+    @AppStorage("pane.themeID") private var themeIDObservation = "default"
     @State private var footer = FooterStatus()
+    @State private var showSearch = false
 
     var body: some View {
-        PaneEditor(text: $store.text, status: $footer)
+        PaneEditor(text: noteStore.activeText, status: $footer)
             .padding(.top, PaneStyle.titleBarInset)
             .padding(.leading, PaneStyle.padding)
             .padding(.trailing, PaneStyle.padding)
@@ -28,16 +30,32 @@ struct ContentView: View {
                     .strokeBorder(PaneStyle.border.opacity(PaneStyle.borderOpacity), lineWidth: PaneStyle.borderWidth)
             }
             .overlay(alignment: .topTrailing) { CaptureStrip().padding(.trailing, 10) }
-            .overlay(alignment: .bottomLeading) { SaveErrorHint(error: store.saveError, token: store.saveErrorToken).padding(.leading, PaneStyle.padding) }
+            .overlay(alignment: .bottomLeading) { SaveErrorHint(error: noteStore.saveError, token: noteStore.saveErrorToken).padding(.leading, PaneStyle.padding) }
             .overlay(alignment: .bottom) {
                 PaneFooter(status: footer)
                     .padding(.horizontal, PaneStyle.padding)
                     .padding(.bottom, 7)
             }
             .overlay(WindowDragEdge())
+            .overlay {
+                if showSearch {
+                    SearchOverlay(isPresented: $showSearch)
+                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                }
+            }
+            .animation(.easeInOut(duration: 0.15), value: showSearch)
             .background(WindowConfigurator())
         .background(HotKeyWindowBridge())
-            .onChange(of: store.text) { _, _ in store.textDidChange() }
+            .gesture(
+                DragGesture(minimumDistance: 30, coordinateSpace: .local)
+                    .onEnded { value in
+                        if value.translation.width < -30 {
+                            noteStore.cycleNote(direction: -1)
+                        } else if value.translation.width > 30 {
+                            noteStore.cycleNote(direction: 1)
+                        }
+                    }
+            )
             .onAppear {
                 if !UserDefaults.standard.bool(forKey: PaneStyle.didWelcomeKey) {
                     UserDefaults.standard.set(true, forKey: PaneStyle.didWelcomeKey)
@@ -49,7 +67,10 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
                 // Any window closing posts here; only the pane's own file matters.
                 guard (note.object as? NSWindow)?.identifier?.rawValue == PaneStyle.windowIdentifier else { return }
-                store.flush()
+                noteStore.flush()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .toggleSearchOverlay)) { _ in
+                showSearch.toggle()
             }
             // Settings that live on the NSWindow itself (level, fade, corner,
             // size clamp) are re-applied here; the rest take effect through
@@ -58,6 +79,7 @@ struct ContentView: View {
             .onChange(of: maxWidthObservation) { _, _ in PaneWindowStyler.applyToPane() }
             .onChange(of: windowAlphaObservation) { _, _ in PaneWindowStyler.applyToPane() }
             .onChange(of: floatsObservation) { _, _ in PaneWindowStyler.applyToPane() }
+            .onChange(of: themeIDObservation) { _, _ in PaneWindowStyler.applyToPane() }
     }
 }
 
@@ -215,6 +237,11 @@ private struct TimerChip: View {
 
     var body: some View {
         HStack(spacing: 6) {
+            if let name = timer.name {
+                Text(name)
+                    .lineLimit(1)
+                    .opacity(isDone ? 0.5 : 1)
+            }
             if !timer.label.isEmpty {
                 Text(timer.label)
                     .lineLimit(1)
@@ -355,6 +382,21 @@ private struct SaveErrorHint: View {
 private struct PaneFooter: View {
     let status: FooterStatus
 
+    private var gradeLabel: String {
+        guard let ease = status.readingEase else { return "Grade 0" }
+        let grade: Int
+        switch ease {
+        case 90...: grade = 5
+        case 80..<90: grade = 6
+        case 70..<80: grade = 7
+        case 60..<70: grade = 8
+        case 50..<60: grade = 10
+        case 30..<50: grade = 13
+        default: grade = 17
+        }
+        return "Grade \(grade)"
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             Group {
@@ -383,6 +425,12 @@ private struct PaneFooter: View {
             .lineLimit(1)
             .truncationMode(.middle)
             Spacer()
+            if PaneStyle.showWordCount, status.charCount > 0 {
+                Text("\(status.wordCount) words · \(status.charCount) chars · \(gradeLabel)")
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(.tertiary)
+            }
             Text("⌘F find · Esc hide")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
