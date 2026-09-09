@@ -1,12 +1,16 @@
 import SwiftUI
 import AppKit
 
-/// Visual knobs for the floating pane. Edit this file to restyle the app.
+/// Visual knobs for the floating pane. Each knob reads its value from
+/// UserDefaults at render time, so Settings changes apply live without a
+/// restart; the baked-in fallback is the first-launch default.
 enum PaneStyle {
     // MARK: Transparency
 
     /// System blur behind the pane. `false` is a flat tint only (raise `tintOpacity`).
-    static let usesBlur = true
+    static var usesBlur: Bool {
+        UserDefaults.standard.object(forKey: "pane.usesBlur") as? Bool ?? true
+    }
 
     /// Blur recipe. More see-through → more solid:
     /// `.fullScreenUI`, `.hudWindow`, `.popover`, `.sidebar`, `.menu`,
@@ -18,14 +22,20 @@ enum PaneStyle {
 
     /// Extra wash on top of the blur. `0` is blur-only (most transparent).
     static let tint: Color = Color(nsColor: .labelColor)
-    static let tintOpacity: Double = 0.10
+    static var tintOpacity: Double {
+        (UserDefaults.standard.object(forKey: "pane.tintOpacity") as? Double) ?? 0.10
+    }
 
     /// Fades the entire window, including text. `1` is no extra fade.
-    static let windowAlpha: CGFloat = 1.0
+    static var windowAlpha: CGFloat {
+        CGFloat((UserDefaults.standard.object(forKey: "pane.windowAlpha") as? Double) ?? 1.0)
+    }
 
     // MARK: Chrome
 
-    static let cornerRadius: CGFloat = 18
+    static var cornerRadius: CGFloat {
+        CGFloat((UserDefaults.standard.object(forKey: "pane.cornerRadius") as? Double) ?? 18)
+    }
     static let padding: CGFloat = 16
 
     /// Height of the quiet status strip under the editor.
@@ -35,7 +45,9 @@ enum PaneStyle {
     /// The pane itself extends to the window's top edge, so the title bar
     /// area uses the exact same material as the typing surface.
     static let titleBarInset: CGFloat = 30
-    static let maxWidth: CGFloat = 600
+    static var maxWidth: CGFloat {
+        CGFloat((UserDefaults.standard.object(forKey: "pane.maxWidth") as? Double) ?? 600)
+    }
     static let maxHeight: CGFloat = 900
     static let windowMaxWidth: CGFloat = 650
     static let windowMaxHeight: CGFloat = 950
@@ -71,10 +83,14 @@ enum PaneStyle {
     static let didWelcomeKey = "did.welcome"
 
     /// Keeps the pane above ordinary windows.
-    static let floatsAboveOtherApps = true
+    static var floatsAboveOtherApps: Bool {
+        UserDefaults.standard.object(forKey: "pane.floats") as? Bool ?? true
+    }
 
     /// Escape hides the pane (the hot key brings it back).
-    static let hidesOnEscape = true
+    static var hidesOnEscape: Bool {
+        UserDefaults.standard.object(forKey: "pane.hidesOnEscape") as? Bool ?? true
+    }
 
     /// UserDefaults key the pane's frame is autosaved under; relaunches
     /// reopen where the user left it.

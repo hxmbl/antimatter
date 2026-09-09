@@ -39,22 +39,39 @@ struct WindowConfigurator: NSViewRepresentable {
         UserDefaults.standard.removeObject(forKey: "NSWindow Frame \(PaneStyle.frameAutosaveName)")
         UserDefaults.standard.removeObject(forKey: "NSWindow Frame AppWindow")
         window.setFrameAutosaveName(PaneStyle.frameAutosaveName)
-        if PaneStyle.floatsAboveOtherApps {
-            window.level = .floating
-        }
         window.tabbingMode = .disallowed
         window.collectionBehavior = [.fullScreenAuxiliary]
         window.isOpaque = false
         window.backgroundColor = .clear
-        window.alphaValue = PaneStyle.windowAlpha
         window.hasShadow = PaneStyle.hasShadow
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
         window.contentView?.wantsLayer = true
-        window.contentView?.layer?.cornerRadius = PaneStyle.cornerRadius
         window.contentView?.layer?.cornerCurve = .continuous
         window.contentView?.layer?.masksToBounds = true
+        PaneWindowStyler.applyLive(to: window)
+    }
+}
+
+/// Applies the settings that live on the NSWindow itself (rather than in
+/// SwiftUI) — level, fade, corner radius, and the content-size clamp.
+/// Called at launch for the initial look and again from ContentView whenever
+/// a related setting changes, so the pane restyles without a restart.
+@MainActor
+enum PaneWindowStyler {
+    static func applyToPane() {
+        guard let window = NSApplication.shared.windows.first(where: {
+            $0.identifier?.rawValue == PaneStyle.windowIdentifier
+        }) else { return }
+        applyLive(to: window)
+    }
+
+    static func applyLive(to window: NSWindow) {
+        window.level = PaneStyle.floatsAboveOtherApps ? .floating : .normal
+        window.alphaValue = PaneStyle.windowAlpha
+        window.contentView?.layer?.cornerRadius = PaneStyle.cornerRadius
+        window.contentMaxSize = NSSize(width: PaneStyle.maxWidth, height: PaneStyle.maxHeight)
         window.invalidateShadow()
     }
 }

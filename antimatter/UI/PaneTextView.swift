@@ -210,31 +210,13 @@ final class PaneTextView: NSTextView {
         guard caretIsActive, selectedRange().length == 0, !hasMarkedText(),
               let glide = glide, let head = currentGlideRect() else { return }
         let color = insertionPointColor ?? .labelColor
-        let t = min(max((CACurrentMediaTime() - glide.startTime) / glide.duration, 0), 1)
-        let eased = easedCurve(t)
 
-        // A faint spline trails from the source caret to the moving head — a
-        // whisper of momentum rather than the old solid belt. It sags very
-        // slightly opposite to the travel direction and dissolves before the
-        // head lands, so nothing lingers once the caret stops.
-        let base = glide.from
-        let from = CGPoint(x: base.midX, y: base.midY)
-        let to = CGPoint(x: head.midX, y: head.midY)
-        let length = hypot(to.x - from.x, to.y - from.y)
-        let sag = min(length * 0.12, 5)
-        let unitPerp = CGPoint(x: -(to.y - from.y) / max(length, 0.001),
-                               y: (to.x - from.x) / max(length, 0.001))
-        let control = CGPoint(x: (from.x + to.x) / 2 + unitPerp.x * sag,
-                              y: (from.y + to.y) / 2 + unitPerp.y * sag)
-        let trail = NSBezierPath()
-        trail.move(to: from)
-        trail.curve(to: to, controlPoint1: control, controlPoint2: control)
-        color.withAlphaComponent(0.32 * (1 - eased)).setStroke()
-        trail.lineWidth = 1
-        trail.stroke()
-
+        // A faint glow surrounds the head caret during the glide.
         let headRect = CGRect(x: head.minX, y: head.minY, width: max(2, head.width), height: max(2, head.height))
-        color.withAlphaComponent(0.85).setFill()
+        color.withAlphaComponent(0.15).setFill()
+        NSBezierPath(roundedRect: headRect, xRadius: 1, yRadius: 1).fill()
+
+        color.withAlphaComponent(0.6).setFill()
         NSBezierPath(roundedRect: headRect, xRadius: 1, yRadius: 1).fill()
     }
 
@@ -470,32 +452,6 @@ final class PaneTextView: NSTextView {
         currentRepeatAction = nil
     }
 
-    override func keyDown(with event: NSEvent) {
-        if onHelpKeyDown?(event) == true { return }
-        if Self.isAcceleratedKey(event) {
-            if event.isARepeat {
-                // System repeats are ignored; our timer handles acceleration.
-                return
-            }
-            startAcceleration(for: event)
-            return
-        }
-        
-        // Handle delete/backspace with caret glide
-        let keyCode = event.keyCode
-        if keyCode == 51 || keyCode == 117 { // Backspace or Forward Delete
-            let startRange = selectedRange()
-            super.keyDown(with: event)
-            let endRange = selectedRange()
-            if startRange != endRange && startRange.length == 0 && endRange.length == 0 {
-                // Caret moved due to deletion, animate it
-                glideCaret(from: startRange.location, to: endRange.location)
-            }
-            return
-        }
-        
-        super.keyDown(with: event)
-    }
 
     override func keyUp(with event: NSEvent) {
         if Self.isAcceleratedKey(event) {
@@ -504,7 +460,7 @@ final class PaneTextView: NSTextView {
         }
         super.keyUp(with: event)
     }
-
+    
     // MARK: Tab indents list items
 
     override func insertTab(_ sender: Any?) {
@@ -568,6 +524,68 @@ final class PaneTextView: NSTextView {
         textStorage?.replaceCharacters(in: range, with: replacement)
         didChangeText()
     }
+
+    // MARK: Escape hides the pane / dismisses dotcommands
+
+    override func keyDown(with event: NSEvent) {
+        if onHelpKeyDown?(event) == true { return }
+        if event.keyCode == 53 { // Escape
+            if !dismissActiveDotcommands() { cancelOperation(nil) }
+            return
+        }
+        if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers?.first == "." {
+            if !dismissActiveDotcommands() { cancelOperation(nil) }
+            return
+        }
+        if Self.isAcceleratedKey(event) {
+            if event.isARepeat {
+                return
+            }
+            startAcceleration(for: event)
+            return
+        }
+        
+        // Handle delete/backspace with caret glide
+        let keyCode = event.keyCode
+        if keyCode == 51 || keyCode == 117 { // Backspace or Forward Delete
+            let startRange = selectedRange()
+            super.keyDown(with: event)
+            let endRange = selectedRange()
+            if startRange != endRange && startRange.length == 0 && endRange.length == 0 {
+                // Caret moved due to deletion, animate it
+                glideCaret(from: startRange.location, to: endRange.location)
+            }
+            return
+        }
+        
+        super.keyDown(with: event)
+    }
+    
+    private func dismissActiveDotcommands() -> Bool {
+        var dismissed = false
+        // Dismiss paste stream if streaming
+        if PasteStream.shared.isStreaming {
+            PasteStream.shared.stopStreaming()
+            dismissed = true
+        }
+        // Dismiss running timers
+        if !TimerCenter.shared.timers.isEmpty {
+            TimerCenter.shared.cancelAll()
+            dismissed = true
+        }
+        // Dismiss running stopwatches
+        if !StopwatchCenter.shared.stopwatches.isEmpty {
+            StopwatchCenter.shared.cancelAll()
+            dismissed = true
+        }
+        // Dismiss active reminders
+        if !ReminderCenter.shared.reminders.isEmpty {
+            ReminderCenter.shared.cancelAll()
+            dismissed = true
+        }
+        return dismissed
+    }
+
 
     // MARK: Escape hides the pane
 

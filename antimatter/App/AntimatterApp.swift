@@ -20,8 +20,6 @@ struct AntimatterApp: App {
                 .keyboardShortcut("r", modifiers: [.command])
             }
             CommandGroup(after: .textEditing) {
-                Button("Command Palette…") { PaneIntentSupport.perform(.showCommandPalette) }
-                    .keyboardShortcut("p", modifiers: [.command])
                 Button("Find…") { FindSupport.perform(.showFindInterface) }
                     .keyboardShortcut("f", modifiers: [.command])
                 Button("Find Next") { FindSupport.perform(.nextMatch) }
@@ -45,60 +43,6 @@ enum FindSupport {
         let item = NSMenuItem()
         item.tag = Int(action.rawValue)
         textView.performTextFinderAction(item)
-    }
-}
-
-/// A menu-level intent for the pane's text view.
-@MainActor
-enum PaneIntent {
-    case showCommandPalette
-}
-
-/// Bridges menu items to the pane's coordinator. Both the find bar and the
-/// palette live in the text view's delegate — the pane's key window,
-/// wherever the caret happened to be, is the entry point.
-@MainActor
-enum PaneIntentSupport {
-    static func perform(_ intent: PaneIntent) {
-        guard let textView = NSApplication.shared.keyWindow?.firstResponder as? NSTextView,
-              let coordinator = textView.delegate as? PaneEditor.Coordinator
-        else { return }
-        switch intent {
-        case .showCommandPalette:
-            coordinator.showCommandPalette(in: textView)
-        }
-    }
-}
-
-final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let notificationRouter = NotificationRouter()
-
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        PaneHotKey.shared.onToggle = { PaneHotKey.shared.togglePane() }
-        PaneHotKey.shared.install()
-        UNUserNotificationCenter.current().delegate = notificationRouter
-        LaunchPreferences.apply()
-        // Load cached rates and, if the opt-in switch is on, refresh them.
-        CurrencyCenter.shared.activate()
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        // Lives here, not in the pane's view: the window (and its SwiftUI
-        // observers) may not exist when the app quits.
-        ScratchStore.shared.flush()
-    }
-
-    /// Context-menu bridge for menu-bar (accessory) mode: with no menu bar
-    /// there is no Settings item and no ⌘Q, so the pane's right-click menu
-    /// is the way out.
-    @objc func openSettings(_ sender: Any?) {
-        NSApplication.shared.activate()
-        // Decide by result, not by responds(): the modern selector may be
-        // handled deeper in the responder chain than NSApp itself.
-        let modern = Selector(("showSettingsWindow:"))
-        if !NSApplication.shared.sendAction(modern, to: nil, from: nil) {
-            NSApplication.shared.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-        }
     }
 }
 
@@ -156,6 +100,30 @@ enum LaunchPreferences {
         case "light": NSApp.appearance = NSAppearance(named: .aqua)
         case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
         default: NSApp.appearance = nil
+        }
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let notificationRouter = NotificationRouter()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        PaneHotKey.shared.onToggle = { PaneHotKey.shared.togglePane() }
+        PaneHotKey.shared.install()
+        UNUserNotificationCenter.current().delegate = notificationRouter
+        LaunchPreferences.apply()
+        CurrencyCenter.shared.activate()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        ScratchStore.shared.flush()
+    }
+
+    @objc func openSettings(_ sender: Any?) {
+        NSApplication.shared.activate()
+        let modern = Selector(("showSettingsWindow:"))
+        if !NSApplication.shared.sendAction(modern, to: nil, from: nil) {
+            NSApplication.shared.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
         }
     }
 }

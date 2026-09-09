@@ -269,57 +269,6 @@ struct CancelCommandTests {
     }
 }
 
-struct CommandPaletteTests {
-
-    private func names(_ query: String) -> [String] {
-        IntentExecution.paletteCommands(matching: query).map(\.name)
-    }
-
-    @Test func emptyQueryListsEverything() {
-        #expect(names("").count == IntentExecution.dotCommands.count)
-        #expect(names("   ").count == IntentExecution.dotCommands.count)
-        #expect(names("").contains(".timer"))
-        #expect(names("").contains(".help"))
-    }
-
-    @Test func queryMatchesNameAndDescriptionCaseInsensitively() {
-        #expect(names("timer") == [".timer"])
-        #expect(names("TIMER") == [".timer"])
-        #expect(names(".timer") == [".timer"])
-        // "cancel" appears in the descriptions of timer, stopwatch and reminder.
-        #expect(names("cancel").contains(".timer"))
-        #expect(names("cancel").contains(".stopwatch"))
-        #expect(names("cancel").contains(".reminder"))
-        #expect(names("cancel").count == 3)
-        #expect(names("zzz") == [])
-    }
-
-    @Test func paletteInsertionPrefersABareLine() {
-        // Caret at the start of an empty note already sits on a bare line —
-        // no extra newline.
-        let empty = IntentExecution.paletteInsertionCommit(
-            for: ".timer", selection: NSRange(location: 0, length: 0), in: "")
-        #expect(empty.replacement == ".timer ")
-        #expect(empty.caret == (".timer " as NSString).length)
-
-        // A line holding only whitespace is bare too.
-        let spaces = IntentExecution.paletteInsertionCommit(
-            for: ".sum", selection: NSRange(location: 4, length: 0), in: "    ")
-        #expect(spaces.replacement == ".sum ")
-
-        // Mid-prose the command gets its own line in front of the caret.
-        let prose = IntentExecution.paletteInsertionCommit(
-            for: ".timer", selection: NSRange(location: 5, length: 0), in: "hello")
-        #expect(prose.replacement == "\n.timer ")
-        #expect(prose.caret == ("hello\n.timer " as NSString).length)
-
-        // Past the end of a line with prose counts as mid-prose too.
-        let endOfProse = IntentExecution.paletteInsertionCommit(
-            for: ".help", selection: NSRange(location: 5, length: 0), in: "hello")
-        #expect(endOfProse.replacement == "\n.help ")
-    }
-}
-
 struct CommandCompletionTests {
 
     private func completions(_ prefix: String) -> [String]? {

@@ -5,6 +5,13 @@ struct ContentView: View {
     @StateObject private var store = ScratchStore.shared
     // Declared so a Settings-side change re-renders (and re-styles) the editor.
     @AppStorage("fontSize") private var fontSizeObservation = 15
+    @AppStorage("pane.cornerRadius") private var cornerRadiusObservation = 18.0
+    @AppStorage("pane.maxWidth") private var maxWidthObservation = 600.0
+    @AppStorage("pane.usesBlur") private var usesBlurObservation = true
+    @AppStorage("pane.tintOpacity") private var tintOpacityObservation = 0.10
+    @AppStorage("pane.windowAlpha") private var windowAlphaObservation = 1.0
+    @AppStorage("pane.floats") private var floatsObservation = true
+    @AppStorage("pane.hidesOnEscape") private var hidesOnEscapeObservation = true
     @State private var footer = FooterStatus()
 
     var body: some View {
@@ -47,6 +54,13 @@ struct ContentView: View {
                 guard (note.object as? NSWindow)?.identifier?.rawValue == PaneStyle.windowIdentifier else { return }
                 store.flush()
             }
+            // Settings that live on the NSWindow itself (level, fade, corner,
+            // size clamp) are re-applied here; the rest take effect through
+            // SwiftUI re-rendering.
+            .onChange(of: cornerRadiusObservation) { _, _ in PaneWindowStyler.applyToPane() }
+            .onChange(of: maxWidthObservation) { _, _ in PaneWindowStyler.applyToPane() }
+            .onChange(of: windowAlphaObservation) { _, _ in PaneWindowStyler.applyToPane() }
+            .onChange(of: floatsObservation) { _, _ in PaneWindowStyler.applyToPane() }
     }
 }
 

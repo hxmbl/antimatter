@@ -1,85 +1,149 @@
 import SwiftUI
-import Carbon.HIToolbox
 
-/// Runtime settings: hot key chord, font size, and appearance.
-/// Replaces "edit `PaneStyle.swift`".
+/// Runtime settings, organized into General / Hot Key / Appearance tabs.
+/// Everything here applies immediately — the pane restyles itself live.
 struct SettingsView: View {
-    @AppStorage("fontSize") private var fontSize = 15
+    var body: some View {
+        TabView {
+            GeneralSettingsView()
+                .tabItem { Label("General", systemImage: "gearshape") }
+            HotKeySettingsView()
+                .tabItem { Label("Hot Key", systemImage: "keyboard") }
+            AppearanceSettingsView()
+                .tabItem { Label("Appearance", systemImage: "paintbrush") }
+        }
+        .tabViewStyle(.sidebarAdaptable)
+        .frame(minWidth: 560, minHeight: 460)
+    }
+}
+
+// MARK: - General
+
+private struct GeneralSettingsView: View {
     @AppStorage("appearance") private var appearance = "system"
-    @AppStorage("hotKey.control") private var usesControl = true
-    @AppStorage("hotKey.option") private var usesOption = true
-    @AppStorage("hotKey.command") private var usesCommand = false
-    @AppStorage("hotKey.shift") private var usesShift = false
-    @AppStorage("hotKey.keyCode") private var keyCode = 49
     @AppStorage("conversion.network") private var currencyNetworkEnabled = false
+
+    private var version: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+    }
 
     var body: some View {
         Form {
             Section {
-                HStack {
-                    Toggle("⌃ Control", isOn: $usesControl)
-                    Toggle("⌥ Option", isOn: $usesOption)
-                    Toggle("⌘ Command", isOn: $usesCommand)
-                    Toggle("⇧ Shift", isOn: $usesShift)
-                }
-                Picker("Key", selection: $keyCode) {
-                    ForEach(Self.keys, id: \.code) { key in
-                        Text(key.name).tag(key.code)
-                    }
-                }
-                .onChange(of: usesControl) { _, _ in chordChanged() }
-                .onChange(of: usesOption) { _, _ in chordChanged() }
-                .onChange(of: usesCommand) { _, _ in chordChanged() }
-                .onChange(of: usesShift) { _, _ in chordChanged() }
-                .onChange(of: keyCode) { _, _ in chordChanged() }
-                .onAppear { syncToActiveChord() }
-            } header: {
-                Text("Hot Key")
-            } footer: {
-                Text("Control, Option, or Command is required. Bare keys and Shift-only chords would swallow typing system-wide, so the old chord keeps working instead.")
-            }
-            Section("Text") {
-                Slider(value: Binding(
-                    get: { Double(fontSize) },
-                    set: { fontSize = Int($0) }
-                ), in: 11...26, step: 1) {
-                    Text("Font size")
-                } minimumValueLabel: {
-                    Text("11")
-                } maximumValueLabel: {
-                    Text("26")
-                }
-            }
-            Section("Appearance") {
                 Picker("Theme", selection: $appearance) {
                     Text("System").tag("system")
                     Text("Light").tag("light")
                     Text("Dark").tag("dark")
                 }
-                .onChange(of: appearance) { _, value in LaunchPreferences.appearanceChanged(value) }
+                .pickerStyle(.segmented)
+                .onChange(of: appearance) { _, value in
+                    LaunchPreferences.appearanceChanged(value)
+                }
+            } header: {
+                Label("Theme", systemImage: "sun.max.fill")
+            } footer: {
+                Text("Follow the current macOS appearance, or pin the one you like. Changes apply to the pane and settings windows immediately.")
             }
+
             Section {
                 Toggle("Live currency & crypto conversion", isOn: $currencyNetworkEnabled)
                     .onChange(of: currencyNetworkEnabled) { _, enabled in
-                        if enabled {
-                            CurrencyCenter.shared.activate()
-                        }
+                        if enabled { CurrencyCenter.shared.activate() }
                     }
             } header: {
-                Text("Conversion")
+                Label("Conversion", systemImage: "dollarsign.circle")
             } footer: {
-                Text("When on, antimatter fetches exchange rates (fiat and crypto) from a third party once an hour and converts lines like `100 USD → EUR` or `1 btc → usd`. Off by default — keep it off for a fully offline note.")
+                Text("Fetches exchange rates (fiat and crypto) from a third party once an hour and converts lines like `100 USD → EUR` or `1 btc → usd`. Off by default — keep it off for a fully offline note.")
+            }
+
+            Section {
+                Button("Restore Defaults") { restoreDefaults() }
+            } footer: {
+                Text("Antimatter \(version) — all settings apply immediately.")
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420)
     }
 
-    /// Re-registers the chord, then snaps the toggles back to whatever the
-    /// system actually accepted — refused combinations never linger in the UI.
-    private func chordChanged() {
+    private func restoreDefaults() {
+        appearance = "system"
+        LaunchPreferences.appearanceChanged("system")
+        currencyNetworkEnabled = false
+    }
+}
+
+// MARK: - Hot Key
+
+private struct HotKeySettingsView: View {
+    @AppStorage("hotKey.control") private var usesControl = true
+    @AppStorage("hotKey.option") private var usesOption = true
+    @AppStorage("hotKey.command") private var usesCommand = false
+    @AppStorage("hotKey.shift") private var usesShift = false
+    @AppStorage("hotKey.keyCode") private var keyCode = 49
+
+    @State private var notice: String?
+    @State private var noticeTask: Task<Void, Never>?
+
+    private var currentShortcut: GlobalShortcut {
+        GlobalShortcut(control: usesControl, option: usesOption, command: usesCommand, shift: usesShift, keyCode: keyCode)
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                ShortcutField(shortcut: currentShortcut, onRecord: apply)
+                if let notice {
+                    Label(notice, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                Button("Restore default (⌃⌥ Space)") { apply(.default) }
+            } header: {
+                Label("Global Shortcut", systemImage: "keyboard")
+            } footer: {
+                Text("The shortcut reveals and hides the pane from anywhere, even when antimatter isn't active.\n\nControl, Option, or Command is required — bare keys and Shift-only chords would swallow typing system-wide, so the previous shortcut stays active instead. Click Record and press the keys you want; Esc cancels.")
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { syncToActiveChord() }
+    }
+
+    /// Writes the chord, re-registers it with the system, then snaps the
+    /// UI back to whatever was actually accepted — refused combinations
+    /// never linger in the field.
+    private func apply(_ chord: GlobalShortcut) {
+        usesControl = chord.control
+        usesOption = chord.option
+        usesCommand = chord.command
+        usesShift = chord.shift
+        keyCode = chord.keyCode
         PaneHotKey.shared.reinstall()
-        syncToActiveChord()
+        let active = PaneHotKey.shared.activeChord
+        let accepted = GlobalShortcut(control: active.control, option: active.option, command: active.command, shift: active.shift, keyCode: active.keyCode)
+        usesControl = accepted.control
+        usesOption = accepted.option
+        usesCommand = accepted.command
+        usesShift = accepted.shift
+        keyCode = accepted.keyCode
+
+        if accepted.isWellDefined && accepted == chord {
+            notice = nil
+            noticeTask?.cancel()
+        } else if !chord.isWellDefined {
+            showNotice("Shortcuts need Control, Option, or Command — bare keys and Shift alone would swallow typing everywhere.")
+        } else {
+            showNotice("That shortcut is already in use by another app — the previous shortcut stayed active.")
+        }
+    }
+
+    private func showNotice(_ text: String) {
+        notice = text
+        noticeTask?.cancel()
+        noticeTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(4))
+            if !Task.isCancelled { notice = nil }
+        }
     }
 
     private func syncToActiveChord() {
@@ -90,20 +154,112 @@ struct SettingsView: View {
         usesShift = active.shift
         keyCode = active.keyCode
     }
+}
 
-    private static let keys: [(name: String, code: Int)] = [
-        ("Space", kVK_Space), ("Tab", kVK_Tab), ("Return", kVK_Return),
-        (",", kVK_ANSI_Comma), (".", kVK_ANSI_Period), ("-", kVK_ANSI_Minus),
-        ("=", kVK_ANSI_Equal),
-        ("A", kVK_ANSI_A), ("B", kVK_ANSI_B), ("C", kVK_ANSI_C), ("D", kVK_ANSI_D),
-        ("E", kVK_ANSI_E), ("F", kVK_ANSI_F), ("G", kVK_ANSI_G), ("H", kVK_ANSI_H),
-        ("I", kVK_ANSI_I), ("J", kVK_ANSI_J), ("K", kVK_ANSI_K), ("L", kVK_ANSI_L),
-        ("M", kVK_ANSI_M), ("N", kVK_ANSI_N), ("O", kVK_ANSI_O), ("P", kVK_ANSI_P),
-        ("Q", kVK_ANSI_Q), ("R", kVK_ANSI_R), ("S", kVK_ANSI_S), ("T", kVK_ANSI_T),
-        ("U", kVK_ANSI_U), ("V", kVK_ANSI_V), ("W", kVK_ANSI_W), ("X", kVK_ANSI_X),
-        ("Y", kVK_ANSI_Y), ("Z", kVK_ANSI_Z),
-        ("0", kVK_ANSI_0), ("1", kVK_ANSI_1), ("2", kVK_ANSI_2), ("3", kVK_ANSI_3),
-        ("4", kVK_ANSI_4), ("5", kVK_ANSI_5), ("6", kVK_ANSI_6), ("7", kVK_ANSI_7),
-        ("8", kVK_ANSI_8), ("9", kVK_ANSI_9),
-    ]
+// MARK: - Appearance
+
+private struct AppearanceSettingsView: View {
+    @AppStorage("fontSize") private var fontSize = 15
+    @AppStorage("pane.cornerRadius") private var cornerRadius = 18.0
+    @AppStorage("pane.maxWidth") private var maxWidth = 600.0
+    @AppStorage("pane.usesBlur") private var usesBlur = true
+    @AppStorage("pane.tintOpacity") private var tintOpacity = 0.10
+    @AppStorage("pane.windowAlpha") private var windowAlpha = 1.0
+    @AppStorage("pane.floats") private var floatsAboveOtherApps = true
+    @AppStorage("pane.hidesOnEscape") private var hidesOnEscape = true
+
+    var body: some View {
+        Form {
+            Section {
+                HStack(spacing: 12) {
+                    Text("Aa")
+                        .font(.system(size: CGFloat(fontSize), weight: .semibold))
+                        .frame(width: 40, height: 38)
+                        .foregroundStyle(Color.accentColor)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color(nsColor: .textBackgroundColor)))
+                    Slider(value: Binding(
+                        get: { Double(fontSize) },
+                        set: { fontSize = Int($0) }
+                    ), in: 11...26, step: 1) {
+                        Text("Font size")
+                    }
+                    Text("\(fontSize) pt")
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .frame(minWidth: 34, alignment: .trailing)
+                }
+            } header: {
+                Label("Type", systemImage: "textformat.size")
+            } footer: {
+                Text("The pane's base text size. Change it here and the editor adopts it live.")
+            }
+
+            Section {
+                SliderRow(title: "Corner radius", value: $cornerRadius, in: 6...32, step: 1) { "\(Int($0)) pt" }
+                SliderRow(title: "Max width", value: $maxWidth, in: 360...640, step: 20) { "\(Int($0))" }
+            } header: {
+                Label("Frame", systemImage: "macwindow")
+            } footer: {
+                Text("Rounding and reach of the floating pane itself.")
+            }
+
+            Section {
+                Toggle("Translucent background", isOn: $usesBlur)
+                SliderRow(title: "Wash", value: $tintOpacity, in: 0...0.30, step: 0.01) { "\(Int(($0 * 100).rounded()))%" }
+                    .disabled(!usesBlur)
+                    .opacity(usesBlur ? 1 : 0.4)
+                SliderRow(title: "Fade", value: $windowAlpha, in: 0.65...1.0, step: 0.01) { "\(Int(($0 * 100).rounded()))%" }
+            } header: {
+                Label("Material", systemImage: "drop.halffull")
+            } footer: {
+                Text("Blur lets the desktop show through, tinted by a soft wash. Fade dims the whole window, text included. Turning translucency off makes the desktop tint the only background.")
+            }
+
+            Section {
+                Toggle("Float above other windows", isOn: $floatsAboveOtherApps)
+                Toggle("Hide the pane on Escape", isOn: $hidesOnEscape)
+            } header: {
+                Label("Behavior", systemImage: "switch.2")
+            }
+
+            Section {
+                Button("Restore Defaults") { restoreDefaults() }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func restoreDefaults() {
+        fontSize = 15
+        cornerRadius = 18
+        maxWidth = 600
+        usesBlur = true
+        tintOpacity = 0.10
+        windowAlpha = 1.0
+        floatsAboveOtherApps = true
+        hidesOnEscape = true
+    }
+}
+
+/// A titled, number-out slider row for the grouped form.
+private struct SliderRow: View {
+    let title: String
+    @Binding var value: Double
+    let `in`: ClosedRange<Double>
+    let step: Double
+    let valueText: (Double) -> String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(title)
+                .frame(width: 84, alignment: .leading)
+            Slider(value: $value, in: `in`, step: step)
+            Text(valueText(value))
+                .font(.caption)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 38, alignment: .trailing)
+        }
+    }
 }
