@@ -1,6 +1,6 @@
 # Antimatter
 
-A tiny, local, command-aware scratchpad for macOS. Not a notes app — a place to dump whatever's in your head and get something back.
+A tiny, local, command-aware notes app for macOS. Not a filing system — a place to dump whatever's in your head and get something back.
 
 **Typing is the interface.** No modes to pick. Everything you type is a valid line of Markdown — only deliberate dot-commands and math do something special.
 
@@ -27,11 +27,10 @@ remember to fix the relay   → just stays text. good.
 - **Dates & units, offline** — return on `2026-08-22` appends its weekday; `days until …` counts down; `12 kg -> lb` converts. Built-in table, no network.
 - **Currency & crypto, opt-in** — flip *Settings → Currency* and `100 USD → EUR` converts live rates; crypto works too (`1 BTC → USD`). The switch is off by default so the note never touches the network until you ask; rates refresh at most once an hour (Coinbase exchange rates, fiat + crypto).
 - **Capture** — `.paste` streams clipboard copies into the note until you dismiss it. Drop an image on the pane for on-device OCR (Apple Vision, fully local).
-- **Command palette (`⌘P`)** — fuzzy-search every dot-command, pick one, and it lands on its own line at the caret ready for arguments.
-- **Autosave** — every keystroke saved atomically to `Application Support/Antimatter/scratchpad.md` with a one-generation `.bak`. Type → quit → relaunch → it's still there. External edits are adopted instead of clobbered.
+- **Autosave** — every keystroke saved atomically to `Application Support/Antimatter/notes/notes.json` with a one-generation `.bak`. Legacy `scratchpad.md` files are imported automatically. Type → quit → relaunch → it's still there.
 - **Dot-command autocompletion** — native completion window appears as you type after a `.`.
 - **Export, no network** — `.export notes` sends the note to Apple Notes; `.export obsidian` saves it as a markdown file wherever you point.
-- **Typing that cleans up after you** — `--` becomes an en dash and an inline `---` an em dash as you type (`---` on its own line stays raw so Markdown still draws a horizontal rule), and URLs with `utm_*`, `fbclid`, `gclid` & friends lose their tracking parameters when rendered as links.
+- **Typing that stays literal** — punctuation is never silently rewritten while you type. URLs with `utm_*`, `fbclid`, `gclid` & friends lose their tracking parameters only when rendered as links.
 - **A smooth, quiet caret** — the caret glides between positions on a faint, fading spline (like the iPhone's text cursor) instead of teleporting, and it's still the same old accessible insertion point underneath.
 - **Help & debug** — `.help` opens a full-screen command reference; `.debug` shows the event log.
 
@@ -55,7 +54,7 @@ remember to fix the relay   → just stays text. good.
 | `.debug` | Show diagnostics + event log |
 | `.help` | Show the command reference |
 
-Not sure which command does what? Type `.` and autocomplete, or `⌘P` and fuzzy-search.
+Not sure which command does what? Type `.` and use the native completion list.
 
 ## Settings
 
@@ -70,18 +69,38 @@ Not sure which command does what? Type `.` and autocomplete, or `⌘P` and fuzzy
 |----------|--------|
 | `⌃⌥Space` | Toggle pane (configurable) |
 | `Esc` | Hide pane / close reference view |
-| `⌘P` | Command palette |
 | `⌘F` / `⌘G` / `⌘⇧G` | Find / next / previous |
-| `⌘R` | Reveal scratchpad in Finder |
+| `⌘R` | Reveal notes in Finder |
 
 ## Architecture
 
 ```text
 antimatter/
 ├── App         app entry, window scene, hotkey wiring
-├── UI          pane editor (NSTextView), command palette, chips, styling
-├── Parser      Markdown, expression evaluator, intent detection, smart dashes
-├── Storage     autosaved scratchpad
+├── UI          pane editor (NSTextView), chips, and styling
+├── Parser      Markdown, expression evaluator, and intent detection
+
+Linting
+-------
+This repository includes a recommended SwiftLint configuration (.swiftlint.yml) and a helper script at tools/run-swiftlint.sh.
+
+To enable linting locally:
+- Install SwiftLint (Homebrew): brew install swiftlint
+- Or add SwiftLint as an Xcode package: File → Add Packages… → https://github.com/realm/SwiftLint
+
+Optional: add a Run Script Phase to the antimatter target (Xcode Build Phases):
+
+if which swiftlint >/dev/null; then
+  swiftlint
+fi
+
+There is also a git hook template at .githooks/pre-commit. Enable it with:
+
+chmod +x .githooks/pre-commit
+ln -s ../../.githooks/pre-commit .git/hooks/pre-commit
+
+The project uses a non-blocking (recommended) setup by default; ask to enable strict mode that fails builds/commits on violations.
+├── Storage     autosaved notes and legacy migration
 ├── Services    timers, global hot key, currency rates, exports
 └── antimatterTests   Swift Testing
 ```
@@ -93,7 +112,7 @@ Simple operations are deterministic — timers use a timer, arithmetic uses a pa
 - **Language:** Swift
 - **UI:** SwiftUI + AppKit (`NSTextView` pane)
 - **Platform:** macOS
-- **Persistence:** plain Markdown file (`scratchpad.md` + `.bak`) and JSON for timers and, when enabled, cached exchange rates, in Application Support
+- **Persistence:** JSON for notes, timers, reminders, and cached exchange rates in Application Support; legacy Markdown scratchpads are imported once
 - **OCR:** Apple Vision, on-device
 - **Tests:** Swift Testing
 
