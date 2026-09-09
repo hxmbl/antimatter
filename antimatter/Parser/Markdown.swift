@@ -28,11 +28,18 @@ enum Markdown {
             case taskBody(done: Bool)
             case hr
             case tableHeader
+            case tableCell(alignment: TableAlignment)
             case tablePipe
             case strong
             case emphasis
+            case strongEmphasis
             case code
             case strike
+            case subscriptText
+            case superscriptText
+            case underline
+            case highlight
+            case lineBreak
             case link(String)
             /// Syntax characters the renderer displays dimmed.
             case hidden
@@ -48,6 +55,12 @@ enum Markdown {
                 default: false
                 }
             }
+        }
+
+        enum TableAlignment: Equatable {
+            case left
+            case center
+            case right
         }
 
         let kind: Kind
@@ -122,11 +135,12 @@ enum Markdown {
 
             if isTableRow(line, in: text), i + 1 < lines.count,
                isDividerRow(lines[i + 1], in: text) {
-                emitTableRow(lines[i], header: true, in: text, into: &elements)
+                let alignments = tableAlignments(lines[i + 1], in: text)
+                emitTableRow(lines[i], header: true, alignments: alignments, in: text, into: &elements)
                 elements.append(.init(kind: .marker, range: NSRange(lines[i + 1], in: text)))
                 i += 2
                 while i < lines.count, isTableRow(lines[i], in: text) {
-                    emitTableRow(lines[i], header: false, in: text, into: &elements)
+                    emitTableRow(lines[i], header: false, alignments: alignments, in: text, into: &elements)
                     i += 1
                 }
                 prevWasParagraph = false
@@ -153,6 +167,10 @@ enum Markdown {
             let underline = j < lines.count ? setextLevel(lines[j], in: text) : nil
             for k in i..<j {
                 scanInline(text, in: lines[k], into: &elements)
+                if k + 1 < j, hasHardBreak(at: lines[k], in: text) {
+                    let newline = lines[k].upperBound..<lines[k + 1].lowerBound
+                    elements.append(.init(kind: .lineBreak, range: NSRange(newline, in: text)))
+                }
             }
             if let level = underline {
                 elements.append(.init(kind: .heading(level: level), range: NSRange(lines[i].lowerBound..<lines[j].upperBound, in: text)))
@@ -468,7 +486,24 @@ enum Markdown {
         return cells.filter { !$0.isEmpty }
     }
 
-    private nonisolated static func emitTableRow(_ line: Range<String.Index>, header: Bool, in text: String, into out: inout [Element]) {
+    private nonisolated static func tableAlignments(_ line: Range<String.Index>, in text: String) -> [Element.TableAlignment] {
+        tableCells(line, in: text).map { cell in
+            let trimmedCell = trimmed(cell, in: text)
+            let starts = trimmedCell.lowerBound < trimmedCell.upperBound && text[trimmedCell.lowerBound] == ":"
+            let ends = trimmedCell.lowerBound < trimmedCell.upperBound && text[text.index(before: trimmedCell.upperBound)] == ":"
+            if starts && ends { return .center }
+            if ends { return .right }
+            return .left
+        }
+    }
+
+    private nonisolated static func emitTableRow(
+        _ line: Range<String.Index>,
+        header: Bool,
+        alignments: [Element.TableAlignment],
+        in text: String,
+        into out: inout [Element]
+    ) {
         if header {
             out.append(Element(kind: .tableHeader, range: NSRange(line, in: text)))
         }
@@ -484,7 +519,9 @@ enum Markdown {
             }
             i = text.index(after: i)
         }
-        for cell in tableCells(line, in: text) {
+        for (index, cell) in tableCells(line, in: text).enumerated() {
+            let alignment = index < alignments.count ? alignments[index] : .left
+            out.append(Element(kind: .tableCell(alignment: alignment), range: NSRange(cell, in: text)))
             scanInline(text, in: cell, into: &out)
         }
     }
@@ -551,14 +588,28 @@ enum Markdown {
                 } else {
                     i = text.index(i, offsetBy: ticks, limitedBy: range.upperBound) ?? range.upperBound
                 }
-            case "~" where nextIsSame(text, i, range):
-                if let end = readSpan("~", count: 2, from: i, limit: range.upperBound, kind: .strike, inclusive: false, text: text, into: &out) {
+
+            case "~":
+                let next = text.index(after: i)
+                let kind: Element.Kind = next < range.upperBound && text[next] == "~" ? .strike : .subscriptText
+                let count = kind == .strike ? 2 : 1
+                if let end = readSpan("~", count: count, from: i, limit: range.upperBound, kind: kind, inclusive: false, text: text, into: &out) {
                     i = end
                 } else {
-                    i = text.index(after: i)
+                    i = next
                 }
             case "*":
                 let next = text.index(after: i)
+                let third = text.index(after: next)
+                if third < range.upperBound,
+                   text[next] == "*",
+                   text[third] == "*" {
+                    if let end = readSpan("*", count: 3, from: i, limit: range.upperBound, kind: .strongEmphasis, inclusive: false, text: text, into: &out) {
+                        i = end
+                        continue
+                    }
+                }
+
                 if next < range.upperBound, text[next] == "*" {
                     if let end = readSpan("*", count: 2, from: i, limit: range.upperBound, kind: .strong, inclusive: false, text: text, into: &out) {
                         i = end
@@ -569,6 +620,48 @@ enum Markdown {
                     i = end
                 } else {
                     i = next
+                }
+            case "_":
+                let next = text.index(after: i)
+                let third = text.index(after: next)
+                if third < range.upperBound,
+                   text[next] == "_",
+                   text[third] == "_" {
+                    if let end = readSpan("_", count: 3, from: i, limit: range.upperBound, kind: .strongEmphasis, inclusive: false, text: text, into: &out) {
+                        i = end
+                        continue
+                    }
+                }
+                if next < range.upperBound, text[next] == "_" {
+                    if let end = readSpan("_", count: 2, from: i, limit: range.upperBound, kind: .strong, inclusive: false, text: text, into: &out) {
+                        i = end
+                    } else { i = next }
+                } else if let end = readSpan("_", count: 1, from: i, limit: range.upperBound, kind: .emphasis, inclusive: false, text: text, into: &out) {
+                    i = end
+                } else {
+                    i = next
+                }
+            case "<":
+                if let end = readHTMLSpan(text, from: i, limit: range.upperBound, into: &out) {
+                    i = end
+                } else if let end = readAutolink(text, from: i, limit: range.upperBound, into: &out) {
+                    i = end
+                } else {
+                    i = text.index(after: i)
+                }
+            case "=":
+                let next = text.index(after: i)
+                if next < range.upperBound, text[next] == "=",
+                   let end = readSpan("=", count: 2, from: i, limit: range.upperBound, kind: .highlight, inclusive: false, text: text, into: &out) {
+                    i = end
+                } else {
+                    i = next
+                }
+            case "^":
+                if let end = readSpan("^", count: 1, from: i, limit: range.upperBound, kind: .superscriptText, inclusive: false, text: text, into: &out) {
+                    i = end
+                } else {
+                    i = text.index(after: i)
                 }
             case "!":
                 if let end = readLink(text, from: text.index(after: i), limit: range.upperBound, imagePrefix: i, into: &out) {
@@ -582,12 +675,6 @@ enum Markdown {
                 } else {
                     i = text.index(after: i)
                 }
-            case "<":
-                if let end = readAutolink(text, from: i, limit: range.upperBound, into: &out) {
-                    i = end
-                } else {
-                    i = text.index(after: i)
-                }
             default:
                 if text[i] == "h" || text[i] == "m" || text[i] == "w",
                    let end = readBareURL(text, from: i, limit: range.upperBound, into: &out) {
@@ -595,8 +682,47 @@ enum Markdown {
                 } else {
                     i = text.index(after: i)
                 }
+
             }
         }
+    }
+
+    private nonisolated static func hasHardBreak(at line: Range<String.Index>, in text: String) -> Bool {
+        guard line.lowerBound < line.upperBound else { return false }
+        var end = line.upperBound
+        var spaces = 0
+        while end > line.lowerBound, text[text.index(before: end)] == " " {
+            spaces += 1
+            end = text.index(before: end)
+        }
+        if spaces >= 2 { return true }
+        return end > line.lowerBound && text[text.index(before: end)] == "\\"
+    }
+
+    private nonisolated static func readHTMLSpan(
+        _ text: String,
+        from start: String.Index,
+        limit: String.Index,
+        into out: inout [Element]
+    ) -> String.Index? {
+        let tags: [(String, String, Element.Kind)] = [
+            ("<sub>", "</sub>", .subscriptText),
+            ("<sup>", "</sup>", .superscriptText),
+            ("<super>", "</super>", .superscriptText),
+            ("<u>", "</u>", .underline)
+        ]
+        for (open, close, kind) in tags where startsWith(text, open, at: start, limit: limit) {
+            let contentStart = text.index(start, offsetBy: open.count)
+            guard let closeStart = text.range(of: close, range: contentStart..<limit)?.lowerBound,
+                  closeStart > contentStart else { continue }
+            let end = text.index(closeStart, offsetBy: close.count)
+            out.append(Element(kind: kind, range: NSRange(contentStart..<closeStart, in: text)))
+            appendHidden(start..<contentStart, text: text, into: &out)
+            appendHidden(closeStart..<end, text: text, into: &out)
+            scanInline(text, in: contentStart..<closeStart, into: &out)
+            return end
+        }
+        return nil
     }
 
     private nonisolated static func nextIsSame(_ text: String, _ i: String.Index, _ range: Range<String.Index>) -> Bool {
@@ -638,6 +764,9 @@ enum Markdown {
         }
         appendHidden(start..<openEnd, text: text, into: &out)
         appendHidden(close..<closeEnd, text: text, into: &out)
+        if kind == .strong || kind == .emphasis || kind == .strongEmphasis || kind == .strike {
+            scanInline(text, in: openEnd..<close, into: &out)
+        }
         return closeEnd
     }
 

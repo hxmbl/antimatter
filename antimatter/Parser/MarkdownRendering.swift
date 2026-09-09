@@ -540,7 +540,9 @@ enum CodeHighlighter {
 /// table, and the lines the selection currently covers. Text edits trigger a
 /// full re-render. Selection changes never alter the document's glyph
 /// attributes, so caret movement cannot make Unicode graphemes reflow or
-/// expose display-only replacement artifacts.
+/// expose display-only replacement artifacts. Syntax-only characters are
+/// hidden with stable attributes on every render rather than toggled based on
+/// the caret.
 final class MarkdownHighlighter {
     private var source = ""
     private var elements: [Markdown.Element] = []
@@ -549,7 +551,7 @@ final class MarkdownHighlighter {
     /// document. The raw string stays untouched, so editing, undo, copying,
     /// and persistence remain plain-text Markdown; only the display changes.
     ///
-    /// Markdown syntax remains visible but dimmed. Keeping marker attributes
+    /// Markdown syntax-only characters stay hidden. Keeping those attributes
     /// stable avoids caret-dependent glyph changes in NSTextView.
     func render(_ textView: NSTextView) {
         guard let storage = textView.textStorage else { return }
@@ -587,6 +589,18 @@ final class MarkdownHighlighter {
                 storage.addAttribute(.backgroundColor, value: NSColor.quaternarySystemFill, range: range)
             case .language, .marker, .hr, .tablePipe, .taskMarker:
                 storage.addAttribute(.foregroundColor, value: PaneStyle.secondaryTextNSColor, range: element.range)
+            case .tableCell(let alignment):
+                let paragraph = paragraphStyle()
+                paragraph.alignment = {
+                    switch alignment {
+                    case .left: .left
+                    case .center: .center
+                    case .right: .right
+                    }
+                }()
+                storage.addAttribute(.paragraphStyle, value: paragraph, range: element.range)
+                storage.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: baseSize, weight: .regular), range: element.range)
+                storage.addAttribute(.backgroundColor, value: NSColor.quaternarySystemFill, range: element.range)
             case .taskBody(let done):
                 if done {
                     storage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: element.range)
@@ -594,15 +608,31 @@ final class MarkdownHighlighter {
                 }
             case .tableHeader:
                 storage.addAttribute(.font, value: NSFont.boldSystemFont(ofSize: baseSize), range: element.range)
+                storage.addAttribute(.backgroundColor, value: NSColor.tertiarySystemFill, range: element.range)
             case .strong:
                 storage.addAttribute(.font, value: NSFont.boldSystemFont(ofSize: contentFontSize(of: element, headings: headings, base: baseSize)), range: element.range)
             case .emphasis:
                 storage.addAttribute(.font, value: italicFont(ofSize: contentFontSize(of: element, headings: headings, base: baseSize)), range: element.range)
+            case .strongEmphasis:
+                let bold = NSFont.boldSystemFont(ofSize: contentFontSize(of: element, headings: headings, base: baseSize))
+                storage.addAttribute(.font, value: NSFontManager.shared.convert(bold, toHaveTrait: .italicFontMask), range: element.range)
             case .code:
                 storage.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: baseSize - 1, weight: .regular), range: element.range)
                 storage.addAttribute(.backgroundColor, value: NSColor.quaternarySystemFill, range: element.range)
             case .strike:
                 storage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: element.range)
+            case .subscriptText:
+                storage.addAttribute(.baselineOffset, value: -3, range: element.range)
+                storage.addAttribute(.font, value: NSFont.systemFont(ofSize: baseSize * 0.8), range: element.range)
+            case .superscriptText:
+                storage.addAttribute(.baselineOffset, value: 4, range: element.range)
+                storage.addAttribute(.font, value: NSFont.systemFont(ofSize: baseSize * 0.8), range: element.range)
+            case .underline:
+                storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: element.range)
+            case .highlight:
+                storage.addAttribute(.backgroundColor, value: NSColor.systemYellow.withAlphaComponent(0.35), range: element.range)
+            case .lineBreak:
+                break
             case .link(let urlString):
                 if let url = URL(string: urlString) {
                     storage.addAttribute(.link, value: url, range: element.range)
@@ -613,11 +643,24 @@ final class MarkdownHighlighter {
             case .listItem(let level):
                 storage.addAttribute(.paragraphStyle, value: paragraphStyle(headIndent: CGFloat(16 * level), firstLineHeadIndent: 0), range: element.range)
             case .hidden, .escape:
-                storage.addAttribute(.font, value: NSFont.systemFont(ofSize: baseSize), range: element.range)
-                storage.addAttribute(.foregroundColor, value: PaneStyle.secondaryTextNSColor, range: element.range)
+                // Keep the source and its character indexes intact while
+                // making syntax-only characters visually disappear. This is
+                // deliberately unconditional: caret movement never changes
+                // layout attributes and cannot trigger reflow artifacts.
+                storage.addAttribute(.font, value: NSFont.systemFont(ofSize: 1), range: element.range)
+                storage.addAttribute(.foregroundColor, value: NSColor.clear, range: element.range)
             }
         }
         
+        // Cell styling is applied while walking the parser elements, so
+        // re-apply header weight after cells have established their fonts.
+        for element in elements {
+            if case .tableHeader = element.kind {
+                storage.addAttribute(.font, value: NSFont.boldSystemFont(ofSize: baseSize), range: element.range)
+                storage.addAttribute(.backgroundColor, value: NSColor.tertiarySystemFill, range: element.range)
+            }
+        }
+
         // Second pass: apply syntax highlighting to code blocks with language identifiers
         applyCodeHighlighting(to: storage, text: text, elements: elements, baseSize: baseSize)
         storage.endEditing()
@@ -677,7 +720,7 @@ final class MarkdownHighlighter {
         spacingAfter: CGFloat = 0,
         headIndent: CGFloat = 0,
         firstLineHeadIndent: CGFloat = 0
-    ) -> NSParagraphStyle {
+    ) -> NSMutableParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.lineSpacing = PaneStyle.lineSpacing
         style.paragraphSpacingBefore = spacingBefore
@@ -724,7 +767,7 @@ final class MarkdownHighlighter {
 extension Markdown {
     /// Full render for callers without a persistent highlighter.
     ///
-    /// Syntax markers remain visible and dimmed regardless of selection.
+    /// Syntax-only markers remain hidden regardless of selection.
     static func highlight(_ textView: NSTextView) {
         MarkdownHighlighter().render(textView)
     }

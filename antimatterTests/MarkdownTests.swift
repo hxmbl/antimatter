@@ -10,8 +10,42 @@ struct MarkdownTests {
         Markdown.parse(source)
     }
 
+    @Test func inlineSubscriptSuperscriptUnderlineAndHighlightWork() {
+        let elements = parse("H~2~O X^2^ <u>under</u> ==marked==")
+        #expect(elements.contains { $0.kind == .subscriptText })
+        #expect(elements.contains { $0.kind == .superscriptText })
+        #expect(elements.contains { $0.kind == .underline })
+        #expect(elements.contains { $0.kind == .highlight })
+    }
+
+    @Test func nestedOrderedListsAreRecognised() {
+        #expect(parse("1. top").contains { $0.kind == .listItem(level: 0) })
+        #expect(parse("  1. nested").contains { $0.kind == .listItem(level: 1) })
+    }
+
+    @Test func escapedTablePipesRemainLiteral() {
+        let elements = parse("| A\\|B | C |\n| --- | --- |\n| one | two |")
+        #expect(elements.filter { $0.kind == .tablePipe }.count == 6)
+        #expect(elements.contains { $0.kind == .escape })
+    }
+
     private func kinds(_ source: String) -> [Markdown.Element.Kind] {
         parse(source).map(\.kind)
+    }
+
+    @Test func tableAlignmentIsCapturedAndCellFormattingIsParsed() {
+        let elements = parse("| **Name** | Value |\n| :--- | ---: |\n| **A** | _B_ |")
+        #expect(elements.contains { $0.kind == .tableCell(alignment: .left) })
+        #expect(elements.contains { $0.kind == .tableCell(alignment: .right) })
+        #expect(elements.contains { $0.kind == .strong })
+        #expect(elements.contains { $0.kind == .emphasis })
+    }
+
+    @Test func subscriptAndSuperscriptTagsAreStyledElements() {
+        let elements = parse("H<sub>2</sub>O x<sup>2</sup> y<super>3</super>")
+        #expect(elements.contains { $0.kind == .subscriptText })
+        #expect(elements.filter { $0.kind == .superscriptText }.count == 2)
+        #expect(elements.filter { $0.kind == .hidden }.count == 6)
     }
 
     private func containsHeading(_ elements: [Markdown.Element]) -> Bool {
@@ -226,6 +260,20 @@ struct MarkdownTests {
         #expect(!parse("~~nope").map(\.kind).contains(.strike))
     }
 
+    @Test func boldAndItalicCanBeCombinedAndNested() {
+        let combined = parse("***both***")
+        #expect(combined.contains { $0.kind == .strongEmphasis && $0.range == NSRange(location: 3, length: 4) })
+
+        let nested = parse("**bold _italic_**")
+        #expect(nested.contains { $0.kind == .strong })
+        #expect(nested.contains { $0.kind == .emphasis })
+    }
+
+    @Test func hardLineBreaksAreMarked() {
+        #expect(parse("one  \ntwo").contains { $0.kind == .lineBreak })
+        #expect(parse("one\\\ntwo").contains { $0.kind == .lineBreak })
+    }
+
     // MARK: Links
 
     @Test func inlineLinkCollapsesSyntaxAndKeepsLabel() {
@@ -417,9 +465,9 @@ struct MarkdownHighlightTests {
         }
 
         let font = storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
-        #expect(font?.pointSize == PaneStyle.fontSize)
+        #expect(font?.pointSize == 1)
         let color = storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
-        #expect(color == NSColor.secondaryLabelColor)
+        #expect(color == NSColor.clear)
 
         let bodyFont = storage.attribute(.font, at: 2, effectiveRange: nil) as? NSFont
         #expect(bodyFont == NSFont.boldSystemFont(ofSize: PaneStyle.fontSize))
@@ -437,8 +485,8 @@ struct MarkdownHighlightTests {
 
         let initialFont = storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
         let initialColor = storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
-        #expect(initialFont?.pointSize == PaneStyle.fontSize)
-        #expect(initialColor == NSColor.secondaryLabelColor)
+        #expect(initialFont?.pointSize == 1)
+        #expect(initialColor == NSColor.clear)
         let headingFont = storage.attribute(.font, at: 2, effectiveRange: nil) as? NSFont
         #expect(headingFont == NSFont.boldSystemFont(ofSize: Markdown.headingFontSize(level: 1, base: PaneStyle.fontSize)))
 
@@ -462,9 +510,9 @@ struct MarkdownHighlightTests {
         }
 
         let line1Marker = storage.attribute(.font, at: 4, effectiveRange: nil) as? NSFont
-        #expect(line1Marker?.pointSize == PaneStyle.fontSize)
+        #expect(line1Marker?.pointSize == 1)
         let line2Marker = storage.attribute(.font, at: 24, effectiveRange: nil) as? NSFont
-        #expect(line2Marker?.pointSize == PaneStyle.fontSize)
+        #expect(line2Marker?.pointSize == 1)
     }
 
     @Test func listMarkerIsDimmedAndTaskBodyStrikesWhenDone() {
@@ -499,7 +547,7 @@ struct MarkdownHighlightTests {
         #expect(tooltip == "https://example.com")
 
         let markerColor = storage.attribute(.foregroundColor, at: 6, effectiveRange: nil) as? NSColor
-        #expect(markerColor == NSColor.secondaryLabelColor)
+        #expect(markerColor == NSColor.clear)
     }
 
     @Test func codeBlocksGetMonospaceFontAndBackground() {
@@ -547,7 +595,7 @@ struct MarkdownHighlighterTests {
         #expect(textView.typingAttributes as NSDictionary == typingAttributes as NSDictionary)
     }
 
-    @Test func selectionChangesRestyleOnlyMarkersNotTheDocument() {
+    @Test func selectionChangesKeepSyntaxHiddenWithoutChangingTheDocument() {
         let textView = NSTextView()
         let highlighter = MarkdownHighlighter()
         textView.string = "**x**\naway"
@@ -557,16 +605,17 @@ struct MarkdownHighlighterTests {
             return
         }
 
-        // Caret movement does not change marker attributes.
+        // Caret movement does not change hidden-marker attributes.
         textView.selectedRange = NSRange(location: 7, length: 0)
         highlighter.refresh(textView)
-        #expect((storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize == PaneStyle.fontSize)
+        #expect((storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize == 1)
+        #expect(storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == NSColor.clear)
 
-        // Moving back remains stable and does not expose replacement glyphs.
+        // Moving back remains stable and does not expose the markers.
         textView.selectedRange = NSRange(location: 1, length: 0)
         highlighter.refresh(textView)
-        #expect((storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize == PaneStyle.fontSize)
-        #expect(storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == NSColor.secondaryLabelColor)
+        #expect((storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize == 1)
+        #expect(storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == NSColor.clear)
     }
 
     @Test func refreshAfterATextEditFallsBackToAFullRender() {
@@ -597,7 +646,7 @@ struct MarkdownHighlighterTests {
         textView.selectedRange = NSRange(location: 2, length: 0)
         highlighter.refresh(textView)
         highlighter.refresh(textView)
-        #expect(storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont == NSFont.systemFont(ofSize: PaneStyle.fontSize))
-        #expect(storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == NSColor.secondaryLabelColor)
+        #expect(storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont == NSFont.systemFont(ofSize: 1))
+        #expect(storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == NSColor.clear)
     }
 }

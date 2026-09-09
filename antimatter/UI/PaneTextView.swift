@@ -36,12 +36,12 @@ final class PaneTextView: NSTextView {
         selectedRange().length == 0 && !hasMarkedText()
     }
 
-    private func startCaretGlide(from oldLocation: Int, to newLocation: Int) {
+    private func startCaretGlide(from oldLocation: Int, to newLocation: Int, from oldRect: NSRect? = nil) {
         guard hasActiveCaret, oldLocation != newLocation else {
             clearCaretGlide()
             return
         }
-        let oldRect = caretRect(for: oldLocation)
+        let oldRect = oldRect ?? caretRect(for: oldLocation)
         let newRect = caretRect(for: newLocation)
         guard !oldRect.isEmpty, !newRect.isEmpty else { return }
         let distance = hypot(newRect.midX - oldRect.midX, newRect.midY - oldRect.midY)
@@ -378,14 +378,19 @@ final class PaneTextView: NSTextView {
             }
         }
 
-        let shouldAnimateCaret = [123, 124, 125, 126, 115, 119].contains(event.keyCode)
+        let shouldAnimateCaret = [51, 115, 117, 119, 123, 124, 125, 126].contains(event.keyCode)
         if !shouldAnimateCaret {
             clearCaretGlide()
         }
         let oldLocation = selectedRange().location
+        let oldRect = shouldAnimateCaret ? caretRect(for: oldLocation) : .zero
         super.keyDown(with: event)
         if shouldAnimateCaret, selectedRange().length == 0 {
-            startCaretGlide(from: oldLocation, to: selectedRange().location)
+            startCaretGlide(
+                from: oldLocation,
+                to: selectedRange().location,
+                from: oldRect.isEmpty ? nil : oldRect
+            )
         }
     }
     
