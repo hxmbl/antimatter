@@ -18,6 +18,7 @@ final class PaneTextView: NSTextView {
     var onHelpKeyDown: ((NSEvent) -> Bool)?
 
     private var pendingClick: (location: NSPoint, modifiers: NSEvent.ModifierFlags)?
+    private var windowMoveDrag: (windowOrigin: NSPoint, mouseScreenOrigin: NSPoint)?
 
     // The native selection remains authoritative. This overlay only smooths
     // explicit caret jumps; typing, IME composition, and selection drawing
@@ -161,6 +162,12 @@ final class PaneTextView: NSTextView {
 
     // MARK: Link activation
 
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        // Only the command-drag move gesture claims the first click; a plain
+        // first click on an inactive dock-mode window just activates it.
+        event?.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) ?? false
+    }
+
     override func mouseDown(with event: NSEvent) {
         // The floating pane may sit in front of the active app without being
         // key; a click is what hands it typing, so make it key first. Without
@@ -170,7 +177,11 @@ final class PaneTextView: NSTextView {
         if modifiers.contains(.command), let window {
             // Command-drag is the explicit move gesture. Keep it ahead of
             // NSTextView's selection handling so the note remains untouched.
-            window.performDrag(with: event)
+            // The window is repositioned by hand because performDrag(with:)
+            // is only honored from an active app; this way the pane can be
+            // moved with a single gesture while another app is frontmost
+            // without stealing its focus.
+            windowMoveDrag = (window.frame.origin, NSEvent.mouseLocation)
             return
         }
         pendingClick = (event.locationInWindow, modifiers)
@@ -182,6 +193,22 @@ final class PaneTextView: NSTextView {
         if selectedRange().length == 0 {
             startCaretGlide(from: oldLocation, to: selectedRange().location)
         }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        if let windowMoveDrag, let window {
+            let mouse = NSEvent.mouseLocation
+            let delta = NSPoint(
+                x: mouse.x - windowMoveDrag.mouseScreenOrigin.x,
+                y: mouse.y - windowMoveDrag.mouseScreenOrigin.y
+            )
+            window.setFrameOrigin(NSPoint(
+                x: windowMoveDrag.windowOrigin.x + delta.x,
+                y: windowMoveDrag.windowOrigin.y + delta.y
+            ))
+            return
+        }
+        super.mouseDragged(with: event)
     }
 
     private func toggleTaskIfOnMarker() {
@@ -215,6 +242,10 @@ final class PaneTextView: NSTextView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if windowMoveDrag != nil {
+            windowMoveDrag = nil
+            return
+        }
         super.mouseUp(with: event)
         defer { pendingClick = nil }
         guard let down = pendingClick,
