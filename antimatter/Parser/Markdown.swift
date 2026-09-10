@@ -725,11 +725,6 @@ enum Markdown {
         return nil
     }
 
-    private nonisolated static func nextIsSame(_ text: String, _ i: String.Index, _ range: Range<String.Index>) -> Bool {
-        let next = text.index(after: i)
-        return next < range.upperBound && text[next] == "~"
-    }
-
     private nonisolated static func codeTickLength(_ i: String.Index, range: Range<String.Index>, text: String) -> Int {
         var length = 0
         var j = i

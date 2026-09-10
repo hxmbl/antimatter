@@ -40,6 +40,7 @@ remember to fix the relay   → just stays text. good.
 |---------|--------------|
 | `.timer 5 soup` | Countdown timer with a label |
 | `.timer cancel all` | Clear running timers |
+| `.pomodoro 25/5/4` | Work/break cycle timer (minutes, up to 12 cycles) |
 | `.stopwatch soup` | Stopwatch that counts up |
 | `.stopwatch cancel all` | Clear stopwatches |
 | `.remind in 10 minutes` | One-shot reminder |
@@ -51,6 +52,8 @@ remember to fix the relay   → just stays text. good.
 | `.export notes` | Send the note to Apple Notes |
 | `.export obsidian` | Save the note as markdown in your vault |
 | `.settings` | Open settings |
+| `.find` | Open the find bar (also `⌘F`) |
+| `.replace find → replace` | Global replace in the note |
 | `.debug` | Show diagnostics + event log |
 | `.help` | Show the command reference |
 

@@ -10,13 +10,12 @@ struct AntimatterApp: App {
         Window("Antimatter", id: PaneStyle.windowIdentifier) {
             ContentView()
                 .containerBackground(.clear, for: .window)
-                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                .onReceive(NotificationCenter.default.publisher(for:  NSApplication.didBecomeActiveNotification)) { _ in
                     if PaneStyle.displayMode == .dock {
                         PaneHotKey.shared.revealPane()
                     }
                 }
         }
-        .windowStyle(.hiddenTitleBar)
         .windowBackgroundDragBehavior(.enabled)
         .commands {
             CommandGroup(after: .newItem) {

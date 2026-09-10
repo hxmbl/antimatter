@@ -5,18 +5,6 @@ import AppKit
 struct WindowConfigurator: NSViewRepresentable {
     private static var configuredModes: [ObjectIdentifier: PaneStyle.DisplayMode] = [:]
 
-    private static func log(_ message: String) {
-        guard ProcessInfo.processInfo.environment["AM_DEBUG_WINDOW"] == "1" else { return }
-        let line = message + "\n"
-        if let handle = FileHandle(forWritingAtPath: "/tmp/amdbg.log") {
-            handle.seekToEndOfFile()
-            handle.write(line.data(using: .utf8)!)
-            try? handle.close()
-        } else {
-            FileManager.default.createFile(atPath: "/tmp/amdbg.log", contents: line.data(using: .utf8))
-        }
-    }
-
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async { configure(view.window) }
@@ -28,31 +16,28 @@ struct WindowConfigurator: NSViewRepresentable {
     }
 
     private func configure(_ window: NSWindow?) {
-        guard let window else {
-            Self.log("[AMDBG] configure(nil)")
-            return
-        }
-        Self.log("[AMDBG] configure(window=\(window) frame=\(window.frame) contentLayout=\(window.contentLayoutRect) styleMask=\(window.styleMask) titlebarTransparent=\(window.titlebarAppearsTransparent) contentViewFrame=\(String(describing: window.contentView?.frame))")
+        guard let window else { return }
         let mode = PaneStyle.displayMode
         let key = ObjectIdentifier(window)
-        guard Self.configuredModes[key] != mode else {
-            Self.log("[AMDBG] already configured for \(mode)")
-            return
-        }
+        guard Self.configuredModes[key] != mode else { return }
         Self.configuredModes[key] = mode
-        Self.removeTrafficLights(from: window)
         // In menu-bar / dropdown modes the pane lives in MenuBarController's
         // panel, not this SwiftUI window. Skip the window-level chrome (frame
         // autosave in particular) so it doesn't fight the panel, keep the
         // SwiftUI window hidden, and still apply the live styling so the
         // panel honors the appearance settings.
-        guard PaneStyle.displayMode == .dock else {
+        guard mode == .dock else {
+            Self.removeTrafficLights(from: window)
             if !(window is NSPanel) {
                 window.orderOut(nil)
             }
             PaneWindowStyler.applyLive(to: window)
             return
         }
+        // Dock mode runs as a regular app window: give it a standard,
+        // obvious title bar with the traffic-light controls so it reads as
+        // a normal macOS window rather than a chrome-less floating pane.
+        Self.showStandardTitleBar(on: window)
         window.identifier = NSUserInterfaceItemIdentifier(PaneStyle.windowIdentifier)
         // Restores the saved frame synchronously; the size and screen clamp
         // below then reins in frames saved before a smaller contentMaxSize
@@ -73,12 +58,6 @@ struct WindowConfigurator: NSViewRepresentable {
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = PaneStyle.hasShadow
-        // Draw the pane content under the title bar area so no OS title-
-        // bar strip peeks out above the rounded pane in Dock mode.
-        window.styleMask.insert(.fullSizeContentView)
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.titlebarSeparatorStyle = .none
         window.isMovableByWindowBackground = true
         window.contentView?.wantsLayer = true
         window.contentView?.layer?.cornerCurve = .continuous
@@ -140,6 +119,23 @@ struct WindowConfigurator: NSViewRepresentable {
         window.standardWindowButton(.closeButton)?.isEnabled = false
         window.standardWindowButton(.miniaturizeButton)?.isEnabled = false
         window.standardWindowButton(.zoomButton)?.isEnabled = false
+    }
+
+    /// Restores the standard macOS title bar and traffic-light controls for
+    /// the dock-mode window. Run before the window is shown so the native
+    /// bar is laid out normally and the close button works.
+    private static func showStandardTitleBar(on window: NSWindow) {
+        window.styleMask.insert([.closable, .miniaturizable])
+        for button in [
+            NSWindow.ButtonType.closeButton,
+            .miniaturizeButton,
+            .zoomButton
+        ] {
+            window.standardWindowButton(button)?.isHidden = false
+            window.standardWindowButton(button)?.isEnabled = true
+        }
+        window.titlebarAppearsTransparent = false
+        window.titleVisibility = .visible
     }
 }
 

@@ -16,12 +16,21 @@ struct ContentView: View {
     @AppStorage("appearance") private var appearanceObservation = "system"
     @State private var footer = FooterStatus()
 
+    /// Dock mode runs as a regular window whose own title bar frames the
+    /// content, so the theme fills the whole window instead of floating as a
+    /// rounded card over a transparent gap. The floating modes keep the
+    /// padded card so the desktop shows around it.
+    private var isDock: Bool { PaneStyle.displayMode == .dock }
+    private var topInset: CGFloat { isDock ? 0 : PaneStyle.titleBarInset }
+    private var horizontalInset: CGFloat { isDock ? 0 : PaneStyle.padding }
+    private var bottomInset: CGFloat { isDock ? 0 : PaneStyle.padding + PaneStyle.footerHeight }
+
     var body: some View {
         PaneEditor(text: noteStore.activeText, status: $footer)
-            .padding(.top, PaneStyle.titleBarInset)
-            .padding(.leading, PaneStyle.padding)
-            .padding(.trailing, PaneStyle.padding)
-            .padding(.bottom, PaneStyle.padding + PaneStyle.footerHeight)
+            .padding(.top, topInset)
+            .padding(.leading, horizontalInset)
+            .padding(.trailing, horizontalInset)
+            .padding(.bottom, bottomInset)
             .frame(maxWidth: PaneStyle.maxWidth, maxHeight: PaneStyle.maxHeight)
             .background { PaneBackground() }
             .clipShape(RoundedRectangle(cornerRadius: PaneStyle.cornerRadius, style: .continuous))

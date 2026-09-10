@@ -394,32 +394,27 @@ final class PaneTextView: NSTextView {
             )
         }
     }
-    
+
     private func dismissActiveDotcommands() -> Bool {
         var dismissed = false
-        // Dismiss paste stream if streaming
         if PasteStream.shared.isStreaming {
             PasteStream.shared.stopStreaming()
             dismissed = true
         }
-        // Dismiss running timers
         if !TimerCenter.shared.timers.isEmpty {
             TimerCenter.shared.cancelAll()
             dismissed = true
         }
-        // Dismiss running stopwatches
         if !StopwatchCenter.shared.stopwatches.isEmpty {
             StopwatchCenter.shared.cancelAll()
             dismissed = true
         }
-        // Dismiss active reminders
         if !ReminderCenter.shared.reminders.isEmpty {
             ReminderCenter.shared.cancelAll()
             dismissed = true
         }
         return dismissed
     }
-
 
     // MARK: Escape hides the pane
 

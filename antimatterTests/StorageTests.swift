@@ -29,7 +29,6 @@ struct NoteStoreTests {
         #expect(store.activeNoteID == second.id)
         store.cycleNote(direction: 1)
         #expect(store.activeNoteID == first.id)
-        _ = first
     }
 
     @Test func textRoundTripsThroughDisk() {

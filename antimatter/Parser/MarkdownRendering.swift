@@ -28,7 +28,7 @@ enum CodeHighlighter {
                     "associatedtype", "typealias", "where", "defer", "deferred",
                     "init", "deinit", "subscript", "didSet", "willSet", "get", "set",
                     "lazy", "weak", "unowned", "inout", "convenience", "required",
-                    "typealias", "precedencegroup", "operator", "subscript"
+                    "precedencegroup", "operator", "subscript"
                 ],
                 commentPrefix: "//",
                 blockCommentStart: "/*",
@@ -79,9 +79,9 @@ enum CodeHighlighter {
                     "private", "protected", "public", "readonly", "return", "static",
                     "super", "switch", "this", "throw", "try", "type", "typeof",
                     "var", "void", "while", "with", "yield",
-                    "null", "undefined", "true", "false", "never", "unknown", "void",
+                    "null", "undefined", "true", "false", "never", "unknown",
                     "string", "number", "boolean", "symbol", "bigint", "object",
-                    "keyof", "typeof", "infer", "extends", "abstract", "override"
+                    "keyof", "infer", "extends", "abstract", "override"
                 ],
                 commentPrefix: "//",
                 blockCommentStart: "/*",
@@ -121,8 +121,7 @@ enum CodeHighlighter {
                     "uint32", "uint64", "uintptr", "float32", "float64", "complex64",
                     "complex128", "bool", "byte", "rune", "string", "error", "any",
                     "make", "len", "cap", "append", "copy", "delete", "new", "panic",
-                    "recover", "print", "println", "close", "complex", "imag", "real",
-                    "defer", "select"
+                    "recover", "print", "println", "close", "complex", "imag", "real"
                 ],
                 commentPrefix: "//",
                 blockCommentStart: "/*",
@@ -376,8 +375,7 @@ enum CodeHighlighter {
                 continue
             }
 
-// Block comment start
-            if let start = def.blockCommentStart,
+if let start = def.blockCommentStart,
                char == (start.utf16.first ?? 0),
                findString(start, in: nsCode, from: i)?.location == i {
                 if let end = def.blockCommentEnd,
