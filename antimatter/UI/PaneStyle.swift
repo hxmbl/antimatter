@@ -14,8 +14,8 @@ enum PaneStyle {
     }
 
     static var displayMode: DisplayMode {
-        let raw = UserDefaults.standard.string(forKey: "pane.displayMode") ?? "dock"
-        return DisplayMode(rawValue: raw) ?? .dock
+        let raw = UserDefaults.standard.string(forKey: "pane.displayMode") ?? "menuBar"
+        return DisplayMode(rawValue: raw) ?? .menuBar
     }
 
     // MARK: Transparency
@@ -36,11 +36,13 @@ enum PaneStyle {
     /// Extra wash on top of the blur. `0` is blur-only (most transparent).
     /// Neutral-theme presets (default, grid light/dark) keep the original
     /// label-color wash so the pane stays gray-on-gray; only colorful themes
-    /// tint with their accent.
+    /// tint with their accent. The wash adapts to the system appearance so a
+    /// light tint never veils the pane in dark mode.
     static var tint: Color {
+        let isDark = NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         switch PaneTheme.current.id {
         case "default", "grid-light", "grid-dark":
-            return Color(nsColor: .labelColor)
+            return isDark ? Color(white: 0) : Color(nsColor: .labelColor)
         default:
             return PaneTheme.current.tint
         }

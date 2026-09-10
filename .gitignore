@@ -15,3 +15,7 @@ build/
 # Swift Package Manager
 .build/
 Package.resolved
+
+# Raycast extension
+raycast-extension/node_modules/
+raycast-extension/dist/

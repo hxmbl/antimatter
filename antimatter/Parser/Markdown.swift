@@ -57,7 +57,7 @@ enum Markdown {
             }
         }
 
-        enum TableAlignment: Equatable {
+        nonisolated enum TableAlignment: Equatable {
             case left
             case center
             case right

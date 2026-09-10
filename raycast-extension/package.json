@@ -1,0 +1,65 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "Antimatter",
+  "title": "Antimatter",
+  "description": "Control Antimatter — the floating notes pane — from Raycast.",
+  "icon": "assets/extension-icon.png",
+  "author": "stormofthoughts",
+  "categories": ["Productivity", "Data"],
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "open-pane",
+      "title": "Open Pane",
+      "description": "Bring the Antimatter pane to the front.",
+      "mode": "no-view"
+    },
+    {
+      "name": "create-note",
+      "title": "Create Note",
+      "description": "Create a new note in Antimatter.",
+      "mode": "view",
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text",
+          "placeholder": "Note text",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "run-command",
+      "title": "Run Command",
+      "description": "Execute a dot-command in the active note.",
+      "mode": "view",
+      "arguments": [
+        {
+          "name": "command",
+          "type": "text",
+          "placeholder": ".timer 5 coffee",
+          "required": false
+        }
+      ]
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.90.0"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^1.0.11",
+    "@types/node": "20.8.10",
+    "@types/react": "18.3.3",
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.4.5"
+  },
+  "scripts": {
+    "build": "ray build --skip-types -e dist -o dist",
+    "dev": "ray develop",
+    "fix-lint": "ray lint --fix",
+    "lint": "ray lint",
+    "prepublishOnly": "echo \"Error: no publish\" && exit 1",
+    "publish": "npx @raycast/api@latest publish"
+  }
+}

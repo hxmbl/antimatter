@@ -13,7 +13,7 @@ enum ExportDestination: String, CaseIterable {
 ///
 /// * **Apple Notes** — the whole note becomes one new note via AppleScript.
 /// * **Obsidian** — the note is written as a markdown file into the vault
-///   the user picks in a save panel (`…antimatter.md`), so the pane stays a
+///   the user picks in a save panel (`…Antimatter.md`), so the pane stays a
 ///   plain-text markdown file and Obsidian just reads it.
 @MainActor
 enum ExportCenter {
@@ -89,7 +89,7 @@ enum ExportCenter {
         let panel = NSSavePanel()
         panel.canCreateDirectories = true
         panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
-        panel.nameFieldStringValue = "antimatter.md"
+        panel.nameFieldStringValue = "Antimatter.md"
         panel.message = "Choose where in your Obsidian vault to save this note (as a markdown file)."
         panel.prompt = "Save to Vault"
         guard panel.runModal() == .OK, let url = panel.url else {

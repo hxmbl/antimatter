@@ -17,7 +17,7 @@ final class MenuBarController: NSObject {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: "Antimatter")
+            button.image = NSImage(named: "MenuBarIcon")
             button.image?.isTemplate = true
             button.toolTip = "Antimatter"
             button.action = #selector(togglePanel)
@@ -128,8 +128,11 @@ final class MenuBarController: NSObject {
         panel.title = "Antimatter"
 
         // Dismiss on Escape while the panel is key.
+        // Let the event through when a paste stream is active so the
+        // text view can cancel it first.
         keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak panel] event in
             guard let panel, panel.isKeyWindow, event.keyCode == 53 else { return event }
+            if PasteStream.shared.isStreaming { return event }
             panel.orderOut(nil)
             return nil
         }

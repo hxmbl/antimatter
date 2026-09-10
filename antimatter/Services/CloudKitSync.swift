@@ -70,11 +70,11 @@ final class CloudKitSync: ObservableObject {
 
     /// Stores the encryption key in the Keychain instead of UserDefaults
     /// (which stores raw bytes in an unencrypted plist).
-    private func saveEncryptionKey(_ key: SymmetricKey) {
+    private static func saveEncryptionKey(_ key: SymmetricKey) {
         let keyData = key.withUnsafeBytes { Data($0) }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrServiceName as String: kKeychainService,
+            kSecAttrService as String: kKeychainService,
             kSecAttrAccount as String: kKeychainAccount,
             kSecValueData as String: keyData
         ]
@@ -86,10 +86,10 @@ final class CloudKitSync: ObservableObject {
     }
 
     /// Reads the encryption key from the Keychain.
-    private func loadEncryptionKey() -> SymmetricKey? {
+    private static func loadEncryptionKey() -> SymmetricKey? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrServiceName as String: kKeychainService,
+            kSecAttrService as String: kKeychainService,
             kSecAttrAccount as String: kKeychainAccount,
             kSecReturnData as String: true
         ]
@@ -109,9 +109,9 @@ final class CloudKitSync: ObservableObject {
             database = nil
         }
 
-        encryptionKey = loadEncryptionKey() ?? {
+        encryptionKey = Self.loadEncryptionKey() ?? {
             let newKey = SymmetricKey(size: .bits256)
-            saveEncryptionKey(newKey)
+            Self.saveEncryptionKey(newKey)
             return newKey
         }()
 

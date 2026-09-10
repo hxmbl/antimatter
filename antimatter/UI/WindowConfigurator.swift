@@ -5,6 +5,18 @@ import AppKit
 struct WindowConfigurator: NSViewRepresentable {
     private static var configuredModes: [ObjectIdentifier: PaneStyle.DisplayMode] = [:]
 
+    private static func log(_ message: String) {
+        guard ProcessInfo.processInfo.environment["AM_DEBUG_WINDOW"] == "1" else { return }
+        let line = message + "\n"
+        if let handle = FileHandle(forWritingAtPath: "/tmp/amdbg.log") {
+            handle.seekToEndOfFile()
+            handle.write(line.data(using: .utf8)!)
+            try? handle.close()
+        } else {
+            FileManager.default.createFile(atPath: "/tmp/amdbg.log", contents: line.data(using: .utf8))
+        }
+    }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async { configure(view.window) }
@@ -16,10 +28,17 @@ struct WindowConfigurator: NSViewRepresentable {
     }
 
     private func configure(_ window: NSWindow?) {
-        guard let window else { return }
+        guard let window else {
+            Self.log("[AMDBG] configure(nil)")
+            return
+        }
+        Self.log("[AMDBG] configure(window=\(window) frame=\(window.frame) contentLayout=\(window.contentLayoutRect) styleMask=\(window.styleMask) titlebarTransparent=\(window.titlebarAppearsTransparent) contentViewFrame=\(String(describing: window.contentView?.frame))")
         let mode = PaneStyle.displayMode
         let key = ObjectIdentifier(window)
-        guard Self.configuredModes[key] != mode else { return }
+        guard Self.configuredModes[key] != mode else {
+            Self.log("[AMDBG] already configured for \(mode)")
+            return
+        }
         Self.configuredModes[key] = mode
         Self.removeTrafficLights(from: window)
         // In menu-bar / dropdown modes the pane lives in MenuBarController's
@@ -54,8 +73,12 @@ struct WindowConfigurator: NSViewRepresentable {
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = PaneStyle.hasShadow
+        // Draw the pane content under the title bar area so no OS title-
+        // bar strip peeks out above the rounded pane in Dock mode.
+        window.styleMask.insert(.fullSizeContentView)
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
+        window.titlebarSeparatorStyle = .none
         window.isMovableByWindowBackground = true
         window.contentView?.wantsLayer = true
         window.contentView?.layer?.cornerCurve = .continuous

@@ -154,6 +154,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NoteStore.shared.flush()
     }
 
+    // MARK: - URL Scheme (antimatter://)
+
+    /// Handles every `antimatter://` deep link: a bare host opens the pane,
+    /// `note` creates a note, `append` adds to the active one, and `command`
+    /// runs a dot-command line (`.timer 5`, `.remind 10m …`, etc.).
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls { DeepLinkRouter.handle(url) }
+        PaneHotKey.shared.revealPane()
+    }
+
     @objc func openSettings(_ sender: Any?) {
         NSApplication.shared.activate()
         let modern = Selector(("showSettingsWindow:"))
