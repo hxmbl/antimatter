@@ -4,6 +4,10 @@ import CryptoKit
 import Foundation
 import Security
 
+/// Keychain service/account identifiers for the sync encryption key.
+private let kKeychainService = "com.antimatter.sync-encryption-key"
+private let kKeychainAccount = "sync-encryption-key"
+
 /// Represents a synced note record.
 struct SyncNote: Identifiable, Equatable {
     let id: UUID
@@ -64,6 +68,37 @@ final class CloudKitSync: ObservableObject {
         return FileManager.default.ubiquityIdentityToken != nil
     }
 
+    /// Stores the encryption key in the Keychain instead of UserDefaults
+    /// (which stores raw bytes in an unencrypted plist).
+    private func saveEncryptionKey(_ key: SymmetricKey) {
+        let keyData = key.withUnsafeBytes { Data($0) }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrServiceName as String: kKeychainService,
+            kSecAttrAccount as String: kKeychainAccount,
+            kSecValueData as String: keyData
+        ]
+        SecItemDelete(query as CFDictionary)
+        let status = SecItemAdd(query as CFDictionary, nil)
+        if status != errSecSuccess {
+            DebugLog.log("Failed to save encryption key to Keychain: \(status)")
+        }
+    }
+
+    /// Reads the encryption key from the Keychain.
+    private func loadEncryptionKey() -> SymmetricKey? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrServiceName as String: kKeychainService,
+            kSecAttrAccount as String: kKeychainAccount,
+            kSecReturnData as String: true
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else { return nil }
+        return SymmetricKey(data: data)
+    }
+
     init() {
         let provisioned = Self.iCloudContainerIsSignedIn()
         if provisioned {
@@ -74,13 +109,11 @@ final class CloudKitSync: ObservableObject {
             database = nil
         }
 
-        if let existingKeyData = UserDefaults.standard.data(forKey: "sync.encryptionKey") {
-            encryptionKey = SymmetricKey(data: existingKeyData)
-        } else {
+        encryptionKey = loadEncryptionKey() ?? {
             let newKey = SymmetricKey(size: .bits256)
-            UserDefaults.standard.set(newKey.withUnsafeBytes { Data($0) }, forKey: "sync.encryptionKey")
-            encryptionKey = newKey
-        }
+            saveEncryptionKey(newKey)
+            return newKey
+        }()
 
         isEnabled = UserDefaults.standard.bool(forKey: "sync.enabled")
         if isEnabled && !provisioned {
@@ -161,7 +194,12 @@ final class CloudKitSync: ObservableObject {
             }
             // Nothing in the Void should exist in the cloud either.
             for voided in trash {
-                await deleteNote(voided.id)
+                do {
+                    try await deleteNote(voided.id)
+                } catch {
+                    syncStatus = .error("Failed to delete synced note: \(error.localizedDescription)")
+                    return
+                }
             }
             lastSyncDate = Date()
             syncStatus = .idle
@@ -205,11 +243,10 @@ final class CloudKitSync: ObservableObject {
         }
     }
 
-    func deleteNote(_ noteID: UUID) async {
+    func deleteNote(_ noteID: UUID) async throws {
         guard isEnabled else { return }
         guard let database else {
-            syncStatus = .error("iCloud unavailable")
-            return
+            throw CloudKitSyncError.unavailable
         }
 
         do {
@@ -222,7 +259,7 @@ final class CloudKitSync: ObservableObject {
                 try await database.deleteRecord(withID: record.recordID)
             }
         } catch {
-            syncStatus = .error(error.localizedDescription)
+            throw CloudKitSyncError.deleteFailed(error.localizedDescription)
         }
     }
 
@@ -235,6 +272,19 @@ final class CloudKitSync: ObservableObject {
         UserDefaults.standard.set(isEnabled, forKey: "sync.enabled")
         if isEnabled {
             syncStatus = .idle
+        }
+    }
+}
+
+/// Errors from CloudKit operations.
+enum CloudKitSyncError: Error, LocalizedError {
+    case unavailable
+    case deleteFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable: return "iCloud unavailable"
+        case .deleteFailed(let msg): return "Delete failed: \(msg)"
         }
     }
 }

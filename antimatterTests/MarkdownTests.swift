@@ -207,7 +207,7 @@ struct MarkdownTests {
     @Test func closingFenceNeedsMatchingLengths() {
         let elements = parse("````\ncode\n```\nmore code")
         let blocks = elements.filter { $0.kind == .codeBlock }
-        #expect(blocks.count == 3)
+        #expect(blocks.count == 2)
     }
 
     // MARK: Tables

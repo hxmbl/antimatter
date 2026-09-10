@@ -735,7 +735,7 @@ struct PaneEditor: NSViewRepresentable {
         /// Screenshot → text: OCR the dropped image on-device and append it.
         func recognizeAndInsert(_ image: NSImage) {
             Task {
-                guard let text = await ImageText.recognize(image), !text.isEmpty else { return }
+                guard let text = try? await ImageText.recognize(image), !text.isEmpty else { return }
                 self.text.wrappedValue += (self.text.wrappedValue.hasSuffix("\n") || self.text.wrappedValue.isEmpty ? "" : "\n") + text + "\n"
             }
         }

@@ -19,8 +19,8 @@ final class PasteStream: ObservableObject {
         lastChangeCount = NSPasteboard.general.changeCount
         isStreaming = true
         DebugLog.log("paste stream started")
-        pollTask = Task { [weak self] in
-            while let self, !Task.isCancelled {
+        pollTask = Task {
+            while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(400))
                 guard !Task.isCancelled else { return }
                 self.adoptClipboardIfNew()

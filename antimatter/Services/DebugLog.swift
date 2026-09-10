@@ -4,11 +4,11 @@ import Foundation
 /// echoed to the system log (so it also shows up in unified logging), and the
 /// most recent lines are kept in memory so the pane can print recent activity
 /// without any external logging tooling.
-@MainActor
 final class DebugLog {
     static let shared = DebugLog()
 
     private(set) var lines: [String] = []
+    private let lock = NSLock()
     private static let formatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
@@ -22,9 +22,11 @@ final class DebugLog {
     }
 
     private func record(_ line: String) {
+        lock.lock()
         lines.append(line)
         if lines.count > 100 {
             lines.removeFirst(lines.count - 100)
         }
+        lock.unlock()
     }
 }

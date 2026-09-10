@@ -16,12 +16,20 @@ enum StorageLocation {
             let dir = FileManager.default.temporaryDirectory
                 .appendingPathComponent("antimatter-isolated", isDirectory: true)
                 .appendingPathComponent(name, isDirectory: true)
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            do {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            } catch {
+                fatalError("Failed to create isolated storage directory: \(error)")
+            }
             return dir
         }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Antimatter", isDirectory: true)
-        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        } catch {
+            fatalError("Failed to create Application Support directory: \(error)")
+        }
         return base
     }
 }

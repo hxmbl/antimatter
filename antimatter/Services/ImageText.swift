@@ -3,11 +3,11 @@ import Vision
 
 /// Screenshot → text: on-device Vision OCR, never uploaded.
 nonisolated enum ImageText {
-    static func recognize(_ image: NSImage) async -> String? {
+    static func recognize(_ image: NSImage) async throws -> String? {
         guard let cgImage = image.cgImage(
             forProposedRect: nil, context: nil, hints: nil)
         else { return nil }
-        return await withCheckedContinuation { continuation in
+        return try await withCheckedThrowingContinuation { continuation in
             let request = VNRecognizeTextRequest { request, error in
                 guard error == nil,
                       let observations = request.results as? [VNRecognizedTextObservation]
@@ -24,7 +24,7 @@ nonisolated enum ImageText {
             do {
                 try handler.perform([request])
             } catch {
-                continuation.resume(returning: nil)
+                continuation.resume(throwing: error)
             }
         }
     }

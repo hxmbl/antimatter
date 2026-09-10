@@ -4,7 +4,6 @@ excluded:
   - Pods
   - .git
   - .build
-  - Tests
 
 # Allow slightly longer lines for readability
 line_length: 120

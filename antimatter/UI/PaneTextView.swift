@@ -1,5 +1,6 @@
 import AppKit
 import QuartzCore
+import Carbon.HIToolbox
 
 /// The pane's text view.
 ///
@@ -361,7 +362,7 @@ final class PaneTextView: NSTextView {
 
     override func keyDown(with event: NSEvent) {
         if onHelpKeyDown?(event) == true { return }
-        if event.keyCode == 53 { // Escape
+        if event.keyCode == kVK_Escape { // Escape
             if !dismissActiveDotcommands() { cancelOperation(nil) }
             return
         }
@@ -483,20 +484,14 @@ final class PaneTextView: NSTextView {
         let prevLineLength = (lines[currentLineIndex - 1] as NSString).length
         let newCursorLocation = cursorLocation - prevLineLength - 1
 
-        let originalText = swiftText
-        let originalCursor = cursorLocation
-        undoManager?.registerUndo(withTarget: self) { tv in
-            tv.string = originalText
-            tv.setSelectedRange(NSRange(location: originalCursor, length: 0))
-            tv.delegate?.textDidChange?(Notification(name: NSText.didChangeNotification, object: tv))
-        }
         undoManager?.setActionName("Move Line Up")
-
+        undoManager?.beginUndoGrouping()
         textStorage.beginEditing()
         textStorage.replaceCharacters(in: NSRange(location: 0, length: fullText.length), with: newString)
         textStorage.endEditing()
         setSelectedRange(NSRange(location: max(0, newCursorLocation), length: 0))
         delegate?.textDidChange?(Notification(name: NSText.didChangeNotification, object: self))
+        undoManager?.endUndoGrouping()
     }
 
     private func moveLineDown() {
@@ -529,20 +524,14 @@ final class PaneTextView: NSTextView {
         let currentLineLength = (lines[currentLineIndex] as NSString).length
         let newCursorLocation = cursorLocation + currentLineLength + 1
 
-        let originalText = swiftText
-        let originalCursor = cursorLocation
-        undoManager?.registerUndo(withTarget: self) { tv in
-            tv.string = originalText
-            tv.setSelectedRange(NSRange(location: originalCursor, length: 0))
-            tv.delegate?.textDidChange?(Notification(name: NSText.didChangeNotification, object: tv))
-        }
         undoManager?.setActionName("Move Line Down")
-
+        undoManager?.beginUndoGrouping()
         textStorage.beginEditing()
         textStorage.replaceCharacters(in: NSRange(location: 0, length: fullText.length), with: newString)
         textStorage.endEditing()
         setSelectedRange(NSRange(location: min((newString as NSString).length, newCursorLocation), length: 0))
         delegate?.textDidChange?(Notification(name: NSText.didChangeNotification, object: self))
+        undoManager?.endUndoGrouping()
     }
 
 
