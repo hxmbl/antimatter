@@ -33,7 +33,7 @@ struct ContentView: View {
     private var bottomInset: CGFloat { isDock ? 0 : PaneStyle.padding + PaneStyle.footerHeight }
 
     var body: some View {
-        PaneEditor(text: noteStore.activeText, status: $footer)
+            PaneEditor(text: noteStore.activeText, status: $footer, noteStore: noteStore)
             .onTapGesture {
                 sidebarOpen = false
             }
@@ -54,7 +54,7 @@ struct ContentView: View {
             .overlay(WindowDragEdge())
             .overlay(alignment: .leading) {
                 if sidebarOpen {
-                    SidebarView(isOpen: $sidebarOpen)
+                    SidebarView(store: noteStore, isOpen: $sidebarOpen)
                         .transition(.move(edge: .leading).combined(with: .opacity))
                         .animation(.easeInOut(duration: 0.15), value: sidebarOpen)
                 }

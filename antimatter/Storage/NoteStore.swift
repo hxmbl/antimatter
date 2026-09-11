@@ -212,9 +212,12 @@ final class NoteStore: ObservableObject {
 
     private func scheduleVoidPrune() {
         voidTask?.cancel()
+        let cutoff = Date().addingTimeInterval(-36 * 3600)
+        let staleCount = trash.filter { $0.modifiedAt < cutoff }.count
+        guard staleCount > 0 else { return }
         voidTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(36 * 3600))
-            let cutoff = Date().addingTimeInterval(-36 * 3600)
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled else { return }
             self?.trash.removeAll { $0.modifiedAt < cutoff }
             self?.scheduleSave()
         }

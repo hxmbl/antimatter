@@ -13,6 +13,46 @@ enum CodeHighlighter {
         let blockCommentEnd: String?
     }
 
+    // Shared keyword subsets to reduce duplication across language definitions.
+    private static let cFamilyBase: Set<String> = [
+        "auto", "break", "case", "const", "continue", "default", "do", "else",
+        "enum", "extern", "for", "goto", "if", "register", "return", "sizeof",
+        "static", "struct", "switch", "typedef", "union", "while"
+    ]
+    private static let cTypes: Set<String> = [
+        "char", "double", "float", "int", "long", "short", "signed", "unsigned",
+        "void", "volatile"
+    ]
+    private static let cppExtensions: Set<String> = [
+        "alignas", "alignof", "and", "and_eq", "asm", "bitand", "bitor",
+        "catch", "char8_t", "char16_t", "char32_t", "class", "compl", "concept",
+        "consteval", "constexpr", "constinit", "const_cast", "co_await",
+        "co_return", "co_yield", "decltype", "delete", "dynamic_cast", "explicit",
+        "export", "false", "friend", "inline", "mutable", "namespace", "new",
+        "noexcept", "not", "not_eq", "nullptr", "operator", "or", "or_eq",
+        "private", "protected", "public", "reinterpret_cast", "requires",
+        "static_assert", "static_cast", "template", "this", "thread_local",
+        "throw", "true", "try", "typeid", "typename", "using", "virtual",
+        "wchar_t", "xor", "xor_eq", "override", "final"
+    ]
+    private static let javaBase: Set<String> = [
+        "abstract", "assert", "boolean", "byte", "catch", "char", "class",
+        "const", "default", "do", "double", "else", "enum", "extends", "final",
+        "finally", "float", "for", "goto", "if", "implements", "import",
+        "instanceof", "int", "interface", "long", "native", "new", "package",
+        "private", "protected", "public", "return", "short", "static", "strictfp",
+        "super", "switch", "synchronized", "this", "throw", "throws", "transient",
+        "try", "void", "volatile", "while"
+    ]
+    private static let jsBase: Set<String> = [
+        "async", "await", "break", "case", "catch", "class", "const",
+        "continue", "debugger", "default", "delete", "do", "else", "export",
+        "extends", "finally", "for", "from", "function", "if", "import",
+        "in", "instanceof", "let", "new", "of", "return", "static", "super",
+        "switch", "this", "throw", "try", "typeof", "var", "void", "while",
+        "with", "yield", "null", "undefined", "true", "false"
+    ]
+
     private static func definition(for lang: String) -> LanguageDef? {
         switch lang {
         case "swift":
@@ -51,38 +91,27 @@ enum CodeHighlighter {
             )
         case "javascript", "js":
             return LanguageDef(
-                keywords: [
-                    "async", "await", "break", "case", "catch", "class", "const",
-                    "continue", "debugger", "default", "delete", "do", "else", "export",
-                    "extends", "finally", "for", "from", "function", "if", "import",
-                    "in", "instanceof", "let", "new", "of", "return", "static", "super",
-                    "switch", "this", "throw", "try", "typeof", "var", "void", "while",
-                    "with", "yield", "null", "undefined", "true", "false", "NaN", "Infinity",
+                keywords: jsBase.union([
+                    "NaN", "Infinity",
                     "console", "document", "window", "Math", "JSON", "Promise",
                     "Array", "Object", "String", "Number", "Boolean", "Symbol",
                     "Map", "Set", "WeakMap", "WeakSet", "Date", "RegExp", "Error",
                     "setTimeout", "setInterval", "clearTimeout", "clearInterval",
                     "require", "module", "exports"
-                ],
+                ]),
                 commentPrefix: "//",
                 blockCommentStart: "/*",
                 blockCommentEnd: "*/"
             )
         case "typescript", "ts":
             return LanguageDef(
-                keywords: [
-                    "any", "as", "async", "await", "break", "case", "catch", "class",
-                    "const", "continue", "debugger", "declare", "default", "delete",
-                    "do", "else", "enum", "export", "extends", "finally", "for",
-                    "from", "function", "if", "implements", "import", "in",
-                    "instanceof", "interface", "let", "new", "of", "package",
-                    "private", "protected", "public", "readonly", "return", "static",
-                    "super", "switch", "this", "throw", "try", "type", "typeof",
-                    "var", "void", "while", "with", "yield",
-                    "null", "undefined", "true", "false", "never", "unknown",
+                keywords: jsBase.union([
+                    "any", "as", "declare", "enum", "implements", "interface",
+                    "package", "private", "protected", "public", "readonly",
+                    "type", "never", "unknown",
                     "string", "number", "boolean", "symbol", "bigint", "object",
-                    "keyof", "infer", "extends", "abstract", "override"
-                ],
+                    "keyof", "infer", "abstract", "override"
+                ]),
                 commentPrefix: "//",
                 blockCommentStart: "/*",
                 blockCommentEnd: "*/"
@@ -147,41 +176,23 @@ enum CodeHighlighter {
             )
         case "c":
             return LanguageDef(
-                keywords: [
-                    "auto", "break", "case", "char", "const", "continue", "default",
-                    "do", "double", "else", "enum", "extern", "float", "for", "goto",
-                    "if", "inline", "int", "long", "register", "restrict", "return",
-                    "short", "signed", "sizeof", "static", "struct", "switch", "typedef",
-                    "union", "unsigned", "void", "volatile", "while", "_Bool",
-                    "_Complex", "_Imaginary", "NULL", "EOF", "stdin", "stdout", "stderr",
+                keywords: cFamilyBase.union(cTypes).union([
+                    "restrict", "_Bool", "_Complex", "_Imaginary",
+                    "NULL", "EOF", "stdin", "stdout", "stderr",
                     "size_t", "ptrdiff_t", "int8_t", "int16_t", "int32_t", "int64_t",
                     "uint8_t", "uint16_t", "uint32_t", "uint64_t",
                     "printf", "scanf", "malloc", "calloc", "realloc", "free",
                     "memcpy", "memset", "strlen", "strcmp", "strcpy", "strcat",
                     "fopen", "fclose", "fread", "fwrite", "fprintf", "fscanf"
-                ],
+                ]),
                 commentPrefix: "//",
                 blockCommentStart: "/*",
                 blockCommentEnd: "*/"
             )
         case "cpp", "c++", "cxx":
             return LanguageDef(
-                keywords: [
-                    "alignas", "alignof", "and", "and_eq", "asm", "auto", "bitand",
-                    "bitor", "break", "case", "catch", "char", "char8_t", "char16_t",
-                    "char32_t", "class", "compl", "concept", "const", "consteval",
-                    "constexpr", "constinit", "const_cast", "continue", "co_await",
-                    "co_return", "co_yield", "decltype", "default", "delete", "do",
-                    "double", "dynamic_cast", "else", "enum", "explicit", "export",
-                    "extern", "false", "float", "for", "friend", "goto", "if",
-                    "inline", "int", "long", "mutable", "namespace", "new", "noexcept",
-                    "not", "not_eq", "nullptr", "operator", "or", "or_eq", "private",
-                    "protected", "public", "register", "reinterpret_cast", "requires",
-                    "return", "short", "signed", "sizeof", "static", "static_assert",
-                    "static_cast", "struct", "switch", "template", "this", "thread_local",
-                    "throw", "true", "try", "typedef", "typeid", "typename", "union",
-                    "unsigned", "using", "virtual", "void", "volatile", "wchar_t",
-                    "while", "xor", "xor_eq", "override", "final",
+                keywords: cFamilyBase.union(cTypes).union(cppExtensions).union([
+                    "char8_t", "char16_t", "char32_t",
                     "std", "string", "vector", "map", "set", "pair", "tuple",
                     "unique_ptr", "shared_ptr", "make_unique", "make_shared",
                     "cout", "cin", "cerr", "endl", "size_t",
@@ -189,31 +200,23 @@ enum CodeHighlighter {
                     "unordered_map", "unordered_set", "deque", "list", "queue", "stack",
                     "algorithm", "iterator", "numeric", "cmath", "cstdlib", "cstring",
                     "iostream", "fstream", "sstream", "iomanip"
-                ],
+                ]),
                 commentPrefix: "//",
                 blockCommentStart: "/*",
                 blockCommentEnd: "*/"
             )
         case "java":
             return LanguageDef(
-                keywords: [
-                    "abstract", "assert", "boolean", "break", "byte", "case", "catch",
-                    "char", "class", "const", "continue", "default", "do", "double",
-                    "else", "enum", "extends", "final", "finally", "float", "for",
-                    "goto", "if", "implements", "import", "instanceof", "int",
-                    "interface", "long", "native", "new", "package", "private",
-                    "protected", "public", "return", "short", "static", "strictfp",
-                    "super", "switch", "synchronized", "this", "throw", "throws",
-                    "transient", "try", "void", "volatile", "while",
+                keywords: cFamilyBase.union(cTypes).union(javaBase).union([
                     "true", "false", "null", "var", "record", "sealed", "permits",
-                    "yield", "instanceof",
+                    "yield",
                     "String", "System", "Object", "Integer", "Double", "Float",
                     "Boolean", "Character", "Long", "Short", "Byte", "Number",
                     "List", "ArrayList", "LinkedList", "Map", "HashMap", "TreeMap",
                     "Set", "HashSet", "TreeSet", "Queue", "Deque", "ArrayDeque",
-                    "Collections", "Arrays", "Math", "System", "Exception",
+                    "Collections", "Arrays", "Math", "Exception",
                     "RuntimeException", "IOException", "Thread", "Runnable"
-                ],
+                ]),
                 commentPrefix: "//",
                 blockCommentStart: "/*",
                 blockCommentEnd: "*/"

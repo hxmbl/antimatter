@@ -180,25 +180,30 @@ final class CloudKitSync: ObservableObject {
         syncStatus = .syncing
 
         do {
+            var encryptedNotes: [(Note, Data?)] = []
             for note in notes {
-                let record = CKRecord(recordType: "Note")
-                record["noteID"] = note.id.uuidString as CKRecordValue
-                record["createdAt"] = note.createdAt as CKRecordValue
-                record["modifiedAt"] = note.modifiedAt as CKRecordValue
-                record["isSlot"] = note.isSlot as CKRecordValue
-                record["title"] = note.title as CKRecordValue
-                if let encryptedData = try encrypt(note.text) {
-                    record["encryptedText"] = encryptedData as CKRecordValue
-                }
-                try await database.save(record)
+                let encrypted = try encrypt(note.text)
+                encryptedNotes.append((note, encrypted))
             }
-            // Nothing in the Void should exist in the cloud either.
-            for voided in trash {
-                do {
-                    try await deleteNote(voided.id)
-                } catch {
-                    syncStatus = .error("Failed to delete synced note: \(error.localizedDescription)")
-                    return
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                for (note, encryptedData) in encryptedNotes {
+                    group.addTask {
+                        let record = CKRecord(recordType: "Note")
+                        record["noteID"] = note.id.uuidString as CKRecordValue
+                        record["createdAt"] = note.createdAt as CKRecordValue
+                        record["modifiedAt"] = note.modifiedAt as CKRecordValue
+                        record["isSlot"] = note.isSlot as CKRecordValue
+                        record["title"] = note.title as CKRecordValue
+                        if let encryptedData {
+                            record["encryptedText"] = encryptedData as CKRecordValue
+                        }
+                        try await database.save(record)
+                    }
+                }
+                for voided in trash {
+                    group.addTask {
+                        try await CloudKitSync.shared.deleteNote(voided.id)
+                    }
                 }
             }
             lastSyncDate = Date()

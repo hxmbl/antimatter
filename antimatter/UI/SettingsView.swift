@@ -123,6 +123,42 @@ struct SettingsView: View {
             }
 
             Section {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+                    ForEach(PaneTheme.builtIn) { theme in
+                        let isSelected = PaneTheme.current.id == theme.id
+                        Button(action: {
+                            PaneTheme.set(theme)
+                            PaneWindowStyler.applyToPane()
+                        }) {
+                            VStack(spacing: 4) {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(theme.background)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .strokeBorder(isSelected ? theme.accent : .clear, lineWidth: 2)
+                                    )
+                                    .frame(height: 32)
+                                    .overlay(
+                                        Text("Aa")
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(theme.text)
+                                    )
+                                Text(theme.name)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            } header: {
+                Label("Theme", systemImage: "paintpalette")
+            } footer: {
+                Text("Pick a built-in look for your note. Each theme sets its own background, text color, and accent.")
+            }
+
+            Section {
                 Toggle("Sync notes across your devices", isOn: Binding(
                     get: { CloudKitSync.shared.isEnabled },
                     set: { _ in CloudKitSync.shared.toggleSync() }

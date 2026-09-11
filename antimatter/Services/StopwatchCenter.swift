@@ -96,6 +96,10 @@ final class StopwatchCenter: ObservableObject {
 
     // MARK: Persistence
 
+    /// Maximum age for a running stopwatch before it is auto-expired on load.
+    /// Prevents abandoned stopwatches from counting up indefinitely.
+    private static let maxRunningAge: TimeInterval = 24 * 3600
+
     private func load() {
         // Same recovery rule as the timers: a corrupt or missing primary
         // falls back to the last good generation in stopwatches.json.bak.
@@ -105,11 +109,19 @@ final class StopwatchCenter: ObservableObject {
             else { continue }
             let timestamp = now()
             // Stopped chips linger an hour so their final reading can be seen
-            // (and dismissed); older ones are dropped. Running ones always
-            // survive — they keep counting from their original start.
-            stopwatches = stored.filter { stopwatch in
-                guard let stoppedAt = stopwatch.stoppedAt else { return true }
-                return timestamp.timeIntervalSince(stoppedAt) < 60 * 60
+            // (and dismissed); older ones are dropped. Running ones older than
+            // maxRunningAge are auto-stopped at their expiry rather than
+            // counting up indefinitely.
+            stopwatches = stored.compactMap { stopwatch in
+                if let stoppedAt = stopwatch.stoppedAt {
+                    return timestamp.timeIntervalSince(stoppedAt) < 60 * 60 ? stopwatch : nil
+                }
+                guard timestamp.timeIntervalSince(stopwatch.startedAt) < Self.maxRunningAge else {
+                    var expired = stopwatch
+                    expired.stoppedAt = stopwatch.startedAt.addingTimeInterval(Self.maxRunningAge)
+                    return expired
+                }
+                return stopwatch
             }
             return
         }

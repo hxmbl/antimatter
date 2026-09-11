@@ -92,9 +92,17 @@ enum DeepLinkRouter {
             }
         case .showSettings:
             (NSApplication.shared.delegate as? AppDelegate)?.openSettings(nil)
+        case .showHelp:
+            NoticeCenter.shared.show("Open the pane and type .help")
+        case .showDebug:
+            NoticeCenter.shared.show("Open the pane and type .debug")
+        case .showFindPanel:
+            NoticeCenter.shared.show("Open the pane and press Cmd+F")
+        case .replaceAll:
+            NoticeCenter.shared.show("Use .replace from inside the pane")
         case .hint(let message), .rewriteLine(let message):
             NoticeCenter.shared.show(message)
-        case .nothing, .rewriteCalculation, .insertAggregate, .showHelp, .showDebug, .showFindPanel, .replaceAll:
+        case .nothing, .rewriteCalculation, .insertAggregate:
             break
         }
     }

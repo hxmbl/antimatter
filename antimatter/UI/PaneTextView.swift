@@ -401,13 +401,21 @@ final class PaneTextView: NSTextView {
             if !dismissActiveDotcommands() { cancelOperation(nil) }
             return
         }
-        if event.modifierFlags.contains(.command) {
-            switch event.charactersIgnoringModifiers {
-            case "b": toggleBold(); return
-            case "i": toggleItalic(); return
-            case "u": toggleUnderline(); return
-            default: break
+        // ⌥⌘↑/⌥⌘↓ reorder the caret's line (the Xcode convention); plain
+        // ⌥↑/⌥↓ stay with the text system's paragraph navigation.
+        if event.modifierFlags.contains([.command, .option]),
+           event.keyCode == kVK_UpArrow || event.keyCode == kVK_DownArrow {
+            let oldLocation = selectedRange().location
+            let oldRect = caretRect(for: oldLocation)
+            if event.keyCode == kVK_UpArrow { moveLineUp() } else { moveLineDown() }
+            if selectedRange().length == 0 {
+                startCaretGlide(
+                    from: oldLocation,
+                    to: selectedRange().location,
+                    from: oldRect.isEmpty ? nil : oldRect
+                )
             }
+            return
         }
 
         let shouldAnimateCaret = [51, 115, 117, 119, 123, 124, 125, 126].contains(event.keyCode)
@@ -463,23 +471,7 @@ final class PaneTextView: NSTextView {
         return super.resignFirstResponder()
     }
 
-    // MARK: Line reordering (Option+Up/Down)
-
-    override func moveUp(_ sender: Any?) {
-        if NSEvent.modifierFlags.contains(.option) {
-            moveLineUp()
-            return
-        }
-        super.moveUp(sender)
-    }
-
-    override func moveDown(_ sender: Any?) {
-        if NSEvent.modifierFlags.contains(.option) {
-            moveLineDown()
-            return
-        }
-        super.moveDown(sender)
-    }
+    // MARK: Line reordering (⌥⌘↑/⌥⌘↓)
 
     private func moveLineUp() {
         guard let textStorage = textStorage else { return }
@@ -491,10 +483,10 @@ final class PaneTextView: NSTextView {
         let lines = swiftText.components(separatedBy: "\n")
 
         var charCount = 0
-        var currentLineIndex = 0
+        var currentLineIndex = lines.count - 1
         for (i, line) in lines.enumerated() {
             let lineLen = (line as NSString).length
-            if charCount + lineLen >= cursorLocation {
+            if cursorLocation < charCount + lineLen {
                 currentLineIndex = i
                 break
             }
@@ -531,10 +523,10 @@ final class PaneTextView: NSTextView {
         guard lines.count > 1 else { return }
 
         var charCount = 0
-        var currentLineIndex = 0
+        var currentLineIndex = lines.count - 1
         for (i, line) in lines.enumerated() {
             let lineLen = (line as NSString).length
-            if charCount + lineLen >= cursorLocation {
+            if cursorLocation < charCount + lineLen {
                 currentLineIndex = i
                 break
             }
@@ -558,43 +550,6 @@ final class PaneTextView: NSTextView {
         setSelectedRange(NSRange(location: min((newString as NSString).length, newCursorLocation), length: 0))
         delegate?.textDidChange?(Notification(name: NSText.didChangeNotification, object: self))
         undoManager?.endUndoGrouping()
-    }
-
-
-    // MARK: Formatting shortcuts
-
-    private func toggleBold() { toggleMarker("**") }
-    private func toggleItalic() { toggleMarker("*") }
-    private func toggleUnderline() { toggleMarker("__") }
-
-    private func toggleMarker(_ marker: String) {
-        guard let textStorage = textStorage else { return }
-        let range = selectedRange()
-        let fullText = textStorage.string as NSString
-
-        let replacement: String
-        let newSelection: NSRange
-        if range.length > 0 {
-            let selectedText = fullText.substring(with: range)
-            if selectedText.hasPrefix(marker) && selectedText.hasSuffix(marker) && selectedText.count > marker.count * 2 {
-                let inner = String(selectedText.dropFirst(marker.count).dropLast(marker.count))
-                replacement = inner
-                newSelection = NSRange(location: range.location, length: (inner as NSString).length)
-            } else {
-                replacement = "\(marker)\(selectedText)\(marker)"
-                newSelection = NSRange(location: range.location + marker.count, length: (selectedText as NSString).length)
-                caretDisplayLink?.invalidate()
-            }
-        } else {
-            replacement = "\(marker)\(marker)"
-            newSelection = NSRange(location: range.location + marker.count, length: 0)
-        }
-
-        if shouldChangeText(in: range, replacementString: replacement) {
-            textStorage.replaceCharacters(in: range, with: replacement)
-            didChangeText()
-        }
-        setSelectedRange(newSelection)
     }
 
     // MARK: Auto markdown link on paste

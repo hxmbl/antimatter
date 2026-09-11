@@ -15,9 +15,10 @@ struct FooterStatus: Equatable {
 struct PaneEditor: NSViewRepresentable {
     @Binding var text: String
     @Binding var status: FooterStatus
+    var noteStore: NoteStore
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, status: $status)
+        Coordinator(text: $text, status: $status, noteStore: noteStore)
     }
 
     func makeNSView(context: Context) -> OverlayScrollView {
@@ -144,6 +145,7 @@ struct PaneEditor: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var text: Binding<String>
         var status: Binding<FooterStatus>
+        let noteStore: NoteStore
         let highlighter = MarkdownHighlighter()
         private var deferredPassTask: Task<Void, Never>?
         private var pendingRender: DispatchWorkItem?
@@ -165,9 +167,10 @@ struct PaneEditor: NSViewRepresentable {
         )
         weak var ownedTextView: PaneTextView?
 
-        init(text: Binding<String>, status: Binding<FooterStatus>) {
+        init(text: Binding<String>, status: Binding<FooterStatus>, noteStore: NoteStore) {
             self.text = text
             self.status = status
+            self.noteStore = noteStore
             super.init()
         }
 
@@ -361,7 +364,7 @@ struct PaneEditor: NSViewRepresentable {
             case .startPasteStream:
                 PasteStream.shared.startStreaming()
             case .newNote:
-                NoteStore.shared.create()
+                noteStore.create()
                 return true
             case .export(let destination):
                 exportNote(to: destination)
@@ -458,37 +461,13 @@ struct PaneEditor: NSViewRepresentable {
             let text = textView.string
             let words = text.split(separator: /\s+/).count
             let chars = text.count
-            let ease = Self.fleschKincaidEase(text)
+            let ease = ReadingMetrics.fleschKincaidEase(text)
             status.wrappedValue = FooterStatus(
                 preview: IntentExecution.preview(forLine: line, in: textView.string) ?? "",
                 answerToCopy: IntentExecution.answer(fromLine: line),
                 wordCount: words,
                 charCount: chars,
                 readingEase: ease)
-        }
-
-        private static func fleschKincaidEase(_ text: String) -> Double {
-            guard !text.isEmpty else { return 0 }
-            let sentences = text.components(separatedBy: CharacterSet(charactersIn: ".!?")).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count
-            let words = text.split(separator: /\s+/)
-            let syllables = words.reduce(0) { $0 + Self.countSyllables(String($1)) }
-            guard sentences > 0, !words.isEmpty else { return 0 }
-            let score = 206.835 - 1.015 * (Double(words.count) / Double(sentences)) - 84.6 * (Double(syllables) / Double(words.count))
-            return max(0, min(100, score))
-        }
-
-        private static func countSyllables(_ word: String) -> Int {
-            let vowels = "aeiouy"
-            let lowered = word.lowercased()
-            var count = 0
-            var prevVowel = false
-            for char in lowered {
-                let isVowel = vowels.contains(char)
-                if isVowel && !prevVowel { count += 1 }
-                prevVowel = isVowel
-            }
-            if lowered.hasSuffix("e") && count > 1 { count -= 1 }
-            return max(1, count)
         }
 
         // MARK: Dot-command autocompletion
