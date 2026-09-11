@@ -59,7 +59,7 @@ struct PaneEditor: NSViewRepresentable {
             coordinator?.recognizeAndInsert(image)
         }
         textView.onHelpKeyDown = { [weak coordinator = context.coordinator] event in
-            coordinator?.handleHelpViewKey(event) ?? false
+            coordinator?.referenceViewManager.handleKey(event) ?? false
         }
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
@@ -100,7 +100,7 @@ struct PaneEditor: NSViewRepresentable {
         // chips, notices, settings) must not clobber it back to the note —
         // and a settings-side font change must not restyle the reference
         // text either, which re-rendering it as Markdown would do.
-        guard !context.coordinator.isInHelpView else { return }
+        guard !context.coordinator.referenceViewManager.isInHelpView else { return }
         // A settings-side font change arrives as a plain re-render.
         context.coordinator.applyFontSizeIfChanged(to: textView)
         guard textView.string != text else { return }
@@ -158,16 +158,11 @@ struct PaneEditor: NSViewRepresentable {
         /// the window follows further typing on its own, so re-calling
         /// `complete(_:)` would only close and re-open it.
         private var completionAnchor: Int?
-        /// True while the pane shows a full-screen reference (`.help`,
-        /// `.debug`) — a less-like view. Typing is swallowed; `j`/`k` scroll,
-        /// `q` or Escape restores the note. The editor keeps its binding
-        /// untouched so the note survives.
-        var isInHelpView = false
-        /// The note text, caret, and editor configuration restored when
-        /// leaving the reference view.
-        private var helpSnapshot: (text: String, selection: NSRange, font: NSFont, isHorizontallyResizable: Bool, widthTracksTextView: Bool, containerSize: NSSize)?
-        /// The text view hosting the reference, so `q`/Escape can restore it.
-        private weak var helpTextView: NSTextView?
+        lazy var referenceViewManager: ReferenceViewManager = ReferenceViewManager(
+            highlighter: highlighter,
+            status: status,
+            updateFooterStatus: { [weak self] textView in self?.updateFooterStatus(textView) }
+        )
         weak var ownedTextView: PaneTextView?
 
         init(text: Binding<String>, status: Binding<FooterStatus>) {
@@ -220,7 +215,7 @@ struct PaneEditor: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             highlighter.refresh(textView)
-            guard !isInHelpView else { return }
+            guard !referenceViewManager.isInHelpView else { return }
             scheduleStatusUpdate(textView)
         }
 
@@ -228,7 +223,7 @@ struct PaneEditor: NSViewRepresentable {
         /// deliberately disabled so ordinary hyphens, flags, and pasted text
         /// never turn into unexpected Unicode characters.
         func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
-            guard !isInHelpView else { return true }
+            guard !referenceViewManager.isInHelpView else { return true }
             if let replacement = replacementString, replacement == "\n" {
                 let ns = textView.string as NSString
                 var lineStart = 0, lineEnd = 0, contentsEnd = 0
@@ -250,7 +245,7 @@ struct PaneEditor: NSViewRepresentable {
         /// before the newline lands. The newline is never consumed unless
         /// the intent took over the buffer (`.help` opens the reference).
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-            guard !isInHelpView else {
+            guard !referenceViewManager.isInHelpView else {
                 // Read-only reference view: navigation still scrolls the
                 // help text, every other command key is swallowed.
                 let name = NSStringFromSelector(commandSelector)
@@ -368,12 +363,12 @@ struct PaneEditor: NSViewRepresentable {
             case .export(let destination):
                 exportNote(to: destination)
             case .showHelp:
-                enterReferenceView(textView, content: IntentExecution.helpText)
+                referenceViewManager.enter(textView, content: IntentExecution.helpText)
                 return true
             case .showSettings:
                 (NSApplication.shared.delegate as? AppDelegate)?.openSettings(nil)
             case .showDebug:
-                enterReferenceView(textView, content: debugReport())
+                referenceViewManager.enter(textView, content: DebugReport.generate())
                 return true
             case .showFindPanel:
                 let item = NSMenuItem()
@@ -403,7 +398,7 @@ struct PaneEditor: NSViewRepresentable {
         /// `.export`: send the whole note somewhere local. Reuses the same
         /// text the note owns; no network involved.
         private func exportNote(to destination: ExportDestination) {
-            guard !isInHelpView else { return }
+            guard !referenceViewManager.isInHelpView else { return }
             do {
                 let outcome = try ExportCenter.export(destination, text: text.wrappedValue)
                 NoticeCenter.shared.show(outcome)
@@ -451,7 +446,7 @@ struct PaneEditor: NSViewRepresentable {
         /// Live footer: preview what return would do on the caret line, and
         /// offer the committed answer for copying. Suppressed in help view.
         private func updateFooterStatus(_ textView: NSTextView) {
-            guard !isInHelpView else { return }
+            guard !referenceViewManager.isInHelpView else { return }
             guard let contentRange = caretLineRange(in: textView) else {
                 status.wrappedValue = FooterStatus()
                 return
@@ -491,145 +486,6 @@ struct PaneEditor: NSViewRepresentable {
             }
             if lowered.hasSuffix("e") && count > 1 { count -= 1 }
             return max(1, count)
-        }
-
-        // MARK: Full-screen reference view (help / debug)
-
-        /// Enter a full-screen reference block (`.help`, `.debug`): the note
-        /// and its editor configuration are stashed, the content takes the
-        /// whole buffer, and keystrokes are swallowed except navigation and
-        /// `q`/Escape.
-        private func enterReferenceView(_ textView: NSTextView, content: String) {
-            let container = textView.textContainer
-            helpSnapshot = (
-                textView.string,
-                textView.selectedRange(),
-                textView.font ?? .systemFont(ofSize: PaneStyle.fontSize),
-                textView.isHorizontallyResizable,
-                container?.widthTracksTextView ?? false,
-                container?.containerSize ?? .zero
-            )
-            helpTextView = textView
-            isInHelpView = true
-
-            // Table-like read-out: monospaced, and each logical line is its
-            // own row — never wrapped, so a run-on line can't slip under the
-            // following title.
-            let mono = NSFont.monospacedSystemFont(ofSize: PaneStyle.fontSize, weight: .regular)
-            textView.font = mono
-            textView.isHorizontallyResizable = true
-            textView.autoresizingMask = []
-            textView.textContainer?.widthTracksTextView = false
-            textView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-            textView.string = content
-            textView.textStorage?.setAttributes([
-                .font: mono,
-                .foregroundColor: PaneStyle.textNSColor,
-            ], range: NSRange(location: 0, length: (content as NSString).length))
-            textView.setSelectedRange(NSRange(location: 0, length: 0))
-            textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
-            textView.window?.makeFirstResponder(textView)
-            status.wrappedValue = FooterStatus(preview: "q to close · j/k scroll", answerToCopy: nil)
-        }
-
-        /// Restore the stashed note and normal editing.
-        private func exitReferenceView() {
-            guard isInHelpView,
-                  let textView = helpTextView,
-                  let snapshot = helpSnapshot
-            else { return }
-            isInHelpView = false
-            helpSnapshot = nil
-            helpTextView = nil
-            textView.breakUndoCoalescing()
-            textView.string = snapshot.text
-            textView.autoresizingMask = [.width]
-            textView.isHorizontallyResizable = snapshot.isHorizontallyResizable
-            textView.textContainer?.widthTracksTextView = snapshot.widthTracksTextView
-            textView.textContainer?.containerSize = snapshot.containerSize
-            textView.font = snapshot.font
-            highlighter.render(textView)
-            textView.setSelectedRange(snapshot.selection)
-            textView.window?.makeFirstResponder(textView)
-            updateFooterStatus(textView)
-        }
-
-        /// Keystroke swallowed by the full-screen reference view. `j`/`k`,
-        /// Page keys, and space/b/g/G scroll; arrows, Page Up/Down, Home/End
-        /// and system shortcuts (⌘/⌃) pass through; `q` and Escape close.
-        func handleHelpViewKey(_ event: NSEvent) -> Bool {
-            guard isInHelpView, let textView = helpTextView else { return false }
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            // System keys pass through: ⌘F still searches, ⌘Q still quits.
-            if flags.contains(.command) || flags.contains(.control) { return false }
-            // Escape: close the reference (instead of hiding the pane).
-            if event.keyCode == 53 { exitReferenceView(); return true }
-            guard let characters = event.charactersIgnoringModifiers else { return true }
-            switch characters {
-            case "q", "Q":
-                exitReferenceView()
-                return true
-            case "j": textView.scrollLineDown(nil); return true
-            case "k": textView.scrollLineUp(nil); return true
-            case " ", "f": textView.scrollPageDown(nil); return true
-            case "b": textView.scrollPageUp(nil); return true
-            case "g": textView.scrollToBeginningOfDocument(nil); return true
-            case "G": textView.scrollToEndOfDocument(nil); return true
-            default: break
-            }
-            // Arrow / Page Up / Page Down / Home / End still scroll the
-            // reference text via native responder navigation.
-            let navKeyCodes: Set<UInt16> = [115, 116, 119, 121, 123, 124, 125, 126]
-            if navKeyCodes.contains(event.keyCode) { return false }
-            // Everything else is consumed so it never modifies the reference.
-            return true
-        }
-
-        /// A live diagnostics + recent-event report for `.debug`.
-        private func debugReport() -> String {
-            var out: [String] = []
-            out.append("Antimatter — debug")
-            out.append("")
-            let fileURL = StorageLocation.directory(named: "notes").appendingPathComponent("notes.json")
-            out.append("notes:   \(fileURL.path) (\(NoteStore.shared.notes.count))")
-            let active = NoteStore.shared.activeNote
-            if !active.title.isEmpty {
-                out.append("active:  \(active.title)")
-            } else {
-                out.append("active:  <empty note>")
-            }
-            if let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) {
-                out.append("         \(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))")
-            }
-            out.append("font:    \(PaneStyle.fontSize)pt")
-            let timers = TimerCenter.shared.timers
-            if timers.isEmpty {
-                out.append("timers:  none")
-            } else {
-                out.append("timers:  \(timers.count)")
-                for timer in timers {
-                    out.append("         • \(timer.label.isEmpty ? "unlabelled" : timer.label) · \(TimerCenter.format(timer.duration))")
-                }
-            }
-            let reminders = ReminderCenter.shared.reminders
-            if reminders.isEmpty {
-                out.append("remind:  none")
-            } else {
-                out.append("remind:  \(reminders.count)")
-                for reminder in reminders {
-                    out.append("         • \(reminder.message) · \(ReminderCenter.format(reminder.date.timeIntervalSinceNow))")
-                }
-            }
-            out.append("paste:   \(PasteStream.shared.isStreaming ? "streaming" : "idle")")
-            out.append("")
-            let logLines = DebugLog.shared.lines
-            out.append("log (\(logLines.count)):")
-            if logLines.isEmpty {
-                out.append("         (nothing captured yet)")
-            } else {
-                out.append(contentsOf: logLines.map { "         \($0)" })
-            }
-            return out.joined(separator: "\n")
         }
 
         // MARK: Dot-command autocompletion
