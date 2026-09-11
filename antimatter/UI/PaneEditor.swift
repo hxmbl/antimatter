@@ -244,7 +244,6 @@ struct PaneEditor: NSViewRepresentable {
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
-            highlighter.refresh(textView)
             guard !referenceViewManager.isInHelpView else { return }
             scheduleStatusUpdate(textView)
         }

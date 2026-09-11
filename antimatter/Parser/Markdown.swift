@@ -27,6 +27,7 @@ enum Markdown {
             case taskMarker(done: Bool)
             case taskBody(done: Bool)
             case hr
+            case tableRow
             case tableHeader
             case tableCell(alignment: TableAlignment)
             case tablePipe
@@ -62,6 +63,12 @@ enum Markdown {
             case center
             case right
         }
+        // `TableAlignment` is parsed for parity with GFM (the divider's
+        // `:---:` / `---:` markers) but is display-inert in the pane:
+        // NSTextView styles whole lines, so a column's glyphs cannot be
+        // reflowed. The pane keeps the source's horizontal layout (monospaced
+        // cells, author-padded columns). The value is kept so a future
+        // real-table renderer can consume it without re-parsing.
 
         let kind: Kind
         let range: NSRange
@@ -137,6 +144,7 @@ enum Markdown {
                isDividerRow(lines[i + 1], in: text) {
                 let alignments = tableAlignments(lines[i + 1], in: text)
                 emitTableRow(lines[i], header: true, alignments: alignments, in: text, into: &elements)
+                elements.append(.init(kind: .tableRow, range: NSRange(lines[i + 1], in: text)))
                 elements.append(.init(kind: .marker, range: NSRange(lines[i + 1], in: text)))
                 i += 2
                 while i < lines.count, isTableRow(lines[i], in: text) {
@@ -505,7 +513,10 @@ enum Markdown {
         into out: inout [Element]
     ) {
         if header {
+            out.append(Element(kind: .tableRow, range: NSRange(line, in: text)))
             out.append(Element(kind: .tableHeader, range: NSRange(line, in: text)))
+        } else {
+            out.append(Element(kind: .tableRow, range: NSRange(line, in: text)))
         }
         var i = line.lowerBound
         while i < line.upperBound {
@@ -600,8 +611,8 @@ enum Markdown {
                 }
             case "*":
                 let next = text.index(after: i)
-                let third = text.index(after: next)
-                if third < range.upperBound,
+                let third = next < range.upperBound ? text.index(after: next) : next
+                if next < range.upperBound, third < range.upperBound,
                    text[next] == "*",
                    text[third] == "*" {
                     if let end = readSpan("*", count: 3, from: i, limit: range.upperBound, kind: .strongEmphasis, inclusive: false, text: text, into: &out) {
@@ -623,8 +634,8 @@ enum Markdown {
                 }
             case "_":
                 let next = text.index(after: i)
-                let third = text.index(after: next)
-                if third < range.upperBound,
+                let third = next < range.upperBound ? text.index(after: next) : next
+                if next < range.upperBound, third < range.upperBound,
                    text[next] == "_",
                    text[third] == "_" {
                     if let end = readSpan("_", count: 3, from: i, limit: range.upperBound, kind: .strongEmphasis, inclusive: false, text: text, into: &out) {

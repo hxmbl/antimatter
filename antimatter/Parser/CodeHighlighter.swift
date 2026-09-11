@@ -338,10 +338,60 @@ enum CodeHighlighter {
         }
     }
 
-    private static let keywordColor = NSColor.systemPurple
-    private static let stringColor = NSColor.systemGreen
-    private static let commentColor = PaneStyle.secondaryTextNSColor
-    private static let numberColor = NSColor.systemOrange
+    // MARK: - Theme
+
+    /// More colorful, Xcode/GitHub-inspired palette with distinct hues for
+    /// keywords, types, strings, numbers, literals and functions. Adapts
+    /// to light / dark appearance so contrast stays comfortable.
+    private static var isDark: Bool {
+        NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    }
+
+    private static var keywordColor: NSColor {
+        isDark ? NSColor(hex: "#FF7AB2") : NSColor(hex: "#AF00DB")
+    }
+    private static var stringColor: NSColor {
+        isDark ? NSColor(hex: "#C3E88D") : NSColor(hex: "#C41A16")
+    }
+    private static var commentColor: NSColor {
+        isDark ? NSColor(hex: "#7A7F98") : NSColor(hex: "#6E7781")
+    }
+    private static var numberColor: NSColor {
+        isDark ? NSColor(hex: "#F78C6C") : NSColor(hex: "#098658")
+    }
+    private static var typeColor: NSColor {
+        isDark ? NSColor(hex: "#82AAFF") : NSColor(hex: "#0550AE")
+    }
+    private static var literalColor: NSColor {
+        isDark ? NSColor(hex: "#C792EA") : NSColor(hex: "#CF222E")
+    }
+    private static var functionColor: NSColor {
+        isDark ? NSColor(hex: "#FFCB6B") : NSColor(hex: "#8250DF")
+    }
+
+    private static let literals: Set<String> = [
+        "true", "false", "nil", "null", "none", "NULL", "Nil", "None",
+        "yes", "no", "on", "off", "YES", "NO"
+    ]
+
+    private static let typeKeywords: Set<String> = [
+        "int", "int8", "int16", "int32", "int64",
+        "uint", "uint8", "uint16", "uint32", "uint64",
+        "float", "float32", "float64", "double", "decimal", "number",
+        "string", "char", "bool", "boolean", "byte", "rune",
+        "void", "any", "object", "array", "list", "dict", "map", "set",
+        "tuple", "char8_t", "char16_t", "char32_t", "wchar_t",
+        "size_t", "ptrdiff_t", "int8_t", "int16_t", "int32_t", "int64_t",
+        "uint8_t", "uint16_t", "uint32_t", "uint64_t",
+        "i8", "i16", "i32", "i64", "i128", "isize",
+        "u8", "u16", "u32", "u64", "u128", "usize",
+        "f32", "f64", "str", "string", "vec", "hashmap", "hashset",
+        "date", "time", "datetime", "timestamp", "text", "blob",
+        "integer", "bigint", "smallint", "numeric", "real",
+        // Swift / ObjC bridged
+        "int", "string", "double", "float", "bool", "array", "dictionary",
+        "optional", "result", "error", "instancetype",
+    ]
 
     static func highlight(code: String, language: String?, baseFont: NSFont) -> NSAttributedString {
         let highlighted = NSMutableAttributedString(string: code)
@@ -442,11 +492,23 @@ if let start = def.blockCommentStart,
                 continue
             }
 
-            // Keywords
+            // Keywords / types / literals / functions — richer palette
             if let wordEnd = findWordEnd(at: i, in: nsCode, length: length) {
                 let word = nsCode.substring(with: NSRange(location: i, length: wordEnd - i))
-                if def.keywords.contains(word) || def.keywords.contains(word.lowercased()) {
-                    highlighted.addAttribute(.foregroundColor, value: keywordColor, range: NSRange(location: i, length: wordEnd - i))
+                let lower = word.lowercased()
+                let range = NSRange(location: i, length: wordEnd - i)
+                if literals.contains(word) || literals.contains(lower) {
+                    highlighted.addAttribute(.foregroundColor, value: literalColor, range: range)
+                } else if typeKeywords.contains(lower) {
+                    highlighted.addAttribute(.foregroundColor, value: typeColor, range: range)
+                } else if isFunctionCall(at: wordEnd, in: nsCode, length: length) {
+                    // Function / method call — `foo(` — distinct from keywords
+                    highlighted.addAttribute(.foregroundColor, value: functionColor, range: range)
+                } else if def.keywords.contains(word) || def.keywords.contains(lower) {
+                    highlighted.addAttribute(.foregroundColor, value: keywordColor, range: range)
+                } else if let first = word.unicodeScalars.first, CharacterSet.uppercaseLetters.contains(first) {
+                    // Capitalised identifier likely a type / class / constructor
+                    highlighted.addAttribute(.foregroundColor, value: typeColor, range: range)
                 }
                 i = wordEnd
                 continue
@@ -532,5 +594,19 @@ if let start = def.blockCommentStart,
             }
         }
         return i
+    }
+
+    private static func isFunctionCall(at index: Int, in nsCode: NSString, length: Int) -> Bool {
+        var j = index
+        while j < length {
+            let c = nsCode.character(at: j)
+            if c == 32 || c == 9 || c == 10 || c == 13 { // space, tab, newline
+                j += 1
+                continue
+            }
+            break
+        }
+        guard j < length else { return false }
+        return nsCode.character(at: j) == 40 // '('
     }
 }

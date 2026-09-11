@@ -18,6 +18,13 @@ struct MarkdownTests {
         #expect(elements.contains { $0.kind == .highlight })
     }
 
+    @Test func openingInlineMarkersAreSafeDuringIncrementalTyping() {
+        for marker in ["*", "_", "~"] {
+            #expect(parse(marker).isEmpty)
+            #expect(parse("text" + marker).isEmpty)
+        }
+    }
+
     @Test func nestedOrderedListsAreRecognised() {
         #expect(parse("1. top").contains { $0.kind == .listItem(level: 0) })
         #expect(parse("  1. nested").contains { $0.kind == .listItem(level: 1) })
@@ -574,8 +581,14 @@ struct MarkdownHighlightTests {
         )
         let stringColor = highlighted.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
         let closingColor = highlighted.attribute(.foregroundColor, at: 17, effectiveRange: nil) as? NSColor
-        #expect(stringColor == NSColor.systemGreen)
-        #expect(closingColor == NSColor.systemGreen)
+        // String highlighting now uses the richer theme (hex-based, adapts to light/dark)
+        // rather than the flat systemGreen. Verify both ends share the same string color
+        // and that it is distinct from the default text color.
+        #expect(stringColor != nil)
+        #expect(closingColor != nil)
+        #expect(stringColor == closingColor)
+        #expect(stringColor != PaneStyle.textNSColor)
+        #expect(stringColor != NSColor.secondaryLabelColor)
     }
 }
 

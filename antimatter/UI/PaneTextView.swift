@@ -132,6 +132,11 @@ final class PaneTextView: NSTextView {
         NSBezierPath(roundedRect: rect, xRadius: 1, yRadius: 1).fill()
     }
 
+    override func didChangeText() {
+        clearCaretGlide()
+        super.didChangeText()
+    }
+
     /// The pane always builds its own text view with defaults.
     convenience init() {
         self.init(frame: .zero, textContainer: nil)
@@ -450,7 +455,7 @@ final class PaneTextView: NSTextView {
             return
         }
 
-        let shouldAnimateCaret = [51, 115, 117, 119, 123, 124, 125, 126].contains(event.keyCode)
+        let shouldAnimateCaret = [115, 119, 123, 124, 125, 126].contains(event.keyCode)
         if !shouldAnimateCaret {
             clearCaretGlide()
         }

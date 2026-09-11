@@ -38,6 +38,14 @@ final class MarkdownHighlighter {
         self.source = text
         self.elements = elements
         
+        // Table cells re-style their inline spans in the cell's monospaced
+        // face (see `inlineFont` below), so cell range lookup is needed during
+        // the style pass. Ranges are emitted in document order.
+        let cellRanges = elements.compactMap { element -> NSRange? in
+            guard case .tableCell = element.kind else { return nil }
+            return element.range
+        }
+
         // First pass: apply all Markdown styling
         for element in elements {
             switch element.kind {
@@ -56,16 +64,19 @@ final class MarkdownHighlighter {
                 storage.addAttribute(.backgroundColor, value: NSColor.quaternarySystemFill, range: range)
             case .language, .marker, .hr, .tablePipe, .taskMarker:
                 storage.addAttribute(.foregroundColor, value: PaneStyle.secondaryTextNSColor, range: element.range)
+            case .tableRow:
+                // The whole row shares one monospaced face — pipes, padding
+                // spaces, and dashes included — so the column widths an author
+                // bakes into the source with spaces stay visually straight.
+                storage.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: baseSize, weight: .regular), range: element.range)
             case .tableCell(let alignment):
-                let paragraph = paragraphStyle()
-                paragraph.alignment = {
-                    switch alignment {
-                    case .left: .left
-                    case .center: .center
-                    case .right: .right
-                    }
-                }()
-                storage.addAttribute(.paragraphStyle, value: paragraph, range: element.range)
+                // `alignment` is parsed (left/center/right from the divider's
+                // `:---:` markers) but display-inert: NSTextView applies one
+                // paragraph style per line, never per cell, so a column's
+                // markers cannot make its glyphs reflow. Future table renderers
+                // can consume it; the pane keeps columns where the source put
+                // them (monospaced, padded by the author).
+                _ = alignment
                 storage.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: baseSize, weight: .regular), range: element.range)
                 storage.addAttribute(.backgroundColor, value: NSColor.quaternarySystemFill, range: element.range)
             case .taskBody(let done):
@@ -74,15 +85,14 @@ final class MarkdownHighlighter {
                     storage.addAttribute(.foregroundColor, value: PaneStyle.secondaryTextNSColor, range: element.range)
                 }
             case .tableHeader:
-                storage.addAttribute(.font, value: NSFont.boldSystemFont(ofSize: baseSize), range: element.range)
+                storage.addAttribute(.font, value: Self.monospacedFont(ofSize: baseSize, weight: .bold), range: element.range)
                 storage.addAttribute(.backgroundColor, value: NSColor.tertiarySystemFill, range: element.range)
             case .strong:
-                storage.addAttribute(.font, value: NSFont.boldSystemFont(ofSize: contentFontSize(of: element, headings: headings, base: baseSize)), range: element.range)
+                storage.addAttribute(.font, value: inlineFont(for: element, cells: cellRanges, headings: headings, base: baseSize, trait: .bold), range: element.range)
             case .emphasis:
-                storage.addAttribute(.font, value: italicFont(ofSize: contentFontSize(of: element, headings: headings, base: baseSize)), range: element.range)
+                storage.addAttribute(.font, value: inlineFont(for: element, cells: cellRanges, headings: headings, base: baseSize, trait: .italic), range: element.range)
             case .strongEmphasis:
-                let bold = NSFont.boldSystemFont(ofSize: contentFontSize(of: element, headings: headings, base: baseSize))
-                storage.addAttribute(.font, value: NSFontManager.shared.convert(bold, toHaveTrait: .italicFontMask), range: element.range)
+                storage.addAttribute(.font, value: inlineFont(for: element, cells: cellRanges, headings: headings, base: baseSize, trait: .boldItalic), range: element.range)
             case .code:
                 storage.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: baseSize - 1, weight: .regular), range: element.range)
                 storage.addAttribute(.backgroundColor, value: NSColor.quaternarySystemFill, range: element.range)
@@ -123,7 +133,7 @@ final class MarkdownHighlighter {
         // re-apply header weight after cells have established their fonts.
         for element in elements {
             if case .tableHeader = element.kind {
-                storage.addAttribute(.font, value: NSFont.boldSystemFont(ofSize: baseSize), range: element.range)
+                storage.addAttribute(.font, value: Self.monospacedFont(ofSize: baseSize, weight: .bold), range: element.range)
                 storage.addAttribute(.backgroundColor, value: NSColor.tertiarySystemFill, range: element.range)
             }
         }
@@ -131,6 +141,13 @@ final class MarkdownHighlighter {
         // Second pass: apply syntax highlighting to code blocks with language identifiers
         applyCodeHighlighting(to: storage, text: text, elements: elements, baseSize: baseSize)
         storage.endEditing()
+        // Resolve the new line fragments before restoring the selection. Without
+        // this, AppKit can draw one frame using the pre-render line geometry,
+        // making the native insertion point briefly appear on the line above
+        // while the full-document attributes settle.
+        if let textContainer = textView.textContainer {
+            textView.layoutManager?.ensureLayout(for: textContainer)
+        }
         textView.typingAttributes = typingAttributes
         textView.selectedRanges = selectedRanges
     }
@@ -178,6 +195,46 @@ final class MarkdownHighlighter {
 
     private func italicFont(ofSize size: CGFloat) -> NSFont {
         NSFontManager.shared.convert(NSFont.systemFont(ofSize: size), toHaveTrait: .italicFontMask)
+    }
+
+    private enum InlineTrait {
+        case bold
+        case italic
+        case boldItalic
+    }
+
+    private static func monospacedFont(ofSize size: CGFloat, weight: NSFont.Weight) -> NSFont {
+        NSFont.monospacedSystemFont(ofSize: size, weight: weight)
+    }
+
+    private func inlineFont(
+        for element: Markdown.Element,
+        cells: [NSRange],
+        headings: [Heading],
+        base: CGFloat,
+        trait: InlineTrait
+    ) -> NSFont {
+        let size = contentFontSize(of: element, headings: headings, base: base)
+        let inTableCell = cells.contains { NSLocationInRange(element.range.location, $0) }
+        let font: NSFont
+
+        if inTableCell {
+            let weight: NSFont.Weight = trait == .bold || trait == .boldItalic ? .bold : .regular
+            font = Self.monospacedFont(ofSize: size, weight: weight)
+        } else {
+            switch trait {
+            case .bold:
+                font = NSFont.boldSystemFont(ofSize: size)
+            case .italic:
+                font = italicFont(ofSize: size)
+            case .boldItalic:
+                let bold = NSFont.boldSystemFont(ofSize: size)
+                font = NSFontManager.shared.convert(bold, toHaveTrait: .italicFontMask)
+            }
+        }
+
+        guard trait == .italic || trait == .boldItalic, inTableCell else { return font }
+        return NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
     }
 
     // MARK: Paragraph style
