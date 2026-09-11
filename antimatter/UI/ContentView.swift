@@ -15,6 +15,7 @@ struct ContentView: View {
     @AppStorage("pane.themeID") private var themeIDObservation = "default"
     @AppStorage("appearance") private var appearanceObservation = "system"
     @State private var footer = FooterStatus()
+    @State private var sidebarOpen = false
 
     /// Dock mode runs as a regular window whose own title bar frames the
     /// content, so the theme fills the whole window instead of floating as a
@@ -27,6 +28,9 @@ struct ContentView: View {
 
     var body: some View {
         PaneEditor(text: noteStore.activeText, status: $footer)
+            .onTapGesture {
+                sidebarOpen = false
+            }
             .padding(.top, topInset)
             .padding(.leading, horizontalInset)
             .padding(.trailing, horizontalInset)
@@ -37,11 +41,18 @@ struct ContentView: View {
             .overlay(alignment: .topTrailing) { CaptureStrip().padding(.trailing, 10) }
             .overlay(alignment: .bottomLeading) { SaveErrorHint(error: noteStore.saveError, token: noteStore.saveErrorToken).padding(.leading, PaneStyle.padding) }
             .overlay(alignment: .bottom) {
-                PaneFooter(status: footer)
+                PaneFooter(status: footer, sidebarOpen: $sidebarOpen)
                     .padding(.horizontal, PaneStyle.padding)
                     .padding(.bottom, 7)
             }
             .overlay(WindowDragEdge())
+            .overlay(alignment: .leading) {
+                if sidebarOpen {
+                    SidebarView(isOpen: $sidebarOpen)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                        .animation(.easeInOut(duration: 0.15), value: sidebarOpen)
+                }
+            }
             .background(WindowConfigurator())
         .background(HotKeyWindowBridge())
             .gesture(
@@ -377,6 +388,7 @@ private struct SaveErrorHint: View {
 /// one-tap copy of a committed answer, and the pane's shortcuts.
 private struct PaneFooter: View {
     let status: FooterStatus
+    @Binding var sidebarOpen: Bool
 
     private var gradeLabel: String {
         guard let ease = status.readingEase else { return "Grade 0" }
@@ -430,6 +442,12 @@ private struct PaneFooter: View {
             Text("⌘F find · Esc hide")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+            Button(action: { sidebarOpen.toggle() }) {
+                Image(systemName: sidebarOpen ? "rectangle.leadinghalf.inset.filled.arrow.leading" : "line.horizontal.3")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 10)
         .frame(height: PaneStyle.footerHeight)
