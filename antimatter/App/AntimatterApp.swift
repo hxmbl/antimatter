@@ -19,6 +19,10 @@ struct AntimatterApp: App {
         .windowBackgroundDragBehavior(.enabled)
         .commands {
             CommandGroup(after: .newItem) {
+                Button("New Window") { WindowManager.shared.createNewWindow() }
+                    .keyboardShortcut("n", modifiers: .command)
+                Button("Close Window") { WindowManager.shared.closeKeyWindow() }
+                    .keyboardShortcut("w", modifiers: .command)
                 Button("Reveal Notes in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([
                         StorageLocation.directory(named: "notes").appendingPathComponent("notes.json")
@@ -112,10 +116,10 @@ enum LaunchPreferences {
             NSApp.setActivationPolicy(.accessory)
             MenuBarController.shared.setup()
             // The SwiftUI pane window would otherwise float in addition to the
-            // panel; keep it out of the way in accessory modes.
-            NSApplication.shared.windows
-                .first { $0.identifier?.rawValue == PaneStyle.windowIdentifier }?
-                .orderOut(nil)
+            // panel; keep the app's windows out of the way in accessory modes.
+            for window in NSApplication.shared.windows where WindowManager.isPane(window) {
+                window.orderOut(nil)
+            }
         }
     }
 

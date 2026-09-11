@@ -13,6 +13,7 @@ final class NoteStore: ObservableObject {
     @Published var saveErrorToken: Int = 0
 
     private let fileURL: URL
+    private let syncEnabled: Bool
     private var saveTask: Task<Void, Never>?
     private var voidTask: Task<Void, Never>?
 
@@ -39,8 +40,9 @@ final class NoteStore: ObservableObject {
         )
     }
 
-    init(fileURL: URL = NoteStore.defaultFileURL()) {
+    init(fileURL: URL = NoteStore.defaultFileURL(), syncEnabled: Bool = true) {
         self.fileURL = fileURL
+        self.syncEnabled = syncEnabled
         // Migration: if notes.json doesn't exist but scratchpad.md does, import it.
         let scratchURL = StorageLocation.directory(named: "scratchpad")
             .appendingPathComponent("scratchpad.md")
@@ -170,9 +172,11 @@ final class NoteStore: ObservableObject {
         }
     }
 
-    /// Pushes every note to iCloud when sync is switched on.
+    /// Pushes every note to iCloud when sync is switched on. Extra ⌘N
+    /// scratchpads are excluded — they have their own file and should not
+    /// collide with the main store's CloudKit snapshot.
     func syncIfNeeded() {
-        guard CloudKitSync.shared.isEnabled else { return }
+        guard syncEnabled, CloudKitSync.shared.isEnabled else { return }
         let toSync = notes
         let void = trash
         Task { @MainActor in

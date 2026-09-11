@@ -38,21 +38,30 @@ struct WindowConfigurator: NSViewRepresentable {
         // obvious title bar with the traffic-light controls so it reads as
         // a normal macOS window rather than a chrome-less floating pane.
         Self.showStandardTitleBar(on: window)
-        window.identifier = NSUserInterfaceItemIdentifier(PaneStyle.windowIdentifier)
+        // The SwiftUI primary pane gets the canonical identifier; ⌘N windows
+        // arrive with their own unique ones, which must be kept so they can
+        // be closed and found individually.
+        let windowID = window.identifier?.rawValue
+        if windowID == nil || !windowID!.hasPrefix(PaneStyle.windowIdentifier) {
+            window.identifier = NSUserInterfaceItemIdentifier(PaneStyle.windowIdentifier)
+        }
         // Restores the saved frame synchronously; the size and screen clamp
         // below then reins in frames saved before a smaller contentMaxSize
-        // existed or on a display that is no longer connected.
-        window.setFrameAutosaveName(PaneStyle.frameAutosaveName)
+        // existed or on a display that is no longer connected. ⌘N windows
+        // already carry their own unique autosave names.
+        if window.frameAutosaveName.isEmpty {
+            window.setFrameAutosaveName(PaneStyle.frameAutosaveName)
+            // SwiftUI may leave its own stale restore key behind. It must not
+            // override the explicit pane autosave key above.
+            UserDefaults.standard.removeObject(forKey: "NSWindow Frame AppWindow")
+        }
+        window.setFrameAutosaveName(window.frameAutosaveName)
         let windowMaxSize = NSSize(width: PaneStyle.windowMaxWidth, height: PaneStyle.windowMaxHeight)
         let windowMinSize = NSSize(width: PaneStyle.windowMinWidth, height: PaneStyle.windowMinHeight)
         window.maxSize = windowMaxSize
         window.minSize = windowMinSize
         window.contentMaxSize = NSSize(width: PaneStyle.maxWidth, height: PaneStyle.maxHeight)
         Self.restoreValidFrame(for: window, maxSize: windowMaxSize)
-        // SwiftUI may leave its own stale restore key behind. It must not
-        // override the explicit pane autosave key above.
-        UserDefaults.standard.removeObject(forKey: "NSWindow Frame AppWindow")
-        window.setFrameAutosaveName(PaneStyle.frameAutosaveName)
         window.tabbingMode = .disallowed
         window.collectionBehavior = [.fullScreenAuxiliary]
         window.isOpaque = false
@@ -146,17 +155,17 @@ struct WindowConfigurator: NSViewRepresentable {
 @MainActor
 enum PaneWindowStyler {
     static func applyToPane() {
-        let window: NSWindow?
         switch PaneStyle.displayMode {
         case .dock:
-            window = NSApplication.shared.windows.first(where: {
-                $0.identifier?.rawValue == PaneStyle.windowIdentifier
-            })
+            // Restyle every open pane so a Settings change touches the ⌘N
+            // windows too, not just the primary one.
+            for window in NSApplication.shared.windows where WindowManager.isPane(window) {
+                applyLive(to: window)
+            }
         case .menuBar, .dropdown:
-            window = MenuBarController.shared.panel
+            guard let window = MenuBarController.shared.panel else { return }
+            applyLive(to: window)
         }
-        guard let window else { return }
-        applyLive(to: window)
     }
 
     static func applyLive(to window: NSWindow) {

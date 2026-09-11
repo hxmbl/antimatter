@@ -113,16 +113,18 @@ final class PaneHotKey {
         onToggle?()
     }
 
-    /// Shows the pane when hidden or closed, hides it when visible.
+    /// Shows the pane when hidden or closed, hides the focused pane when
+    /// visible. With several panes open, only the focused one toggles, so
+    /// they can be dismissed one at a time.
     func togglePane() {
         let mode = PaneStyle.displayMode
         switch mode {
         case .dock:
-            if let window = Self.paneWindow {
-                if window.isVisible {
-                    window.orderOut(nil)
-                    return
-                }
+            let manager = WindowManager.shared
+            let candidate = manager.keyPane ?? manager.frontmostPane
+            if let candidate, candidate.isVisible {
+                candidate.orderOut(nil)
+            } else if candidate != nil {
                 revealPane()
             } else {
                 openWindow?()
@@ -132,25 +134,21 @@ final class PaneHotKey {
         }
     }
 
-    /// Brings the pane forward (hot key when hidden, notification clicks).
+    /// Brings the frontmost pane forward (hot key when hidden, notification
+    /// clicks); creates the primary pane when every window is closed.
     func revealPane() {
         let mode = PaneStyle.displayMode
         switch mode {
         case .dock:
             NSApplication.shared.activate()
-            if let window = Self.paneWindow {
+            let manager = WindowManager.shared
+            if let window = manager.keyPane ?? manager.frontmostPane {
                 window.makeKeyAndOrderFront(nil)
             } else {
                 openWindow?()
             }
         case .menuBar, .dropdown:
             MenuBarController.shared.showPanel()
-        }
-    }
-
-    private static var paneWindow: NSWindow? {
-        NSApplication.shared.windows.first {
-            $0.identifier?.rawValue == PaneStyle.windowIdentifier
         }
     }
 }

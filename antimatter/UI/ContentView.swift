@@ -2,7 +2,9 @@ import SwiftUI
 import AppKit
 
 struct ContentView: View {
-    @StateObject private var noteStore = NoteStore.shared
+    /// The pane's store. The primary window uses the shared store; ⌘N
+    /// windows pass their own scratchpad store here.
+    @StateObject private var noteStore: NoteStore
     // Declared so a Settings-side change re-renders (and re-styles) the editor.
     @AppStorage("fontSize") private var fontSizeObservation = 15
     @AppStorage("pane.cornerRadius") private var cornerRadiusObservation = 18.0
@@ -16,6 +18,10 @@ struct ContentView: View {
     @AppStorage("appearance") private var appearanceObservation = "system"
     @State private var footer = FooterStatus()
     @State private var sidebarOpen = false
+
+    init(noteStore: NoteStore = NoteStore.shared) {
+        _noteStore = StateObject(wrappedValue: noteStore)
+    }
 
     /// Dock mode runs as a regular window whose own title bar frames the
     /// content, so the theme fills the whole window instead of floating as a
@@ -74,8 +80,9 @@ struct ContentView: View {
             // Debounced saves leave a small window where quitting would lose
             // the last keystrokes; flushing here closes it.
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
-                // Any window closing posts here; only the pane's own file matters.
-                guard (note.object as? NSWindow)?.identifier?.rawValue == PaneStyle.windowIdentifier else { return }
+                // Any window closing posts here; only a pane's own file matters.
+                let identifier = (note.object as? NSWindow)?.identifier?.rawValue
+                guard identifier?.hasPrefix(PaneStyle.windowIdentifier) == true else { return }
                 noteStore.flush()
             }
             // Settings that live on the NSWindow itself (level, fade, corner,
