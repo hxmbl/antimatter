@@ -15,10 +15,11 @@ struct FooterStatus: Equatable {
 struct PaneEditor: NSViewRepresentable {
     @Binding var text: String
     @Binding var status: FooterStatus
+    @Binding var topTextPresent: Bool
     var noteStore: NoteStore
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, status: $status, noteStore: noteStore)
+        Coordinator(text: $text, status: $status, topTextPresent: $topTextPresent, noteStore: noteStore)
     }
 
     func makeNSView(context: Context) -> OverlayScrollView {
@@ -89,8 +90,21 @@ struct PaneEditor: NSViewRepresentable {
 
         context.coordinator.highlighter.render(textView)
         context.coordinator.ownedTextView = textView
+        // Watch the scroll origin: text slides into the top corners whenever
+        // the pane scrolls, so the radius adapts on the fly.
+        context.coordinator.clipBoundsObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView,
+            queue: .main
+        ) { [weak textView] _ in
+            textView?.reportTopClipping()
+        }
+        textView.onTopClippingChange = { [weak coordinator = context.coordinator] clipping in
+            coordinator?.topTextPresent.wrappedValue = clipping
+        }
         DispatchQueue.main.async {
             scrollView.window?.makeFirstResponder(textView)
+            textView.reportTopClipping()
         }
         return scrollView
     }
@@ -104,6 +118,7 @@ struct PaneEditor: NSViewRepresentable {
         guard !context.coordinator.referenceViewManager.isInHelpView else { return }
         // A settings-side font change arrives as a plain re-render.
         context.coordinator.applyFontSizeIfChanged(to: textView)
+        textView.reportTopClipping()
         guard textView.string != text else { return }
         let selected = textView.selectedRanges.compactMap { proto -> NSValue? in
             var range = proto.rangeValue
@@ -145,8 +160,12 @@ struct PaneEditor: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var text: Binding<String>
         var status: Binding<FooterStatus>
+        var topTextPresent: Binding<Bool>
         let noteStore: NoteStore
         let highlighter = MarkdownHighlighter()
+        /// Scroll-position observer so the top-corner radius follows the
+        /// caret as the note scrolls.
+        var clipBoundsObserver: NSObjectProtocol?
         private var deferredPassTask: Task<Void, Never>?
         private var pendingRender: DispatchWorkItem?
         private var pendingStatusUpdate: DispatchWorkItem?
@@ -167,15 +186,23 @@ struct PaneEditor: NSViewRepresentable {
         )
         weak var ownedTextView: PaneTextView?
 
-        init(text: Binding<String>, status: Binding<FooterStatus>, noteStore: NoteStore) {
+        init(text: Binding<String>, status: Binding<FooterStatus>, topTextPresent: Binding<Bool>, noteStore: NoteStore) {
             self.text = text
             self.status = status
+            self.topTextPresent = topTextPresent
             self.noteStore = noteStore
             super.init()
         }
 
+        deinit {
+            if let clipBoundsObserver {
+                NotificationCenter.default.removeObserver(clipBoundsObserver)
+            }
+        }
+
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
+            (textView as? PaneTextView)?.reportTopClipping()
             autoRewritesSuppressed = textView.undoManager?.isUndoing == true
             let newText = textView.string
             scheduleRender(textView)
@@ -425,7 +452,10 @@ struct PaneEditor: NSViewRepresentable {
         private func showNoteSwitcherStub(_ textView: NSTextView) {
             guard !referenceViewManager.isInHelpView else { return }
             let menu = NSMenu(title: "Note Switcher")
-            let item = NSMenuItem(title: "Switch notes — coming soon", action: #selector(presentNoteSwitcher(_:)), keyEquivalent: "")
+            let item = NSMenuItem(
+                title: "Switch notes — coming soon",
+                action: #selector(presentNoteSwitcher(_:)),
+                keyEquivalent: "")
             item.target = self
             menu.addItem(item)
             if let window = textView.window {

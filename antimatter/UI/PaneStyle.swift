@@ -58,9 +58,30 @@ enum PaneStyle {
 
     // MARK: Chrome
 
+    /// The user's configured corner radius; `effectiveCornerRadius` is what
+    /// rendering actually uses.
     static var cornerRadius: CGFloat {
         CGFloat((UserDefaults.standard.object(forKey: "pane.cornerRadius") as? Double) ?? PaneTheme.current.cornerRadius)
     }
+
+    /// Runtime override from the active pane: while text sits under the top
+    /// corners, the pane relaxes them so glyphs stay readable. Dock mode is
+    /// always a plain rectangular window and never honors it.
+    static var cornerRadiusOverride: CGFloat?
+
+    /// The radius used when rendering. Rectangular in dock mode; elsewhere
+    /// the configured radius, relaxed while text is being clipped at the
+    /// top corners.
+    static var effectiveCornerRadius: CGFloat {
+        guard displayMode != .dock else { return 0 }
+        return cornerRadiusOverride ?? cornerRadius
+    }
+
+    /// The small radius the pane drops to while text touches the top
+    /// corners. Matches the low end of the Settings slider, so relaxation
+    /// reads as "the pane's minimum rounding".
+    static let relaxedCornerRadius: CGFloat = 6
+
     static let padding: CGFloat = 16
 
     /// Height of the quiet status strip under the editor.

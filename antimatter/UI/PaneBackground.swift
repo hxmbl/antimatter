@@ -2,10 +2,12 @@ import SwiftUI
 import AppKit
 
 struct PaneBackground: View {
+    var cornerRadius: CGFloat = PaneStyle.cornerRadius
+
     var body: some View {
         ZStack {
             if PaneStyle.usesBlur {
-                VisualEffectBackground(material: PaneStyle.material, blendingMode: PaneStyle.blending)
+                VisualEffectBackground(material: PaneStyle.material, blendingMode: PaneStyle.blending, cornerRadius: cornerRadius)
             } else {
                 PaneStyle.backgroundColor
             }

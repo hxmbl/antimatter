@@ -171,7 +171,7 @@ enum PaneWindowStyler {
     static func applyLive(to window: NSWindow) {
         window.level = PaneStyle.floatsAboveOtherApps ? .floating : .normal
         window.alphaValue = PaneStyle.windowAlpha
-        window.contentView?.layer?.cornerRadius = PaneStyle.cornerRadius
+        window.contentView?.layer?.cornerRadius = PaneStyle.effectiveCornerRadius
         window.contentMaxSize = NSSize(width: PaneStyle.maxWidth, height: PaneStyle.maxHeight)
         window.invalidateShadow()
     }

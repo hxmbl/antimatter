@@ -16,9 +16,14 @@ final class PaneTextView: NSTextView {
     /// Return true when the keystroke was swallowed (the full-screen help
     /// view eats every key except navigation and the way out).
     var onHelpKeyDown: ((NSEvent) -> Bool)?
+    /// Reports whether text currently sits directly under the top corners
+    /// (scrolled to the top with a populated first line) so the pane can
+    /// relax its corner radius and stop clipping the glyphs.
+    var onTopClippingChange: ((Bool) -> Void)?
 
     private var pendingClick: (location: NSPoint, modifiers: NSEvent.ModifierFlags)?
     private var windowMoveDrag: (windowOrigin: NSPoint, mouseScreenOrigin: NSPoint)?
+    private var lastReportedTopClipping: Bool?
 
     // The native selection remains authoritative. This overlay only smooths
     // explicit caret jumps; typing, IME composition, and selection drawing
@@ -395,6 +400,19 @@ final class PaneTextView: NSTextView {
         guard shouldChangeText(in: range, replacementString: replacement) else { return }
         textStorage?.replaceCharacters(in: range, with: replacement)
         didChangeText()
+    }
+
+    // MARK: Top-corner clipping
+
+    /// Recomputes whether the first line currently sits under the top
+    /// corners. Cheap; the caller fires it on text edits and on scroll.
+    @MainActor
+    func reportTopClipping() {
+        let scrolled = (enclosingScrollView?.contentView.bounds.origin.y ?? 0) > 1
+        let clipping = !scrolled && ((textStorage?.length ?? 0) > 0)
+        guard clipping != lastReportedTopClipping else { return }
+        lastReportedTopClipping = clipping
+        onTopClippingChange?(clipping)
     }
 
     // MARK: Escape hides the pane / dismisses dotcommands

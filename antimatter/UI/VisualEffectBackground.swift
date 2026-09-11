@@ -4,6 +4,7 @@ import AppKit
 struct VisualEffectBackground: NSViewRepresentable {
     var material: NSVisualEffectView.Material
     var blendingMode: NSVisualEffectView.BlendingMode
+    var cornerRadius: CGFloat = PaneStyle.cornerRadius
 
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
@@ -11,7 +12,7 @@ struct VisualEffectBackground: NSViewRepresentable {
         view.blendingMode = blendingMode
         view.state = .active
         view.wantsLayer = true
-        view.layer?.cornerRadius = PaneStyle.cornerRadius
+        view.layer?.cornerRadius = cornerRadius
         view.layer?.cornerCurve = .continuous
         view.layer?.masksToBounds = true
         return view
@@ -21,6 +22,6 @@ struct VisualEffectBackground: NSViewRepresentable {
         view.material = material
         view.blendingMode = blendingMode
         view.state = .active
-        view.layer?.cornerRadius = PaneStyle.cornerRadius
+        view.layer?.cornerRadius = cornerRadius
     }
 }
