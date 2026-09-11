@@ -18,9 +18,10 @@ struct ContentView: View {
     @AppStorage("appearance") private var appearanceObservation = "system"
     @State private var footer = FooterStatus()
     @State private var sidebarOpen = false
-    /// True while the first line sits under the top corners; the pane then
-    /// relaxes its corner radius so the corners stop clipping the text.
-    @State private var topTextPresent = false
+    /// How strongly the top corners are currently clipping text: `1` while
+    /// the first line sits under them at the top of a note, easing toward
+    /// `0` as the note scrolls clear. The corner radius fades proportionally.
+    @State private var topTextLevel: CGFloat = 0
 
     init(noteStore: NoteStore = NoteStore.shared) {
         _noteStore = StateObject(wrappedValue: noteStore)
@@ -36,14 +37,14 @@ struct ContentView: View {
     private var bottomInset: CGFloat { isDock ? 0 : PaneStyle.padding + PaneStyle.footerHeight }
 
     /// The card's visible radius: rectangular in dock mode, otherwise the
-    /// configured radius, relaxed while a line of text is pinned under the
-    /// top corners so it isn't clipped by them.
+    /// configured radius softened toward the relaxed minimum in proportion
+    /// to how much text is pinned under the top corners.
     private var clipRadius: CGFloat {
-        isDock ? 0 : (topTextPresent ? PaneStyle.relaxedCornerRadius : PaneStyle.cornerRadius)
+        isDock ? 0 : PaneStyle.cornerRadius(forLevel: topTextLevel)
     }
 
     var body: some View {
-            PaneEditor(text: noteStore.activeText, status: $footer, topTextPresent: $topTextPresent, noteStore: noteStore)
+            PaneEditor(text: noteStore.activeText, status: $footer, topTextLevel: $topTextLevel, noteStore: noteStore)
             .onTapGesture {
                 sidebarOpen = false
             }
@@ -54,6 +55,7 @@ struct ContentView: View {
             .frame(maxWidth: PaneStyle.maxWidth, maxHeight: PaneStyle.maxHeight)
             .background { PaneBackground(cornerRadius: clipRadius) }
             .clipShape(RoundedRectangle(cornerRadius: clipRadius, style: .continuous))
+            .animation(.easeInOut(duration: 0.18), value: topTextLevel)
             .overlay(alignment: .topTrailing) { CaptureStrip().padding(.trailing, 10) }
             .overlay(alignment: .bottomLeading) { SaveErrorHint(error: noteStore.saveError, token: noteStore.saveErrorToken).padding(.leading, PaneStyle.padding) }
             .overlay(alignment: .bottom) {
@@ -98,8 +100,8 @@ struct ContentView: View {
             // Settings that live on the NSWindow itself (level, fade, corner,
             // size clamp) are re-applied here; the rest take effect through
             // SwiftUI re-rendering.
-            .onChange(of: topTextPresent) { _, present in
-                PaneStyle.cornerRadiusOverride = present ? PaneStyle.relaxedCornerRadius : nil
+            .onChange(of: topTextLevel) { _, _ in
+                PaneStyle.cornerRadiusOverride = clipRadius
                 PaneWindowStyler.applyToPane()
             }
             .onChange(of: cornerRadiusObservation) { _, _ in PaneWindowStyler.applyToPane() }

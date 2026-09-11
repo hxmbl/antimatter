@@ -22,6 +22,15 @@ struct VisualEffectBackground: NSViewRepresentable {
         view.material = material
         view.blendingMode = blendingMode
         view.state = .active
-        view.layer?.cornerRadius = cornerRadius
+        guard let layer = view.layer, layer.cornerRadius != cornerRadius else { return }
+        // AppKit disables implicit animation on view-backed layers, so drive
+        // the swipe to match SwiftUI's easing of the clip shape above.
+        let animation = CABasicAnimation(keyPath: "cornerRadius")
+        animation.fromValue = layer.presentation()?.cornerRadius ?? layer.cornerRadius
+        animation.toValue = cornerRadius
+        animation.duration = 0.18
+        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer.cornerRadius = cornerRadius
+        layer.add(animation, forKey: "cornerRadius")
     }
 }

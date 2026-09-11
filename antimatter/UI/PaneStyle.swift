@@ -82,6 +82,18 @@ enum PaneStyle {
     /// reads as "the pane's minimum rounding".
     static let relaxedCornerRadius: CGFloat = 6
 
+    /// Scroll distance over which the top-corner relaxation fades back to
+    /// the full radius. Roughly one line of text.
+    static let topClipRelaxBand: CGFloat = 24
+
+    /// Interpolates the corner radius for a given relaxation level from
+    /// `1` (first line pinned under the top corners → `relaxedCornerRadius`)
+    /// down to `0` (scrolled clear → the configured radius).
+    static func cornerRadius(forLevel level: CGFloat) -> CGFloat {
+        let t = min(max(level, 0), 1)
+        return cornerRadius - (cornerRadius - relaxedCornerRadius) * t
+    }
+
     static let padding: CGFloat = 16
 
     /// Height of the quiet status strip under the editor.
