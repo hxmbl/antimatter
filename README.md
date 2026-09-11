@@ -93,7 +93,7 @@ Not sure which command does what? Type `.` — a native completion window lists 
 
 ## Settings
 
-- **Show as** — Dock, Menu Bar, or Dropdown (Spotlight-style, top of the screen).
+- **Show as** — Dock or Menu Bar.
 - **Hot key chord** — pick your own modifiers + key (default `⌃⌥Space`; bare keys and Shift-only are blocked so they can't swallow your typing).
 - **Appearance** — System / Light / Dark.
 - **Window** — text size 11–26pt, corner radius, max width.
