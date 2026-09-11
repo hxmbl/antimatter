@@ -50,7 +50,7 @@ No setup, no account, no data leaves your Mac until you ask it to.
 ### Everything else
 
 - **Autosave** — every keystroke saved atomically to `~/Library/Application Support/Antimatter/notes/notes.json` with a one-generation `.bak`. Legacy `scratchpad.md` files are imported automatically. Type → quit → relaunch → it's still there.
-- **Multiple notes** — swipe left/right on the pane to switch notes. Deleted notes sit in The Void for 36 hours before they're gone.
+- **Multiple notes** — type `.new` to start a fresh note, or swipe left/right on the pane to switch between them. Deleted notes sit in The Void for 36 hours before they're gone.
 - **Export, no network** — `.export notes` sends the note to Apple Notes; `.export obsidian` saves it as a markdown file wherever you point.
 - **iCloud sync, optional** — notes are encrypted on-device before syncing. Flip it on in Settings.
 - **Deep links** — `antimatter://`, `antimatter://note?text=…`, `antimatter://append?text=…`, `antimatter://command?line=.timer 5` bring up the pane, create/append notes, or run any dot-command from outside the app.
@@ -68,6 +68,7 @@ No setup, no account, no data leaves your Mac until you ask it to.
 | `.remind in 10 minutes` | One-shot reminder (natural language: "tomorrow at 3pm", "in 10 mins") |
 | `.reminder cancel all` | Clear reminders |
 | `.paste` | Stream clipboard copies into the note |
+| `.new` | Create a new, empty note (swipe left/right to switch) |
 | `.sum` / `.total` | Sum the note's numbers |
 | `.avg` / `.average` | Average the note's numbers |
 | `.count` | Count the note's numbers |
@@ -158,6 +159,10 @@ tools/run-swiftlint.sh
 - **Persistence:** JSON for notes, timers, reminders, and cached exchange rates in Application Support; legacy Markdown scratchpads are imported once
 - **OCR:** Apple Vision, on-device
 - **Tests:** Swift Testing
+
+## Disclaimer
+
+May not compile. No em dashes used.
 
 ## Why This Exists
 

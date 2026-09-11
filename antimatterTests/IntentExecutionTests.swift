@@ -163,6 +163,18 @@ struct ReturnKeyActionTests {
         }
     }
 
+    @Test func newNoteIsACommand() {
+        if case .newNote = IntentExecution.action(forLine: ".new", in: "") {} else {
+            Issue.record(".new should create a new note")
+        }
+        #expect(IntentExecution.preview(forLine: ".new") == "⏎ creates a new, empty note")
+        #expect(IntentExecution.helpText.contains(".new"))
+        #expect(IntentExecution.dotCommands.contains { $0.name == ".new" })
+        #expect(IntentExecution.completions(for: ".n")?.contains(".new ") == true)
+        // Without the dot it is an ordinary line.
+        #expect(IntentExecution.action(forLine: "new", in: "") == .nothing)
+    }
+
     @Test func helpExpandsIntoTheCommandReference() {
         if case .showHelp = IntentExecution.action(forLine: ".help", in: "") {} else {
             Issue.record(".help should show the reference block")

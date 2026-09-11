@@ -81,6 +81,8 @@ enum DeepLinkRouter {
             NoticeCenter.shared.show("Reminders cancelled")
         case .startPasteStream:
             PasteStream.shared.startStreaming()
+        case .newNote:
+            NoteStore.shared.create()
         case .export(let destination):
             do {
                 let outcome = try ExportCenter.export(destination, text: NoteStore.shared.activeNote.text)

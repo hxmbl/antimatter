@@ -17,6 +17,7 @@ export async function openAntimatter(path?: string, query?: Record<string, strin
 }
 
 export const DOT_COMMANDS = [
+  { label: "New note", command: ".new" },
   { label: "5 min timer", command: ".timer 5" },
   { label: "10 min timer", command: ".timer 10" },
   { label: "15 min timer", command: ".timer 15" },

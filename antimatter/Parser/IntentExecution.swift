@@ -198,6 +198,8 @@ nonisolated enum IntentExecution {
         case insertAggregate(AggregateKind)
         /// Begin streaming clipboard contents into the note.
         case startPasteStream
+        /// Create a brand-new empty note and switch to it (`.new`).
+        case newNote
         /// Export the whole note somewhere local (`.export notes` / `.export obsidian`).
         case export(ExportDestination)
         /// Expand `.help` into the command reference block.
@@ -270,6 +272,9 @@ nonisolated enum IntentExecution {
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "paste" {
             return .startPasteStream
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "new" {
+            return .newNote
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "help" {
             return .showHelp
@@ -367,6 +372,7 @@ nonisolated enum IntentExecution {
           .remind tomorrow 3pm …  absolute times work too
           .reminder cancel [all]  cancel all pending reminders
           .paste                  stream clipboard copies into the note until dismissed
+          .new                    create a new, empty note (swipe left/right to switch)
           .export notes           send the note to Apple Notes
           .export obsidian        save the note as a markdown file in your vault
           .sum  .total            sum the numbers in this note
@@ -428,6 +434,9 @@ nonisolated enum IntentExecution {
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "paste" {
             return "⏎ begins paste stream"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "new" {
+            return "⏎ creates a new, empty note"
         }
         if let destination = exportDestination(from: trimmed) {
             return "⏎ exports the note to \(destinationTitle(destination))"
@@ -494,6 +503,7 @@ nonisolated enum IntentExecution {
     /// Completion vocabulary for typing after a `.` — teaches the commands
     /// at the moment of use, with no chrome.
     static let dotCommands: [(name: String, description: String)] = [
+        (".new", "create a new, empty note"),
         (".timer", "start or cancel a countdown"),
         (".stopwatch", "start or cancel a stopwatch"),
         (".remind", "set a natural-language reminder"),

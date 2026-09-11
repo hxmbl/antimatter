@@ -360,6 +360,9 @@ struct PaneEditor: NSViewRepresentable {
                 NoticeCenter.shared.show(count == 0 ? "No pending reminders to cancel." : (count == 1 ? "Reminder cancelled." : "\(count) reminders cancelled."))
             case .startPasteStream:
                 PasteStream.shared.startStreaming()
+            case .newNote:
+                NoteStore.shared.create()
+                return true
             case .export(let destination):
                 exportNote(to: destination)
             case .showHelp:
