@@ -3,6 +3,7 @@ import Testing
 @testable import antimatter
 
 @MainActor
+@Suite(.serialized)
 struct ActionRunnerTests {
 
     /// `ActionRunner.run` turns a command line into an outcome and appends the
@@ -30,6 +31,8 @@ struct ActionRunnerTests {
         defer { resetActiveNote() }
         let outcome = ActionRunner.run(".sum")
         #expect(outcome.ok == false)
+        #expect(outcome.message == "No numbers in the note to sum")
+        #expect(NoteStore.shared.activeNote.text == "no numbers here")
     }
 
     @Test func newNoteReportsItsTitle() {
@@ -52,10 +55,13 @@ struct ActionRunnerTests {
         defer { resetActiveNote() }
         let outcome = ActionRunner.run("grocery run and milk")
         #expect(outcome.ok == false)
+        #expect(outcome.message == "Nothing to do — type a dot-command like `.timer 5`")
         #expect(NoteStore.shared.activeNote.text == "some ordinary notes")
     }
 
     @Test func naturalDurationReadsNaturally() {
+        #expect(ActionRunner.naturalDuration(0) == "0 sec")
+        #expect(ActionRunner.naturalDuration(0.1) == "1 sec")
         #expect(ActionRunner.naturalDuration(90) == "1 min 30 sec")
         #expect(ActionRunner.naturalDuration(25 * 60) == "25 min")
         #expect(ActionRunner.naturalDuration(3600) == "1 h")

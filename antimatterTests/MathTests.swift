@@ -43,7 +43,7 @@ struct VariableTests {
         #expect(eval("min(3, 1, 2)") == 1)
         #expect(eval("max(3, 1, 2)") == 3)
         #expect(eval("min(3)") == 3)
-        #expect(eval("sqrt(0 - 1)")?.isFinite == false || eval("sqrt(0 - 1)") == nil)
+        #expect(eval("sqrt(0 - 1)") == nil)
         #expect(eval("pow(2, 3)") == nil) // unknown function stays text
     }
 
@@ -188,9 +188,8 @@ struct DateIntentTests {
 
     @Test func bareDateGainsWeekday() {
         let out = commit("2026-08-22", now: fixedNow)
-        #expect(out != nil && out!.contains(" = "))
+        #expect(out == "2026-08-22 = Saturday")
         #expect(commit("  2026-08-22", now: fixedNow)?.hasPrefix("  ") == true) // indent kept
-        #expect(out!.contains("2026-08-22 = "))
     }
 
     @Test func daysUntilCountsFromToday() {
@@ -267,10 +266,10 @@ struct UnitConverterTests {
     }
 
     @Test func commitRewritesWithAnswer() {
-        #expect(UnitConverter.commit("12 kg → lb")?.hasSuffix(" = 26.4555") == true)
-        #expect(UnitConverter.commit("3 mi -> km") != nil)
-        #expect(UnitConverter.commit("   100 °F -> c")?.hasPrefix("   ") == true)
-        #expect(UnitConverter.commit("12 kg->lb")?.hasSuffix(" = 26.4555") == true)
+        #expect(UnitConverter.commit("12 kg → lb") == "12 kg → lb = 26.4555")
+        #expect(UnitConverter.commit("3 mi -> km") == "3 mi -> km = 4.82803")
+        #expect(UnitConverter.commit("   100 °F -> c") == "   100 °F -> c = 37.7778")
+        #expect(UnitConverter.commit("12 kg->lb") == "12 kg->lb = 26.4555")
     }
 
     @Test func dashArrowsWork() {
@@ -310,6 +309,6 @@ struct UnitConverterTests {
         RateCache.shared.replace(with: fakeRates)
         defer { RateCache.shared.replace(with: [:]) }
         let result = UnitConverter.commit("100 USD → eur")
-        #expect(result?.contains("85") == true)
+        #expect(result == "100 USD → eur = 85")
     }
 }

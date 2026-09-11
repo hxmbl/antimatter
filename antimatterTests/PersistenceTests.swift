@@ -10,28 +10,28 @@ struct PersistenceTests {
             .appendingPathComponent("antimatter-persist-\(UUID().uuidString)", isDirectory: true)
     }
 
-    private func makeDirectory() -> URL {
+    private func makeDirectory() throws -> URL {
         let dir = tempDir()
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 
-    @Test func writeThenReadRoundTrips() {
-        let url = makeDirectory().appendingPathComponent("scratchpad.md")
+    @Test func writeThenReadRoundTrips() throws {
+        let url = try makeDirectory().appendingPathComponent("scratchpad.md")
         #expect(Persistence.write("hello", to: url) == nil)
         #expect(Persistence.read(from: url) == "hello")
     }
 
     @Test func overwritingKeepsPreviousGenerationAsBak() throws {
-        let url = makeDirectory().appendingPathComponent("scratchpad.md")
-        Persistence.write("first", to: url)
-        Persistence.write("second", to: url)
+        let url = try makeDirectory().appendingPathComponent("scratchpad.md")
+        #expect(Persistence.write("first", to: url) == nil)
+        #expect(Persistence.write("second", to: url) == nil)
         #expect(try String(contentsOf: url, encoding: .utf8) == "second")
         #expect(try String(contentsOf: Persistence.backupURL(for: url), encoding: .utf8) == "first")
     }
 
     @Test func unreadablePrimaryFallsBackToBak() throws {
-        let url = makeDirectory().appendingPathComponent("scratchpad.md")
+        let url = try makeDirectory().appendingPathComponent("scratchpad.md")
         try "salvage".write(to: Persistence.backupURL(for: url), atomically: true, encoding: .utf8)
         // Invalid UTF-8 makes the primary unreadable as text.
         try Data([0xFF]).write(to: url)
