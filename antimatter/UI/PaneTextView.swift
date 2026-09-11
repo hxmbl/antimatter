@@ -185,10 +185,11 @@ final class PaneTextView: NSTextView {
             return
         }
         pendingClick = (event.locationInWindow, modifiers)
+        let clickIndex = characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))
         let oldLocation = selectedRange().location
         super.mouseDown(with: event)
         DispatchQueue.main.async { [weak self] in
-            self?.toggleTaskIfOnMarker()
+            self?.toggleTaskIfOnMarker(clickIndex: clickIndex)
         }
         if selectedRange().length == 0 {
             startCaretGlide(from: oldLocation, to: selectedRange().location)
@@ -211,7 +212,10 @@ final class PaneTextView: NSTextView {
         super.mouseDragged(with: event)
     }
 
-    private func toggleTaskIfOnMarker() {
+    /// Flips a task-list checkbox, but only when the click actually lands on
+    /// the `[ ]`/`[x]` marker. Clicking any other part of a task line just
+    /// places the caret.
+    private func toggleTaskIfOnMarker(clickIndex: Int) {
         let location = selectedRange().location
         guard location != NSNotFound, let textStorage = textStorage else { return }
 
@@ -223,21 +227,25 @@ final class PaneTextView: NSTextView {
         let patterns = ["- [ ] ", "- [x] ", "- [X] ", "* [ ] ", "* [x] ", "* [X] ",
                         "+ [ ] ", "+ [x] ", "+ [X] "]
         for pattern in patterns {
-            if line.hasPrefix(pattern) {
-                let replacement: String
-                if line.contains("[ ]") {
-                    replacement = line.replacingOccurrences(of: "[ ]", with: "[x]")
-                } else {
-                    replacement = line.replacingOccurrences(of: "[x]", with: "[ ]").replacingOccurrences(of: "[X]", with: "[ ]")
-                }
-                let editRange = NSRange(location: lineStart, length: contentsEnd - lineStart)
-                if shouldChangeText(in: editRange, replacementString: replacement) {
-                    textStorage.replaceCharacters(in: editRange, with: replacement)
-                    didChangeText()
-                }
-                setSelectedRange(NSRange(location: min(location, textStorage.length), length: 0))
-                return
+            guard line.hasPrefix(pattern) else { continue }
+            // Every pattern keeps the box at characters 2...4 of the prefix.
+            // Only clicks on those characters (with a little slack on the
+            // left) toggle; clicks on the task text just edit it.
+            let bracket = NSRange(location: lineStart + 2, length: 3)
+            guard clickIndex >= bracket.location - 1, clickIndex <= bracket.location + bracket.length else { return }
+            let replacement: String
+            if line.contains("[ ]") {
+                replacement = line.replacingOccurrences(of: "[ ]", with: "[x]")
+            } else {
+                replacement = line.replacingOccurrences(of: "[x]", with: "[ ]").replacingOccurrences(of: "[X]", with: "[ ]")
             }
+            let editRange = NSRange(location: lineStart, length: contentsEnd - lineStart)
+            if shouldChangeText(in: editRange, replacementString: replacement) {
+                textStorage.replaceCharacters(in: editRange, with: replacement)
+                didChangeText()
+            }
+            setSelectedRange(NSRange(location: min(location, textStorage.length), length: 0))
+            return
         }
     }
 
