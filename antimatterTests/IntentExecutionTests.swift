@@ -175,6 +175,18 @@ struct ReturnKeyActionTests {
         #expect(IntentExecution.action(forLine: "new", in: "") == .nothing)
     }
 
+    @Test func switchNoteIsACommand() {
+        if case .showNoteSwitcher = IntentExecution.action(forLine: ".switch", in: "") {} else {
+            Issue.record(".switch should open the note switcher")
+        }
+        #expect(IntentExecution.preview(forLine: ".switch") == "⏎ switches to another note")
+        #expect(IntentExecution.helpText.contains(".switch"))
+        #expect(IntentExecution.dotCommands.contains { $0.name == ".switch" })
+        #expect(IntentExecution.completions(for: ".sw")?.contains(".switch ") == true)
+        // Without the dot it is an ordinary line.
+        #expect(IntentExecution.action(forLine: "switch", in: "") == .nothing)
+    }
+
     @Test func helpExpandsIntoTheCommandReference() {
         if case .showHelp = IntentExecution.action(forLine: ".help", in: "") {} else {
             Issue.record(".help should show the reference block")
@@ -330,6 +342,7 @@ struct CommandCompletionTests {
         #expect(completions(".sto") == [".stopwatch "])
         #expect(completions(".pom") == [".pomodoro "])
         #expect(completions(".su")?.contains(".sum ") == true)
+        #expect(completions(".sw")?.contains(".switch ") == true)
         #expect(completions(".h")?.contains(".help ") == true)
     }
 

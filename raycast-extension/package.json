@@ -1,10 +1,10 @@
 {
   "$schema": "https://www.raycast.com/schemas/extension.json",
-  "name": "Antimatter",
+  "name": "antimatter",
   "title": "Antimatter",
   "description": "Control Antimatter — the floating notes pane — from Raycast.",
-  "icon": "assets/extension-icon.png",
-  "author": "stormofthoughts",
+  "icon": "extension-icon.png",
+  "author": "Hxmbl",
   "categories": ["Productivity", "Data"],
   "license": "MIT",
   "commands": [

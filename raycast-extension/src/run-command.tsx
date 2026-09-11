@@ -1,22 +1,37 @@
-import { ActionPanel, Form, Action, showToast, Toast, popToRoot } from "@raycast/api";
-import { DOT_COMMANDS, openAntimatter } from "./lib/antimatter";
+import {
+  ActionPanel,
+  Form,
+  Action,
+  showToast,
+  Toast,
+  popToRoot,
+} from "@raycast/api";
+import { runCommand } from "./lib/antimatter";
 
 interface Args {
   command?: string;
 }
 
 export default function RunCommand(props: { arguments: Args }) {
-  const defaultCommand = props.arguments.command ?? "";
+  const quickCapture = (props.arguments.command ?? "").trim();
 
-  async function handleSubmit(values: { preset: string; custom: string }) {
-    const command = values.custom.trim() || values.preset;
-    if (command.length === 0) {
-      await showToast({ style: Toast.Style.Failure, title: "No command entered" });
+  async function handleSubmit(values: { command: string }) {
+    const line = (values.command ?? "").trim() || quickCapture;
+    if (line.length === 0) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "No command entered",
+      });
       return;
     }
-    await openAntimatter("command", { line: command });
+
+    const response = await runCommand(line);
     await popToRoot();
-    await showToast({ style: Toast.Style.Success, title: "Command sent" });
+    await showToast({
+      style: response.ok ? Toast.Style.Success : Toast.Style.Failure,
+      title: response.ok ? line : "Command failed",
+      message: response.message || undefined,
+    });
   }
 
   return (
@@ -27,17 +42,11 @@ export default function RunCommand(props: { arguments: Args }) {
         </ActionPanel>
       }
     >
-      <Form.Dropdown id="preset" title="Preset Command" defaultValue={defaultCommand}>
-        <Form.Dropdown.Item value="" title="— choose or type below —" />
-        {DOT_COMMANDS.map((cmd) => (
-          <Form.Dropdown.Item key={cmd.command} value={cmd.command} title={`${cmd.label}  (${cmd.command})`} />
-        ))}
-      </Form.Dropdown>
       <Form.TextField
-        id="custom"
-        title="Custom Command"
-        placeholder=".timer 1h stand up"
-        defaultValue={defaultCommand}
+        id="command"
+        title="Command"
+        defaultValue={quickCapture}
+        placeholder=".timer 5 · 384 * 27 · plain text"
       />
     </Form>
   );

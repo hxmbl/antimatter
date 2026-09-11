@@ -141,6 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UNUserNotificationCenter.current().delegate = notificationRouter
         LaunchPreferences.apply()
         CurrencyCenter.shared.activate()
+        LocalBridge.shared.start()
     }
 
     // The pane is a summoned utility: a hidden panel or a closed window must

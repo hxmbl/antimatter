@@ -69,6 +69,7 @@ No setup, no account, no data leaves your Mac until you ask it to.
 | `.reminder cancel all` | Clear reminders |
 | `.paste` | Stream clipboard copies into the note |
 | `.new` | Create a new, empty note (swipe left/right to switch) |
+| `.switch` | Switch to another note (quick switcher menu) |
 | `.sum` / `.total` | Sum the note's numbers |
 | `.avg` / `.average` | Average the note's numbers |
 | `.count` | Count the note's numbers |

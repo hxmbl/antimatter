@@ -366,6 +366,9 @@ struct PaneEditor: NSViewRepresentable {
             case .newNote:
                 noteStore.create()
                 return true
+            case .showNoteSwitcher:
+                showNoteSwitcherStub(textView)
+                return true
             case .export(let destination):
                 exportNote(to: destination)
             case .showHelp:
@@ -414,6 +417,25 @@ struct PaneEditor: NSViewRepresentable {
                     ? "Export cancelled."
                     : error.localizedDescription)
             }
+        }
+
+        /// `.switch` stub: opens a quick switcher menu listing the notes
+        /// (marked as a menu so the real implementation goes here). The
+        /// caret-line newline then lands normally.
+        private func showNoteSwitcherStub(_ textView: NSTextView) {
+            guard !referenceViewManager.isInHelpView else { return }
+            let menu = NSMenu(title: "Note Switcher")
+            let item = NSMenuItem(title: "Switch notes — coming soon", action: #selector(presentNoteSwitcher(_:)), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+            if let window = textView.window {
+                let point = window.mouseLocationOutsideOfEventStream
+                menu.popUp(positioning: nil, at: point, in: window.contentView)
+            }
+        }
+
+        @objc private func presentNoteSwitcher(_ sender: Any?) {
+            NoticeCenter.shared.show("Note switcher coming soon")
         }
 
         private func performGlobalReplace(find: String, replacement: String, textView: NSTextView) {
