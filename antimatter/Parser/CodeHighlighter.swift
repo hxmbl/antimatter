@@ -1,9 +1,12 @@
 import AppKit
 import Foundation
 
+// MARK: - Code syntax highlighting
 
 /// Lightweight syntax highlighter for code blocks.
 enum CodeHighlighter {
+    // MARK: Language definitions
+
     private struct LanguageDef {
         let keywords: Set<String>
         let commentPrefix: String
@@ -336,6 +339,8 @@ enum CodeHighlighter {
     }
 
 
+    // MARK: Color palette
+
     /// Colorful, Xcode/GitHub-inspired palette. Adapts to light/dark appearance.
     private static var isDark: Bool {
         NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -381,6 +386,8 @@ enum CodeHighlighter {
         isDark ? NSColor(hex: "#74B9FF") : NSColor(hex: "#0984E3")
     }
 
+    // MARK: Token classification
+
     private static let literals: Set<String> = [
         "true", "false", "nil", "null", "none", "NULL", "Nil", "None",
         "yes", "no", "on", "off", "YES", "NO"
@@ -404,6 +411,8 @@ enum CodeHighlighter {
         "int", "string", "double", "float", "bool", "array", "dictionary",
         "optional", "result", "error", "instancetype",
     ]
+
+    // MARK: Highlight entry point
 
     static func highlight(code: String, language: String?, baseFont: NSFont) -> NSAttributedString {
         let highlighted = NSMutableAttributedString(string: code)
@@ -573,6 +582,8 @@ if let start = def.blockCommentStart,
 
         return highlighted
     }
+
+    // MARK: Token scanning
 
     private static func findString(_ needle: String, in haystack: NSString, from start: Int) -> NSRange? {
         let range = haystack.range(of: needle, range: NSRange(location: start, length: haystack.length - start))

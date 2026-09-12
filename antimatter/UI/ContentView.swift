@@ -384,21 +384,6 @@ private struct PaneFooter: View {
     let status: FooterStatus
     @Binding var sidebarOpen: Bool
 
-    private var gradeLabel: String {
-        guard let ease = status.readingEase else { return "Grade 0" }
-        let grade: Int
-        switch ease {
-        case 90...: grade = 5
-        case 80..<90: grade = 6
-        case 70..<80: grade = 7
-        case 60..<70: grade = 8
-        case 50..<60: grade = 10
-        case 30..<50: grade = 13
-        default: grade = 17
-        }
-        return "Grade \(grade)"
-    }
-
     var body: some View {
         HStack(spacing: 8) {
             Group {
@@ -427,21 +412,19 @@ private struct PaneFooter: View {
             .lineLimit(1)
             .truncationMode(.middle)
             Spacer()
-            if PaneStyle.showWordCount, status.charCount > 0 {
-                Text("\(status.wordCount) words · \(status.charCount) chars · \(gradeLabel)")
+            if PaneStyle.showWordCount, status.wordCount > 0 {
+                Text("\(status.wordCount) words")
                     .font(.caption2)
                     .monospacedDigit()
                     .foregroundStyle(.tertiary)
             }
-            Text("⌘F find · Esc hide")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
             Button(action: { sidebarOpen.toggle() }) {
                 Image(systemName: sidebarOpen ? "rectangle.leadinghalf.inset.filled.arrow.leading" : "line.horizontal.3")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
             .buttonStyle(.plain)
+            .help(sidebarOpen ? "Hide sidebar" : "Show sidebar")
         }
         .padding(.horizontal, 10)
         .frame(height: PaneStyle.footerHeight)

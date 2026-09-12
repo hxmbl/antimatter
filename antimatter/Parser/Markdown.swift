@@ -1,6 +1,8 @@
 import AppKit
 import Foundation
 
+// MARK: - Element model
+
 enum Markdown {
     struct Element: Equatable {
         nonisolated enum Kind: Equatable {
@@ -50,6 +52,8 @@ enum Markdown {
         let range: NSRange
     }
 
+
+    // MARK: Parsing entry point
 
     nonisolated static let maxHeadingLevel = 6
 
@@ -178,6 +182,8 @@ enum Markdown {
     }
 
 
+    // MARK: Line primitives
+
     private nonisolated static func lineRanges(_ text: String) -> [Range<String.Index>] {
         var ranges: [Range<String.Index>] = []
         var start = text.startIndex
@@ -213,6 +219,8 @@ enum Markdown {
     }
 
 
+    // MARK: Thematic breaks
+
     private nonisolated static func isThematicBreak(_ range: Range<String.Index>, in text: String) -> Bool {
         var marker: Character?
         var count = 0
@@ -235,6 +243,8 @@ enum Markdown {
         return count >= 3
     }
 
+
+    // MARK: Headings
 
     private nonisolated static func parseHeading(_ text: String, in line: Range<String.Index>, from start: String.Index, into out: inout [Element]) -> Bool {
         guard text[start] == "#" else { return false }
@@ -273,6 +283,8 @@ enum Markdown {
     }
 
 
+    // MARK: Block quotes
+
     private nonisolated struct QuoteInfo {
         let arrows: Range<String.Index>
         let content: Range<String.Index>
@@ -298,6 +310,8 @@ enum Markdown {
         scanInline(text, in: quote.content, into: &out)
     }
 
+
+    // MARK: Fenced code
 
     private nonisolated struct FenceOpen {
         let char: Character
@@ -343,6 +357,8 @@ enum Markdown {
         return lower..<upper
     }
 
+
+    // MARK: Lists & task markers
 
     private nonisolated struct ListItemInfo {
         let marker: Range<String.Index>
@@ -406,6 +422,8 @@ enum Markdown {
         }
     }
 
+
+    // MARK: Tables
 
     private nonisolated static func isTableRow(_ line: Range<String.Index>, in text: String) -> Bool {
         !line.isEmpty && text[line].contains("|")
@@ -505,6 +523,8 @@ enum Markdown {
     }
 
 
+    // MARK: Block scanning
+
     private nonisolated static let autolinkSchemes = ["https://", "http://", "mailto:"]
 
     private nonisolated static func interruptsBlock(_ lines: [Range<String.Index>], at index: Int, in text: String) -> Bool {
@@ -548,6 +568,8 @@ enum Markdown {
         }
         return true
     }
+
+    // MARK: Inline scanning
 
     private nonisolated static func scanInline(_ text: String, in range: Range<String.Index>, into out: inout [Element]) {
         var i = range.lowerBound
@@ -780,6 +802,8 @@ enum Markdown {
     }
 
 
+    // MARK: Links, images & autolinks
+
     private nonisolated static func readLink(
         _ text: String,
         from start: String.Index,
@@ -865,6 +889,8 @@ enum Markdown {
         return end
     }
 
+
+    // MARK: URL hygiene
 
     /// URL shrunk without a network call: tracking parameters are dropped.
     nonisolated static func stripTrackingParameters(from urlString: String) -> String {

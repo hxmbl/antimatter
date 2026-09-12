@@ -1,6 +1,10 @@
 import Foundation
 
+// MARK: - Expression evaluation
+
 nonisolated enum ExpressionEvaluator {
+    // MARK: Public API
+
     static func evaluate(_ input: String, variables: [String: Double] = [:]) -> Double? {
         let tokens = tokenize(input)
         guard !tokens.isEmpty else { return nil }
@@ -43,6 +47,8 @@ nonisolated enum ExpressionEvaluator {
         }
         return literals
     }
+
+    // MARK: Tokenizer
 
     private enum Token: Equatable {
         case number(Double)
@@ -116,16 +122,18 @@ nonisolated enum ExpressionEvaluator {
         return tokens
     }
 
+    // MARK: Recursive-descent parser
+
     private static func peek(_ tokens: [Token], _ cursor: inout Int) -> Token? {
         cursor < tokens.count ? tokens[cursor] : nil
     }
 
-    // expression := term (('+' | '-') term)*
-    // term       := power (('*' | '/' | '%') power)*
-    // power      := unary ('^' power)?          right-associative
-    // unary      := ('+' | '-') unary | primary
-    // primary    := number | name '(' args ')' | name | '(' expression ')'
-    // args       := expression (',' expression)*
+    /// expression := term (('+' | '-') term)*
+    /// term       := power (('*' | '/' | '%') power)*
+    /// power      := unary ('^' power)?          right-associative
+    /// unary      := ('+' | '-') unary | primary
+    /// primary    := number | name '(' args ')' | name | '(' expression ')'
+    /// args       := expression (',' expression)*
 
     private static func expression(_ tokens: [Token], _ cursor: inout Int, _ vars: [String: Double]) -> Double? {
         guard var value = term(tokens, &cursor, vars) else { return nil }
@@ -199,6 +207,8 @@ nonisolated enum ExpressionEvaluator {
         }
     }
 
+    // MARK: Function calls
+
     private static func arguments(_ tokens: [Token], _ cursor: inout Int, _ vars: [String: Double]) -> [Double]? {
         var args: [Double] = []
         guard let first = expression(tokens, &cursor, vars) else { return nil }
@@ -230,7 +240,9 @@ nonisolated enum ExpressionEvaluator {
         }
     }
 
-     static func isBareNumber(_ expression: String) -> Bool {
+     // MARK: Bare-number detection
+
+    static func isBareNumber(_ expression: String) -> Bool {
         let tokens = tokenize(expression)
         var cursor = 0
         if tokens.count >= 2, case .op(let sign)? = tokens.first, sign == "-" || sign == "+" {

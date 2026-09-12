@@ -1,5 +1,7 @@
 import Foundation
 
+// MARK: - Deep link handling
+
 enum DeepLinkRouter {
     @MainActor
     static func handle(_ url: URL) {
@@ -21,9 +23,11 @@ enum DeepLinkRouter {
         }
     }
 
+    // MARK: URL parsing
+
     private static func value(_ key: String, from url: URL) -> String? {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
-        guard let raw = components.queryItems?.first { $0.name == key }?.value else { return nil }
+        guard let raw = components.queryItems?.first(where: { $0.name == key })?.value else { return nil }
         // `queryItems` decodes `%2B` but not the form-encoded `+` for spaces;
         // browsers and blunt clients send `line=.timer+5`.
         return raw.replacingOccurrences(of: "+", with: " ")

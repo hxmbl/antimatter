@@ -1,7 +1,11 @@
 import Foundation
 
+// MARK: - Intent execution
+
 /// Glue layer between raw typing and executed intents.
 nonisolated enum IntentExecution {
+
+    // MARK: Caret line
 
     /// The line under the caret with its trailing newline removed.
     static func caretLineRange(in text: String, selection: NSRange) -> NSRange? {
@@ -15,11 +19,15 @@ nonisolated enum IntentExecution {
         return range
     }
 
+    // MARK: Commit model
+
     /// A committed answer: replace `range` in the buffer with `replacement`.
     struct Commit: Equatable {
         let range: NSRange
         let replacement: String
     }
+
+    // MARK: Commits on return
 
     /// Everything needed to rewrite a segment into `expression = result`,
     /// or nil when nothing should happen.
@@ -38,6 +46,8 @@ nonisolated enum IntentExecution {
         let replacement = indent + calculation.expression + " = " + IntentParser.format(calculation.result)
         return Commit(range: contentRange, replacement: replacement)
     }
+
+    // MARK: Aggregates
 
     nonisolated enum AggregateKind: Equatable {
         case sum
@@ -141,6 +151,8 @@ nonisolated enum IntentExecution {
     }
 
 
+    // MARK: Action model
+
     enum LineAction: Equatable {
         case startTimer(IntentParser.Timer)
         /// Start a running stopwatch (`.stopwatch [label]`); counts up.
@@ -185,6 +197,8 @@ nonisolated enum IntentExecution {
         /// Leave the line alone; the newline simply lands.
         case nothing
     }
+
+    // MARK: Return-key dispatch
 
     /// What pressing return on `line` should do, given the surrounding
     /// `buffer` (needed for aggregates and definitions). A trailing `=`
@@ -305,6 +319,8 @@ nonisolated enum IntentExecution {
     }
 
 
+    // MARK: Command parsing helpers
+
     nonisolated /// The arrow that splits a `.replace find → replace` line into its two
     /// halves; `->` is accepted as well as the typographic `→`.
     static func replaceArrowRange(in text: String) -> Range<String.Index>? {
@@ -331,11 +347,15 @@ nonisolated enum IntentExecution {
     }
 
 
+    // MARK: Help reference
+
     /// The reference block `.help` expands into on return: every dot-command
     /// plus the automatic line replies. Kept in the parser layer so it can be
     /// tested and translated without touching an `NSTextView`.
     static let helpText = """
         Commands — type one and press return:
+
+        Timers & Reminders
           .timer 5                5-minute countdown (bare number = minutes; also 90s, 1h 20m, 5 mins)
           .timer 1h 20m stand up  labelled countdown; max 30 days
           .timer cancel [all]     cancel all running timers
@@ -345,14 +365,20 @@ nonisolated enum IntentExecution {
           .remind in 10 mins …    natural-language reminder ("call mom", "tomorrow at 3pm …")
           .remind tomorrow 3pm …  absolute times work too
           .reminder cancel [all]  cancel all pending reminders
-          .paste                  stream clipboard copies into the note until dismissed
+
+        Note Management
           .new                    create a new, empty note (swipe left/right to switch)
           .switch                 switch to another note (menu)
           .export notes           send the note to Apple Notes
           .export obsidian        save the note as a markdown file in your vault
+          .paste                  stream clipboard copies into the note until dismissed
+
+        Math & Aggregates
           .sum  .total            sum the numbers in this note
           .avg  .average          average the note's numbers
           .count                  count the note's numbers
+
+        Search & System
           .find                   open the find bar (also ⌘F)
           .replace find → replace global replace in the note
           .settings               open the settings window
@@ -369,6 +395,8 @@ nonisolated enum IntentExecution {
           12 kg -> lb         →  12 kg -> lb = 26.46
         """
 
+
+    // MARK: Live preview
 
     /// A short string describing what return would do on `line`, living
     /// alongside the caret so the answer previews before the newline lands.
@@ -457,6 +485,8 @@ nonisolated enum IntentExecution {
     }
 
 
+    // MARK: Completed-answer parsing
+
     /// The copyable answer embedded in a committed line: the trailing number
     /// of `expr = 48`, `.sum = 46`, or `days until … = 8`, or the weekday of
     /// `2026-08-22 = Saturday`. Plain prose is nil.
@@ -474,6 +504,8 @@ nonisolated enum IntentExecution {
         return nil
     }
 
+
+    // MARK: Command completion
 
     /// Completion vocabulary for typing after a `.` — teaches the commands
     /// at the moment of use, with no chrome.
@@ -508,6 +540,8 @@ nonisolated enum IntentExecution {
         return matches.isEmpty ? nil : matches.map { $0.name + " " }
     }
 
+
+    // MARK: Deferred commit guard
 
     /// Guard for the did-change-deferred commit. The answer may land several
     /// runloop turns after typing, so it must be dropped when the buffer has

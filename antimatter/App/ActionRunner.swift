@@ -1,6 +1,8 @@
 import AppKit
 import Foundation
 
+// MARK: - Command outcome
+
 /// The result of running a command line: whether the intent was honoured,
 /// plus a human-readable description.
 struct ActionOutcome: Codable, Equatable {
@@ -8,10 +10,14 @@ struct ActionOutcome: Codable, Equatable {
     let message: String
 }
 
+// MARK: - Command execution
+
 /// Executes a dot-command from a context with no caret or text view —
 /// a deep link, the loopback bridge, or a test.
 @MainActor
 enum ActionRunner {
+    // MARK: Running dot-commands
+
     /// Runs the trimmed line against the active note's text.
     static func run(_ line: String) -> ActionOutcome {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -119,6 +125,8 @@ enum ActionRunner {
         }
     }
 
+    // MARK: Creating and appending notes
+
     /// Creates a fresh note carrying `text`.
     static func create(text: String) -> ActionOutcome {
         let note = NoteStore.shared.create(text: text)
@@ -132,6 +140,8 @@ enum ActionRunner {
         appendLine(trimmed)
         return outcome(true, "Appended")
     }
+
+    // MARK: Feedback formatting
 
     /// `45s`-sounding natural duration for feedback messages ("Timer 1 min 30 sec").
     nonisolated static func naturalDuration(_ seconds: TimeInterval) -> String {
@@ -148,6 +158,7 @@ enum ActionRunner {
         return "\(secs) sec"
     }
 
+    // MARK: Mutation support
 
     private static func appendLine(_ text: String) {
         var note = NoteStore.shared.activeNote

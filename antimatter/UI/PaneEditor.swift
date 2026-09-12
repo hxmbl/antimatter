@@ -5,8 +5,6 @@ struct FooterStatus: Equatable {
     var preview = ""
     var answerToCopy: String?
     var wordCount: Int = 0
-    var charCount: Int = 0
-    var readingEase: Double? = nil
 }
 
 struct PaneEditor: NSViewRepresentable {
@@ -474,16 +472,11 @@ struct PaneEditor: NSViewRepresentable {
                 return
             }
             let line = (textView.string as NSString).substring(with: contentRange)
-            let text = textView.string
-            let words = text.split(separator: /\s+/).count
-            let chars = text.count
-            let ease = ReadingMetrics.fleschKincaidEase(text)
+            let words = textView.string.split(separator: /\s+/).count
             status.wrappedValue = FooterStatus(
                 preview: IntentExecution.preview(forLine: line, in: textView.string) ?? "",
                 answerToCopy: IntentExecution.answer(fromLine: line),
-                wordCount: words,
-                charCount: chars,
-                readingEase: ease)
+                wordCount: words)
         }
 
 

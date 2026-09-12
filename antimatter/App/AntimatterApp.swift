@@ -2,6 +2,8 @@ import SwiftUI
 import AppKit
 import UserNotifications
 
+// MARK: - App entry point
+
 @main
 struct AntimatterApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -52,6 +54,8 @@ struct AntimatterApp: App {
     }
 }
 
+// MARK: - Find menu support
+
 /// Bridges SwiftUI menu items to NSTextView's text-finder actions.
 @MainActor
 enum FindSupport {
@@ -62,6 +66,8 @@ enum FindSupport {
         textView.performTextFinderAction(item)
     }
 }
+
+// MARK: - Notification handling
 
 /// Timer notifications: clicking one reopens the pane and clears the chip.
 final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
@@ -98,6 +104,8 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         completionHandler([.banner])
     }
 }
+
+// MARK: - Launch preferences
 
 /// Appearance and display-mode policy chosen in Settings.
 @MainActor
@@ -136,6 +144,8 @@ enum LaunchPreferences {
         }
     }
 }
+
+// MARK: - App delegate
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let notificationRouter = NotificationRouter()

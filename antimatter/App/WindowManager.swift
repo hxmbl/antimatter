@@ -1,6 +1,8 @@
 import AppKit
 import SwiftUI
 
+// MARK: - Pane window management
+
 /// Extra pane windows get unique identifiers for individual close/restyle.
 /// Reads live from NSApplication.shared.windows so all paths stay in sync.
 @MainActor
@@ -8,6 +10,8 @@ final class WindowManager {
     static let shared = WindowManager()
 
     private init() {}
+
+    // MARK: Window lookup
 
     static func isPane(_ window: NSWindow) -> Bool {
         window.identifier?.rawValue.hasPrefix(PaneStyle.windowIdentifier) == true
@@ -27,6 +31,8 @@ final class WindowManager {
         }
         return frontmostPane
     }
+
+    // MARK: Window lifecycle
 
     /// Opens an independent scratchpad window. Only in Dock mode, where panes are regular titled windows.
     func createNewWindow() {
@@ -66,6 +72,8 @@ final class WindowManager {
         guard PaneStyle.displayMode == .dock, let window = keyPane else { return }
         window.close()
     }
+
+    // MARK: Per-window stores
 
     /// Each extra window gets its own notes file.
     private static func newStoreURL() -> URL {
