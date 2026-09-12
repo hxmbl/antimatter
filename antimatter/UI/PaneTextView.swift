@@ -13,8 +13,8 @@ final class PaneTextView: NSTextView {
     private var lastReportedTopLevel: CGFloat = -1
 
     // The native selection remains authoritative. This overlay only smooths
-    // explicit caret jumps; typing, IME composition, and selection drawing
-    // always use AppKit directly.
+    // explicit caret jumps and verified one-character edits; IME composition,
+    // paste, selections, and formatting commands use AppKit directly.
     private struct CaretGlide {
         let from: NSRect
         var to: NSRect
@@ -24,6 +24,7 @@ final class PaneTextView: NSTextView {
 
     private var caretGlide: CaretGlide?
     private var caretDisplayLink: CADisplayLink?
+    private var editAnimationGeneration = 0
 
     private var hasActiveCaret: Bool {
         window?.isKeyWindow == true && window?.firstResponder === self &&
@@ -49,7 +50,10 @@ final class PaneTextView: NSTextView {
         let link = displayLink(target: self, selector: #selector(advanceCaretGlide(_:)))
         link.add(to: .main, forMode: .common)
         caretDisplayLink = link
-        setNeedsDisplay(oldRect.insetBy(dx: -4, dy: -4))
+        // Invalidate both endpoints immediately. The destination caret may
+        // already have been drawn before the glide was scheduled, so marking
+        // only the source rectangle can leave the ghost outside the redraw.
+        setNeedsDisplay(oldRect.union(newRect).insetBy(dx: -5, dy: -5))
     }
 
     @objc private func advanceCaretGlide(_ link: CADisplayLink) {
@@ -81,12 +85,41 @@ final class PaneTextView: NSTextView {
         guard let layoutManager, let textContainer else { return .zero }
         let length = textStorage?.length ?? 0
         let index = min(max(characterIndex, 0), length)
+        layoutManager.ensureLayout(for: textContainer)
+
+        if index == length {
+            // There is no glyph at the insertion point after the final
+            // character. Use the extra line fragment for an empty trailing
+            // line, otherwise use the last glyph's line fragment. The old
+            // fallback used the whole document's usedRect height, which made
+            // the caret briefly stretch from the new line to the top/bottom
+            // of the note.
+            let extra = layoutManager.extraLineFragmentRect
+            if !extra.isEmpty {
+                return NSRect(
+                    x: textContainerOrigin.x + extra.minX,
+                    y: textContainerOrigin.y + extra.minY,
+                    width: 2,
+                    height: extra.height
+                )
+            }
+            if layoutManager.numberOfGlyphs > 0 {
+                let lastGlyph = layoutManager.numberOfGlyphs - 1
+                let line = layoutManager.lineFragmentUsedRect(forGlyphAt: lastGlyph, effectiveRange: nil)
+                return NSRect(
+                    x: textContainerOrigin.x + line.maxX,
+                    y: textContainerOrigin.y + line.minY,
+                    width: 2,
+                    height: line.height
+                )
+            }
+        }
+
         let glyph = index < layoutManager.numberOfGlyphs
             ? layoutManager.glyphIndexForCharacter(at: index)
             : layoutManager.numberOfGlyphs
         guard glyph < layoutManager.numberOfGlyphs else {
-            let used = layoutManager.usedRect(for: textContainer)
-            return NSRect(x: used.maxX, y: used.maxY - used.height, width: 2, height: used.height)
+            return .zero
         }
         let line = layoutManager.lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
         let location = layoutManager.location(forGlyphAt: glyph)
@@ -111,16 +144,92 @@ final class PaneTextView: NSTextView {
             x: glide.from.minX + (glide.to.minX - glide.from.minX) * eased,
             y: glide.from.minY + (glide.to.minY - glide.from.minY) * eased,
             width: glide.to.width,
-            height: glide.from.height + (glide.to.height - glide.from.height) * eased
+            height: glide.to.height
         )
         let color = insertionPointColor ?? .labelColor
+
+        // Keep a small, bounded remnant at the source position so the glide
+        // reads as a ghost rather than a disappearing/reappearing caret.
+        // This deliberately uses the source caret's real height and never a
+        // document-sized rectangle.
+        if eased < 1 {
+            color.withAlphaComponent(0.2 * (1 - eased)).setFill()
+            NSBezierPath(roundedRect: glide.from, xRadius: 1, yRadius: 1).fill()
+        }
+
         color.withAlphaComponent(0.85).setFill()
         NSBezierPath(roundedRect: rect, xRadius: 1, yRadius: 1).fill()
     }
 
     override func didChangeText() {
+        editAnimationGeneration += 1
         clearCaretGlide()
         super.didChangeText()
+    }
+
+    /// Starts an edit glide after the editor's deferred Markdown render has
+    /// settled. The edit itself has already completed; this is visual only.
+    private func scheduleEditCaretGlide(
+        from oldRect: NSRect,
+        oldLocation: Int,
+        to newLocation: Int,
+        generation: Int
+    ) {
+        guard !oldRect.isEmpty else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.editAnimationGeneration == generation,
+                  self.hasActiveCaret,
+                  self.selectedRange().location == newLocation else { return }
+            self.startCaretGlide(from: oldLocation, to: newLocation, from: oldRect)
+        }
+    }
+
+    private func isPlainSingleCharacterInsertion(
+        event: NSEvent,
+        oldRange: NSRange,
+        oldLength: Int,
+        newRange: NSRange,
+        newLength: Int
+    ) -> Bool {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard oldRange.length == 0,
+              newRange.length == 0,
+              newLength == oldLength + 1,
+              newRange.location == oldRange.location + 1,
+              modifiers.subtracting([.shift, .capsLock, .function]).isEmpty,
+              let characters = event.characters,
+              characters.count == 1,
+              characters != "\n",
+              characters != "\r" else { return false }
+        return true
+    }
+
+    private func isSupportedDeletion(
+        event: NSEvent,
+        oldRange: NSRange,
+        oldLength: Int,
+        newRange: NSRange,
+        newLength: Int
+    ) -> Bool {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard oldRange.length == 0, newRange.length == 0, newLength < oldLength else { return false }
+        switch event.keyCode {
+        case 51: // Backspace
+            if modifiers.isEmpty, newLength == oldLength - 1 {
+                return newRange.location == oldRange.location - 1
+            }
+            // Command-backspace deletes to the beginning of the line.
+            return modifiers == [.command] && newRange.location <= oldRange.location
+        case 117: // Forward Delete
+            if modifiers.isEmpty, newLength == oldLength - 1 {
+                return newRange.location == oldRange.location
+            }
+            // Command-forward-delete deletes to the end of the line.
+            return modifiers == [.command] && newRange.location == oldRange.location
+        default:
+            return false
+        }
     }
 
     convenience init() {
@@ -423,9 +532,34 @@ final class PaneTextView: NSTextView {
         if !shouldAnimateCaret {
             clearCaretGlide()
         }
-        let oldLocation = selectedRange().location
-        let oldRect = shouldAnimateCaret ? caretRect(for: oldLocation) : .zero
+        let oldRange = selectedRange()
+        let oldLength = textStorage?.length ?? 0
+        let oldLocation = oldRange.location
+        let oldRect = caretRect(for: oldLocation)
         super.keyDown(with: event)
+
+        let newRange = selectedRange()
+        let newLength = textStorage?.length ?? oldLength
+        if isPlainSingleCharacterInsertion(
+            event: event,
+            oldRange: oldRange,
+            oldLength: oldLength,
+            newRange: newRange,
+            newLength: newLength
+        ) || isSupportedDeletion(
+            event: event,
+            oldRange: oldRange,
+            oldLength: oldLength,
+            newRange: newRange,
+            newLength: newLength
+        ) {
+            scheduleEditCaretGlide(
+                from: oldRect,
+                oldLocation: oldLocation,
+                to: newRange.location,
+                generation: editAnimationGeneration
+            )
+        }
         if shouldAnimateCaret, selectedRange().length == 0 {
             startCaretGlide(
                 from: oldLocation,
