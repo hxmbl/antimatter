@@ -54,7 +54,7 @@ No setup, no account, no data leaves your Mac until you ask it to.
 - **Autosave** — every keystroke saved atomically to `~/Library/Application Support/Antimatter/notes/notes.json` with a one-generation `.bak`. Legacy `scratchpad.md` files are imported automatically. Type → quit → relaunch → it's still there.
 - **Multiple notes** — type `.new` to start a fresh note, or swipe left/right on the pane to switch between them. Deleted notes sit in The Void for 36 hours before they're gone.
 - **Export, no network** — `.export notes` sends the note to Apple Notes; `.export obsidian` saves it as a markdown file wherever you point.
-- **iCloud sync, optional** — notes are encrypted on-device before syncing. Flip it on in Settings.
+- **iCloud sync, optional** — notes are encrypted on-device before syncing; the encryption key rides iCloud Keychain so a second Mac can decrypt what the first uploaded. Both iCloud and iCloud Keychain must be enabled in Settings for multi-device sync. Flip it on in Settings.
 - **Deep links** — `antimatter://`, `antimatter://note?text=…`, `antimatter://append?text=…`, `antimatter://command?line=.timer 5` bring up the pane, create/append notes, or run any dot-command from outside the app.
 - **Raycast extension** — `raycast-extension/` wraps those deep links: Open Pane, Create Note, and Run Command.
 

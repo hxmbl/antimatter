@@ -60,12 +60,15 @@ final class CloudKitSync: ObservableObject {
     }
 
     /// Stores the encryption key in the Keychain (not UserDefaults).
+    /// `kSecAttrSynchronizable` syncs the item between this app's installs
+    /// via iCloud Keychain, so a second Mac can decrypt what the first uploaded.
     private static func saveEncryptionKey(_ key: SymmetricKey) {
         let keyData = key.withUnsafeBytes { Data($0) }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: kKeychainService,
             kSecAttrAccount as String: kKeychainAccount,
+            kSecAttrSynchronizable as String: kCFBooleanTrue,
             kSecValueData as String: keyData
         ]
         SecItemDelete(query as CFDictionary)
@@ -75,16 +78,34 @@ final class CloudKitSync: ObservableObject {
         }
     }
 
+    /// Reads the encryption key, preferring the iCloud-synced item and
+    /// migrating pre-upgrade installs: a legacy non-syncing key is re-saved
+    /// as synchronizable so other devices inherit it.
     private static func loadEncryptionKey() -> SymmetricKey? {
-        let query: [String: Any] = [
+        let syncQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: kKeychainService,
+            kSecAttrAccount as String: kKeychainAccount,
+            kSecAttrSynchronizable as String: kCFBooleanTrue,
+            kSecReturnData as String: true
+        ]
+        var result: AnyObject?
+        if SecItemCopyMatching(syncQuery as CFDictionary, &result) == errSecSuccess,
+           let data = result as? Data {
+            return SymmetricKey(data: data)
+        }
+
+        let legacyQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: kKeychainService,
             kSecAttrAccount as String: kKeychainAccount,
             kSecReturnData as String: true
         ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
+        result = nil
+        guard SecItemCopyMatching(legacyQuery as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data
+        else { return nil }
+        saveEncryptionKey(SymmetricKey(data: data))
         return SymmetricKey(data: data)
     }
 
@@ -213,23 +234,36 @@ final class CloudKitSync: ObservableObject {
             let query = CKQuery(recordType: "Note", predicate: NSPredicate(value: true))
             let (matchResults, _) = try await database.records(matching: query)
             var notes: [SyncNote] = []
+            var decryptFailures = 0
 
             for (_, result) in matchResults {
                 guard case .success(let record) = result else { continue }
                 guard let noteIDString = record["noteID"] as? String,
                       let noteID = UUID(uuidString: noteIDString),
                       let encryptedData = record["encryptedText"] as? Data,
-                      let text = try decrypt(encryptedData),
                       let createdAt = record["createdAt"] as? Date,
                       let modifiedAt = record["modifiedAt"] as? Date,
-                      let isSlot = record["isSlot"] as? Bool else { continue }
-
-                let title = record["title"] as? String ?? ""
-                let note = SyncNote(id: noteID, text: text, title: title, createdAt: createdAt, modifiedAt: modifiedAt, isSlot: isSlot)
+                      let isSlot = record["isSlot"] as? Bool
+                else { continue }
+                // A record that fails to decrypt means this device's sync key
+                // differs from the one that wrote it (iCloud Keychain sync not
+                // yet converged, or a true key divergence). Count instead of
+                // silently dropping, so the mismatch is visible to the user.
+                guard let text = try? decrypt(encryptedData) else {
+                    decryptFailures += 1
+                    continue
+                }
+                let note = SyncNote(id: noteID, text: text, title: record["title"] as? String ?? "",
+                                    createdAt: createdAt, modifiedAt: modifiedAt, isSlot: isSlot)
                 notes.append(note)
             }
 
             lastSyncDate = Date()
+            if decryptFailures > 0 {
+                syncStatus = .error("\(decryptFailures) synced note\(decryptFailures == 1 ? "" : "s") can't be decrypted — iCloud Keychain sync may not have delivered the key yet")
+            } else {
+                syncStatus = .idle
+            }
             return notes
         } catch {
             syncStatus = .error(error.localizedDescription)
