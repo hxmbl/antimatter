@@ -71,9 +71,23 @@ final class LocalBridge {
     @MainActor
     private func response(for request: Data) -> Data {
         let text = String(decoding: request, as: UTF8.self)
-        let requestLine = text.split(separator: "\r\n").first ?? ""
+        let headerLines = text.split(separator: "\r\n")
+        let requestLine = headerLines.first ?? ""
+
+        // No browser may drive the bridge: a cross-origin page could otherwise
+        // fire `.timer` or `.paste` commands at the loopback listener. Native
+        // clients (curl, the Raycast extension) send no Origin header; a
+        // browser fetch always does. Any non-null Origin is refused.
+        if let origin = headerLines.first(where: { $0.lowercased().hasPrefix("origin:") }) {
+            let value = String(origin.dropFirst("origin:".count)).trimmingCharacters(in: .whitespaces)
+            guard value.lowercased() == "null" else {
+                return httpResponse(status: "403 Forbidden",
+                                    body: Data("{\"ok\":false,\"message\":\"Origin not allowed\"}".utf8))
+            }
+        }
+
         let tokens = requestLine.split(separator: " ")
-        let target = tokens.count > 1 ? tokens[1] : "/"
+        let target = tokens.count > 1 ? String(tokens[1]) : "/"
         // Form-encoded clients send spaces as `+`; URLComponents leaves `+`
         // literal, so translate it to `%20` before the generic parse.
         let normalized = target.replacingOccurrences(of: "+", with: "%20")
@@ -98,11 +112,15 @@ final class LocalBridge {
             outcome = ActionOutcome(ok: false, message: "Unknown endpoint \(path)")
         }
 
-        var body: Data = Data("{\"ok\":false}".utf8)
+        var body = Data("{\"ok\":false}".utf8)
         if let encoded = try? JSONEncoder().encode(outcome) {
             body = encoded
         }
-        var headers = "HTTP/1.1 200 OK\r\n"
+        return httpResponse(status: "200 OK", body: body)
+    }
+
+    private func httpResponse(status: String, body: Data) -> Data {
+        var headers = "HTTP/1.1 \(status)\r\n"
         headers += "Content-Type: application/json\r\n"
         headers += "Content-Length: \(body.count)\r\n"
         headers += "Connection: close\r\n\r\n"
