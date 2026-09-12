@@ -119,6 +119,17 @@ struct NoteStoreTests {
         store.promoteToSlot(a, at: -1)
         #expect(store.notes.first { $0.id == a.id }?.isSlot == false)
     }
+
+    @Test func noteForSlotCreatesAndIsIdempotent() {
+        let store = NoteStore(fileURL: tempURL())
+        let note = store.note(forSlot: 3)
+        #expect(note.isSlot && note.slotIndex == 3)
+        #expect(store.slotNotes().map(\.id) == [note.id])
+        // Repeat presses return the same pinned note instead of creating more.
+        store.note(forSlot: 3)
+        #expect(store.notes.count == 1)
+        #expect(store.activeNoteID == note.id)
+    }
 }
 
 @MainActor

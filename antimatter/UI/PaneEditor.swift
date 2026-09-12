@@ -358,7 +358,7 @@ struct PaneEditor: NSViewRepresentable {
                 noteStore.create()
                 return true
             case .showNoteSwitcher:
-                showNoteSwitcherStub(textView)
+                showNoteSwitcher(textView)
                 return true
             case .export(let destination):
                 exportNote(to: destination)
@@ -409,23 +409,28 @@ struct PaneEditor: NSViewRepresentable {
             }
         }
 
-        private func showNoteSwitcherStub(_ textView: NSTextView) {
+        private func showNoteSwitcher(_ textView: NSTextView) {
             guard !referenceViewManager.isInHelpView else { return }
             let menu = NSMenu(title: "Note Switcher")
-            let item = NSMenuItem(
-                title: "Switch notes — coming soon",
-                action: #selector(presentNoteSwitcher(_:)),
-                keyEquivalent: "")
-            item.target = self
-            menu.addItem(item)
+            for note in noteStore.notes {
+                let item = NSMenuItem(title: note.title, action: #selector(selectNoteItem(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = note.id
+                if note.id == noteStore.activeNoteID { item.state = .on }
+                menu.addItem(item)
+            }
+            if menu.items.isEmpty {
+                menu.addItem(NSMenuItem(title: "No notes", action: nil, keyEquivalent: ""))
+            }
             if let window = textView.window {
                 let point = window.mouseLocationOutsideOfEventStream
                 menu.popUp(positioning: nil, at: point, in: window.contentView)
             }
         }
 
-        @objc private func presentNoteSwitcher(_ sender: Any?) {
-            NoticeCenter.shared.show("Note switcher coming soon")
+        @objc private func selectNoteItem(_ sender: NSMenuItem) {
+            guard let id = sender.representedObject as? UUID else { return }
+            noteStore.activeNoteID = id
         }
 
         private func performGlobalReplace(find: String, replacement: String, textView: NSTextView) {

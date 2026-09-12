@@ -93,6 +93,7 @@ Not sure which command does what? Type `.` — a native completion window lists 
 | `Esc` | Hide pane / close reference view |
 | `⌘F` / `⌘G` / `⌘⇧G` | Find / next / previous |
 | `⌘R` | Reveal notes in Finder |
+| `⌘1`–`⌘9` | Jump to a slotted note (creating and pinning one if the slot is empty) |
 
 ## Settings
 

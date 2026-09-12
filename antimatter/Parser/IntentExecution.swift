@@ -165,8 +165,7 @@ nonisolated enum IntentExecution {
         case startPasteStream
         /// Create a brand-new empty note and switch to it (`.new`).
         case newNote
-        /// Bring up the note switcher menu (`.switch`). Stub: the menu
-        /// presentation is not built yet.
+        /// Bring up the note switcher menu (`.switch`).
         case showNoteSwitcher
         /// Export the whole note somewhere local (`.export notes` / `.export obsidian`).
         case export(ExportDestination)
@@ -261,7 +260,7 @@ nonisolated enum IntentExecution {
         }
         if trimmed.lowercased().hasPrefix(IntentParser.commandPrefix + "replace ") {
             let rest = String(trimmed.dropFirst((IntentParser.commandPrefix + "replace ").count))
-            if let arrow = rest.range(of: " → ") {
+            if let arrow = replaceArrowRange(in: rest) {
                 let find = String(rest[..<arrow.lowerBound])
                 let replace = String(rest[arrow.upperBound...])
                 if !find.isEmpty {
@@ -305,6 +304,12 @@ nonisolated enum IntentExecution {
         return indent + trimmed + " = " + IntentParser.format(value)
     }
 
+
+    nonisolated /// The arrow that splits a `.replace find → replace` line into its two
+    /// halves; `->` is accepted as well as the typographic `→`.
+    static func replaceArrowRange(in text: String) -> Range<String.Index>? {
+        text.range(of: " → ") ?? text.range(of: " -> ")
+    }
 
     /// Parses a `.export <destination>` line into its destination, or nil.
     static func exportDestination(from line: String) -> ExportDestination? {
@@ -427,7 +432,7 @@ nonisolated enum IntentExecution {
         }
         if trimmed.lowercased().hasPrefix(IntentParser.commandPrefix + "replace ") {
             let rest = String(trimmed.dropFirst((IntentParser.commandPrefix + "replace ").count))
-            if let arrow = rest.range(of: " → ") {
+            if let arrow = replaceArrowRange(in: rest) {
                 let find = String(rest[..<arrow.lowerBound])
                 let replace = String(rest[arrow.upperBound...])
                 if !find.isEmpty {

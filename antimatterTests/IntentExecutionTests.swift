@@ -186,6 +186,22 @@ struct ReturnKeyActionTests {
         #expect(IntentExecution.action(forLine: "switch", in: "") == .nothing)
     }
 
+    @Test func replaceAcceptsBothArrows() {
+        for line in [".replace foo → bar", ".replace foo -> bar"] {
+            if case .replaceAll(let find, let replace) = IntentExecution.action(forLine: line, in: "") {
+                #expect(find == "foo")
+                #expect(replace == "bar")
+            } else {
+                Issue.record("\(line) should replace foo with bar")
+            }
+            #expect(IntentExecution.preview(forLine: line) == "⏎ replace \"foo\" → \"bar\"")
+        }
+        // No arrow, or empty search pattern, stays a hint.
+        if case .hint = IntentExecution.action(forLine: ".replace foo", in: "") {} else {
+            Issue.record(".replace without an arrow should hint")
+        }
+    }
+
     @Test func helpExpandsIntoTheCommandReference() {
         if case .showHelp = IntentExecution.action(forLine: ".help", in: "") {} else {
             Issue.record(".help should show the reference block")

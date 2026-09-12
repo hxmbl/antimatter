@@ -29,6 +29,13 @@ struct AntimatterApp: App {
                     ])
                 }
                 .keyboardShortcut("r", modifiers: [.command])
+                ForEach(0..<9, id: \.self) { index in
+                    Button("Slot \(index + 1)") {
+                        _ = NoteStore.shared.note(forSlot: index)
+                        PaneHotKey.shared.revealPane()
+                    }
+                    .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")))
+                }
             }
             CommandGroup(after: .textEditing) {
                 Button("Find…") { FindSupport.perform(.showFindInterface) }

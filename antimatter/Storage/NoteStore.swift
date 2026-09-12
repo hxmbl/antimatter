@@ -128,6 +128,17 @@ final class NoteStore: ObservableObject {
         }
     }
 
+    /// The note pinned to slot `index` (0–8), creating and pinning a fresh
+    /// one when the slot is empty. Idempotent: repeat presses keep the same note.
+    func note(forSlot index: Int) -> Note {
+        if let existing = notes.first(where: { $0.isSlot && $0.slotIndex == index }) {
+            return existing
+        }
+        let note = create()
+        promoteToSlot(note, at: index)
+        return note
+    }
+
     func slotNotes() -> [Note] {
         (0..<9).compactMap { i in
             notes.first { $0.isSlot && $0.slotIndex == i }
