@@ -177,6 +177,8 @@ nonisolated enum IntentExecution {
         case startPasteStream
         /// Create a brand-new empty note and switch to it (`.new`).
         case newNote
+        /// Clear the active note's text (`.clear`).
+        case clearNote
         /// Bring up the note switcher menu (`.switch`).
         case showNoteSwitcher
         /// Export the whole note somewhere local (`.export notes` / `.export obsidian`).
@@ -256,6 +258,9 @@ nonisolated enum IntentExecution {
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "new" {
             return .newNote
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "clear" {
+            return .clearNote
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "switch" {
             return .showNoteSwitcher
@@ -368,6 +373,7 @@ nonisolated enum IntentExecution {
 
         Note Management
           .new                    create a new, empty note (swipe left/right to switch)
+          .clear                  clear the current note
           .switch                 switch to another note (menu)
           .export notes           send the note to Apple Notes
           .export obsidian        save the note as a markdown file in your vault
@@ -440,6 +446,9 @@ nonisolated enum IntentExecution {
         if trimmed.lowercased() == IntentParser.commandPrefix + "new" {
             return "⏎ creates a new, empty note"
         }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "clear" {
+            return "⏎ clears the note"
+        }
         if trimmed.lowercased() == IntentParser.commandPrefix + "switch" {
             return "⏎ switches to another note"
         }
@@ -511,6 +520,7 @@ nonisolated enum IntentExecution {
     /// at the moment of use, with no chrome.
     static let dotCommands: [(name: String, description: String)] = [
         (".new", "create a new, empty note"),
+        (".clear", "clear the current note"),
         (".switch", "switch to another note"),
         (".timer", "start or cancel a countdown"),
         (".stopwatch", "start or cancel a stopwatch"),

@@ -79,6 +79,10 @@ enum ActionRunner {
             let title = note.text.isEmpty ? "" : " — \(note.title)"
             return outcome(true, "New note\(title)")
 
+        case .clearNote:
+            clearNote()
+            return outcome(true, "Note cleared")
+
         case .export(let destination):
             do {
                 let result = try ExportCenter.export(destination, text: NoteStore.shared.activeNote.text)
@@ -139,6 +143,14 @@ enum ActionRunner {
         guard !trimmed.isEmpty else { return outcome(false, "Nothing to append") }
         appendLine(trimmed)
         return outcome(true, "Appended")
+    }
+
+    private static func clearNote() {
+        var note = NoteStore.shared.activeNote
+        note.text = ""
+        note.modifiedAt = Date()
+        NoteStore.shared.activeNote = note
+        NoteStore.shared.flush()
     }
 
     // MARK: Feedback formatting

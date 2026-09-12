@@ -41,6 +41,15 @@ struct ActionRunnerTests {
         #expect(outcome.message == "New note — hello")
     }
 
+    @Test func clearClearsTheActiveNote() {
+        _ = NoteStore.shared.create(text: "something to clear")
+        defer { resetActiveNote() }
+        let outcome = ActionRunner.run(".clear")
+        #expect(outcome.ok == true)
+        #expect(outcome.message == "Note cleared")
+        #expect(NoteStore.shared.activeNote.text == "")
+    }
+
     @Test func appendAddsToActiveNote() {
         _ = NoteStore.shared.create(text: "first")
         defer { resetActiveNote() }

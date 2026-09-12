@@ -174,6 +174,15 @@ struct ReturnKeyActionTests {
         #expect(IntentExecution.action(forLine: "new", in: "") == .nothing)
     }
 
+    @Test func clearNoteIsACommand() {
+        #expect(IntentExecution.action(forLine: ".clear", in: "some text") == .clearNote)
+        #expect(IntentExecution.preview(forLine: ".clear") == "⏎ clears the note")
+        #expect(IntentExecution.helpText.contains(".clear"))
+        #expect(IntentExecution.dotCommands.contains { $0.name == ".clear" })
+        #expect(IntentExecution.completions(for: ".cl")?.contains(".clear ") == true)
+        #expect(IntentExecution.action(forLine: "clear", in: "some text") == .nothing)
+    }
+
     @Test func switchNoteIsACommand() {
         if case .showNoteSwitcher = IntentExecution.action(forLine: ".switch", in: "") {} else {
             Issue.record(".switch should open the note switcher")

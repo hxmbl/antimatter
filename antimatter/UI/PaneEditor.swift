@@ -355,6 +355,9 @@ struct PaneEditor: NSViewRepresentable {
             case .newNote:
                 noteStore.create()
                 return true
+            case .clearNote:
+                text.wrappedValue = ""
+                return true
             case .showNoteSwitcher:
                 showNoteSwitcher(textView)
                 return true
