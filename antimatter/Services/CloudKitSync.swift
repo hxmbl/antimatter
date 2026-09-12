@@ -136,7 +136,10 @@ final class CloudKitSync: ObservableObject {
         syncStatus = .syncing
 
         do {
-            let record = CKRecord(recordType: "Note")
+            // A deterministic recordID keyed on the note id makes every push
+            // an in-place update instead of a fresh duplicate in iCloud.
+            let recordID = CKRecord.ID(recordName: note.id.uuidString)
+            let record = CKRecord(recordType: "Note", recordID: recordID)
             record["noteID"] = note.id.uuidString as CKRecordValue
             record["createdAt"] = note.createdAt as CKRecordValue
             record["modifiedAt"] = note.modifiedAt as CKRecordValue
@@ -173,7 +176,8 @@ final class CloudKitSync: ObservableObject {
             try await withThrowingTaskGroup(of: Void.self) { group in
                 for (note, encryptedData) in encryptedNotes {
                     group.addTask {
-                        let record = CKRecord(recordType: "Note")
+                        let recordID = CKRecord.ID(recordName: note.id.uuidString)
+                        let record = CKRecord(recordType: "Note", recordID: recordID)
                         record["noteID"] = note.id.uuidString as CKRecordValue
                         record["createdAt"] = note.createdAt as CKRecordValue
                         record["modifiedAt"] = note.modifiedAt as CKRecordValue
@@ -231,6 +235,32 @@ final class CloudKitSync: ObservableObject {
             syncStatus = .error(error.localizedDescription)
             return []
         }
+    }
+
+    /// The pull half of sync: fetches iCloud notes and merges them into the
+    /// store. Local wins on tie, newer `modifiedAt` wins on conflict;
+    /// anything iCloud has that we don't is added.
+    func pull() async {
+        guard isEnabled else { return }
+        let remote = await fetchNotes()
+        guard !remote.isEmpty else { return }
+        let store = NoteStore.shared
+        var merged = store.notes
+        for incoming in remote {
+            let note = Note(
+                id: incoming.id, text: incoming.text,
+                createdAt: incoming.createdAt, modifiedAt: incoming.modifiedAt,
+                isSlot: incoming.isSlot)
+            if let idx = merged.firstIndex(where: { $0.id == incoming.id }) {
+                if incoming.modifiedAt > merged[idx].modifiedAt {
+                    merged[idx] = note
+                }
+            } else {
+                merged.insert(note, at: 0)
+            }
+        }
+        store.notes = merged
+        store.flush()
     }
 
     func deleteNote(_ noteID: UUID) async throws {

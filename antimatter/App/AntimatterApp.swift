@@ -147,6 +147,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         LaunchPreferences.apply()
         CurrencyCenter.shared.activate()
         LocalBridge.shared.start()
+        Task { @MainActor in
+            await CloudKitSync.shared.pull()
+        }
     }
 
     // Without this, AppKit silently terminates a few seconds after the last
