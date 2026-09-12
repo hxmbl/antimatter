@@ -1,5 +1,7 @@
 # Antimatter
 
+![Build & Test](https://github.com/hxmbl/antimatter/actions/workflows/build.yml/badge.svg)
+
 A tiny, local, command-aware notes app for macOS. Not a filing system — a place to dump whatever's in your head and get something back.
 
 **Typing is the interface.** No modes to pick. Everything you type is a valid line of Markdown — only deliberate dot-commands and math do something special.
@@ -115,7 +117,7 @@ xcodebuild -project antimatter.xcodeproj -scheme antimatter build
 
 ## Tests
 
-Swift Testing, in `antimatterTests/`:
+Swift Testing, in `antimatterTests/`. A GitHub Actions check runs these on every push — report-only, so a broken commit never blocks you, it just tells you what to fix later.
 
 ```sh
 xcodebuild -project antimatter.xcodeproj -scheme antimatter test
@@ -160,10 +162,6 @@ tools/run-swiftlint.sh
 - **Persistence:** JSON for notes, timers, reminders, and cached exchange rates in Application Support; legacy Markdown scratchpads are imported once
 - **OCR:** Apple Vision, on-device
 - **Tests:** Swift Testing
-
-## Disclaimer
-
-May not compile. No em dashes used.
 
 ## Why This Exists
 
