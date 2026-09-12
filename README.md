@@ -118,11 +118,7 @@ xcodebuild -project antimatter.xcodeproj -scheme antimatter build
 
 ## Tests
 
-Swift Testing, in `antimatterTests/`. A GitHub Actions check runs these on every push — report-only, so a broken commit never blocks you, it just tells you what to fix later.
-
-```sh
-xcodebuild -project antimatter.xcodeproj -scheme antimatter test
-```
+Swift Testing, in `antimatterTests/`. Run locally with `tools/run-tests.sh`; a GitHub Actions check runs them on every push — report-only, so a broken commit never blocks you, it just tells you what to fix later.
 
 ## Project layout
 

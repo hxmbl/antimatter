@@ -41,7 +41,7 @@ final class CloudKitSync: ObservableObject {
 
     private let container: CKContainer?
     private let database: CKDatabase?
-    private let encryptionKey: SymmetricKey?
+    private var encryptionKey: SymmetricKey?
 
     /// Reads signed entitlements directly so an unprovisioned build degrades
     /// to a surfaced error instead of crashing.
@@ -147,6 +147,23 @@ final class CloudKitSync: ObservableObject {
         return String(data: decrypted, encoding: .utf8)
     }
 
+    /// iCloud Keychain sync is eventual: the key can land a beat after launch.
+    /// When the key loaded at startup can't open a record, re-read the Keychain
+    /// once — it may have just delivered the synced key — and retry under it.
+    /// Restores the previous key if the refreshed one decodes nothing.
+    private func decryptAfterReloadingKey(_ data: Data) -> String? {
+        guard let refreshed = Self.loadEncryptionKey(),
+              refreshed != encryptionKey
+        else { return nil }
+        let previous = encryptionKey
+        encryptionKey = refreshed
+        if let text = try? decrypt(data) {
+            return text
+        }
+        encryptionKey = previous
+        return nil
+    }
+
 
     func syncNote(_ note: SyncNote) async {
         guard isEnabled else { return }
@@ -247,9 +264,10 @@ final class CloudKitSync: ObservableObject {
                 else { continue }
                 // A record that fails to decrypt means this device's sync key
                 // differs from the one that wrote it (iCloud Keychain sync not
-                // yet converged, or a true key divergence). Count instead of
-                // silently dropping, so the mismatch is visible to the user.
-                guard let text = try? decrypt(encryptedData) else {
+                // yet converged, or a true key divergence). Retry once under a
+                // freshly-read key; count the rest instead of silently dropping,
+                // so a real mismatch is visible to the user.
+                guard let text = (try? decrypt(encryptedData)) ?? decryptAfterReloadingKey(encryptedData) else {
                     decryptFailures += 1
                     continue
                 }
