@@ -1,9 +1,6 @@
 import Foundation
 
-/// A lightweight in-app event log backing the `.debug` pane. Each event is
-/// echoed to the system log (so it also shows up in unified logging), and the
-/// most recent lines are kept in memory so the pane can print recent activity
-/// without any external logging tooling.
+/// A lightweight in-app event log backing the `.debug` pane.
 final class DebugLog {
     static let shared = DebugLog()
 

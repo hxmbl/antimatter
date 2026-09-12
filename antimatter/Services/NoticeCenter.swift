@@ -1,11 +1,7 @@
 import Combine
 import Foundation
 
-/// Transient user-facing notices rendered as chips at the top of the pane,
-/// auto-clearing after a few seconds. Anything a command wants to say without
-/// polluting the note — a clamped duration, an unrecognised dot-command, a
-/// missing argument, a copied answer — speaks here instead of failing
-/// silently.
+/// Transient user-facing notices rendered as chips at the top of the pane.
 @MainActor
 final class NoticeCenter: ObservableObject {
     static let shared = NoticeCenter()

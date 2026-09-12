@@ -2,14 +2,13 @@ import AppKit
 import Foundation
 import UniformTypeIdentifiers
 
-/// Where `.export` can send the note. Apple Notes and Obsidian are both
-/// local and need no network; Bear is deliberately not offered.
+/// Where `.export` can send the note. Apple Notes and Obsidian are local.
 enum ExportDestination: String, CaseIterable {
     case appleNotes = "notes"
     case obsidian
 }
 
-/// Local exports of the scratchpad note — no network, no third parties.
+/// Local exports of the scratchpad note — no network.
 ///
 /// * **Apple Notes** — the whole note becomes one new note via AppleScript.
 /// * **Obsidian** — the note is written as a markdown file into the vault
@@ -40,7 +39,6 @@ enum ExportCenter {
         }
     }
 
-    // MARK: Apple Notes (AppleScript)
 
     private static func exportToAppleNotes(_ text: String) throws -> String {
         // The first line is the note title, the rest the body — mirroring how
@@ -83,7 +81,6 @@ enum ExportCenter {
         }
     }
 
-    // MARK: Obsidian (vault folder)
 
     private static func exportToObsidian(_ text: String) throws -> String {
         let panel = NSSavePanel()

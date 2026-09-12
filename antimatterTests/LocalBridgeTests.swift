@@ -6,9 +6,7 @@ import Testing
 @Suite(.serialized)
 struct LocalBridgeTests {
 
-    /// Exercise the request path used by the extension, not just listener
-    /// liveness: the bridge must decode a query, run the action, and return
-    /// the resulting outcome as JSON.
+    /// Exercises the request path: decode query, run action, return outcome as JSON.
     @Test func bridgeExecutesAppendAndReturnsOutcome() async throws {
         resetActiveNote()
         LocalBridge.shared.start()

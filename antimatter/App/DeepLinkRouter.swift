@@ -1,14 +1,5 @@
 import Foundation
 
-/// Routes `antimatter://` deep links into the app. The URL scheme is
-/// registered in Info.plist; macOS delivers every open to
-/// `AppDelegate.application(_:open:)`, which funnels them here.
-///
-/// Supported forms:
-///   antimatter://                         — reveal the pane
-///   antimatter://note?text=hello          — create a note with text
-///   antimatter://append?text=more         — append to the active note
-///   antimatter://command?line=.timer 5    — run a dot-command line
 enum DeepLinkRouter {
     @MainActor
     static func handle(_ url: URL) {
@@ -26,7 +17,6 @@ enum DeepLinkRouter {
             _ = ActionRunner.run(line)
 
         default:
-            // Bare `antimatter://` and unknown hosts just bring the pane up.
             break
         }
     }

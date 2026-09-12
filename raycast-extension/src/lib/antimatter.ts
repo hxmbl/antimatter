@@ -5,7 +5,6 @@ const SCHEME = "antimatter";
 /** Ports the app binds in order; must match LocalBridge in the app. */
 export const BRIDGE_PORTS = [41367, 41368, 41369];
 
-/** How long to keep polling /ping after launching the app. */
 const READINESS_TIMEOUT_MS = 6_000;
 const PING_INTERVAL_MS = 300;
 
@@ -34,10 +33,6 @@ export async function openAntimatter(
   await open(antimatterURL(path ?? "", query).toString());
 }
 
-/**
- * Talks to the app's loopback bridge (127.0.0.1 — the app must be running).
- * Returns the parsed outcome, or null when no bridge is reachable.
- */
 export async function bridgeFetch(
   path: string,
 ): Promise<BridgeResponse | null> {
@@ -62,14 +57,10 @@ export async function bridgeFetch(
   return null;
 }
 
-/** Run a command line straight into the app's parser.
- * Tries the bridge once; if the app isn't running it launches via the URL
- * scheme and polls until the parser answers. */
 export async function runCommand(line: string): Promise<BridgeResponse> {
   return runAction(`/command?line=${encodeURIComponent(line)}`);
 }
 
-/** Create a note with the given text through the bridge. */
 export async function createNote(text: string): Promise<BridgeResponse> {
   return runAction(`/note?text=${encodeURIComponent(text)}`);
 }

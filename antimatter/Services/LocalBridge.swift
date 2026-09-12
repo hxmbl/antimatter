@@ -1,14 +1,8 @@
 import Foundation
 import Network
 
-/// Loopback-only HTTP control plane that gives the Raycast extension (and
-/// anything else on this machine) a request/response channel into the app —
-/// the URL scheme alone is fire-and-forget, so command outcomes (a started
-/// timer's real duration, a computed aggregate) could never come back.
-///
-/// Reachable only on 127.0.0.1, so no firewall prompt and nothing leaves the
-/// machine; the extension probes `/ping` to learn when the app is ready,
-/// then calls the action endpoints:
+/// Loopback-only HTTP control plane for the Raycast extension.
+/// Reachable only on 127.0.0.1.
 ///
 ///   GET /ping                  → {"ok": true}
 ///   GET /command?line=.timer 5 → {"ok": true, "message": "Timer 5 min — …"}

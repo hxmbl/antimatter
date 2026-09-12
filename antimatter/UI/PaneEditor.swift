@@ -1,8 +1,6 @@
 import SwiftUI
 import AppKit
 
-/// What the pane's footer says about the caret line: a live preview of what
-/// return would do, plus the copyable answer when the line is committed.
 struct FooterStatus: Equatable {
     var preview = ""
     var answerToCopy: String?
@@ -11,7 +9,6 @@ struct FooterStatus: Equatable {
     var readingEase: Double? = nil
 }
 
-/// Plain-text Markdown editor backed by NSTextView, styled by `PaneStyle`.
 struct PaneEditor: NSViewRepresentable {
     @Binding var text: String
     @Binding var status: FooterStatus
@@ -27,9 +24,6 @@ struct PaneEditor: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.string = text
         textView.isIncrementalSearchingEnabled = true
-        // Editing state is made explicit instead of inherited: a pane text
-        // view that ever ends up non-editable silently swallows every
-        // keystroke with an alert beep, so guard the invariant here.
         textView.isEditable = true
         textView.isSelectable = true
         textView.isRichText = false
@@ -66,10 +60,6 @@ struct PaneEditor: NSViewRepresentable {
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
-        // Explicit sizing limits make the layout manager grow the frame with
-        // the text. Without them the document view stays clipped to the scroll
-        // view's height and there is nothing to scroll, no matter how long
-        // the note gets (reproduced: usedH ≈ 3360 yet frame stayed at clip H).
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
@@ -90,8 +80,6 @@ struct PaneEditor: NSViewRepresentable {
 
         context.coordinator.highlighter.render(textView)
         context.coordinator.ownedTextView = textView
-        // Watch the scroll origin: text slides toward the top corners as
-        // the note scrolls, so the radius relaxes proportionally.
         context.coordinator.clipBoundsObserver = NotificationCenter.default.addObserver(
             forName: NSView.boundsDidChangeNotification,
             object: scrollView.contentView,
@@ -111,12 +99,7 @@ struct PaneEditor: NSViewRepresentable {
 
     func updateNSView(_ scrollView: OverlayScrollView, context: Context) {
         guard let textView = scrollView.documentView as? PaneTextView else { return }
-        // The help view swaps the whole buffer; a SwiftUI re-render (timer
-        // chips, notices, settings) must not clobber it back to the note —
-        // and a settings-side font change must not restyle the reference
-        // text either, which re-rendering it as Markdown would do.
         guard !context.coordinator.referenceViewManager.isInHelpView else { return }
-        // A settings-side font change arrives as a plain re-render.
         context.coordinator.applyFontSizeIfChanged(to: textView)
         textView.reportTopTextLevel()
         guard textView.string != text else { return }
@@ -163,21 +146,14 @@ struct PaneEditor: NSViewRepresentable {
         var topTextLevel: Binding<CGFloat>
         let noteStore: NoteStore
         let highlighter = MarkdownHighlighter()
-        /// Scroll-position observer so the top-corner radius follows the
-        /// caret as the note scrolls.
         var clipBoundsObserver: NSObjectProtocol?
         private var deferredPassTask: Task<Void, Never>?
         private var pendingRender: DispatchWorkItem?
         private var pendingStatusUpdate: DispatchWorkItem?
         private var appliedFontSize: CGFloat = PaneStyle.fontSize
         private var appliedThemeID = PaneTheme.current.id
-        /// Set while undo replays are landing; automatic rewrites stand
-        /// down until a real keystroke arrives, so ⌘Z always wins and stays
-        /// won no matter how slowly the user walks back through history.
+        /// Undo replays suppress automatic rewrites until a real keystroke arrives.
         private var autoRewritesSuppressed = false
-        /// Start of the `.`-token the completion window is already parked on;
-        /// the window follows further typing on its own, so re-calling
-        /// `complete(_:)` would only close and re-open it.
         private var completionAnchor: Int?
         lazy var referenceViewManager: ReferenceViewManager = ReferenceViewManager(
             highlighter: highlighter,
@@ -215,10 +191,8 @@ struct PaneEditor: NSViewRepresentable {
             scheduleCompletion(textView)
         }
 
-        /// Wait until AppKit finishes the current edit transaction before
-        /// applying Markdown attributes. Rendering synchronously from
-        /// `textDidChange` can influence the typing attributes used by the
-        /// same keystroke, making newly typed Unicode look corrupted.
+        /// Defer Markdown rendering until AppKit finishes the current edit
+        /// transaction; rendering synchronously can corrupt newly typed Unicode.
         private func scheduleRender(_ textView: NSTextView) {
             pendingRender?.cancel()
             let render = DispatchWorkItem { [weak self, weak textView] in
@@ -229,9 +203,9 @@ struct PaneEditor: NSViewRepresentable {
             DispatchQueue.main.async(execute: render)
         }
 
-        /// Footer state is SwiftUI state. Defer it until AppKit has finished
-        /// delivering the edit or selection notification so panel creation
-        /// and focus changes do not mutate SwiftUI during view updates.
+        /// Footer state is SwiftUI state; defer until AppKit finishes delivering
+        /// the edit notification so panel creation doesn't mutate SwiftUI during
+        /// view updates.
         private func scheduleStatusUpdate(_ textView: NSTextView) {
             pendingStatusUpdate?.cancel()
             let update = DispatchWorkItem { [weak self, weak textView] in
@@ -248,9 +222,8 @@ struct PaneEditor: NSViewRepresentable {
             scheduleStatusUpdate(textView)
         }
 
-        /// Keep typed text literal. Automatic punctuation substitutions are
-        /// deliberately disabled so ordinary hyphens, flags, and pasted text
-        /// never turn into unexpected Unicode characters.
+        /// Automatic punctuation substitutions are deliberately disabled so
+        /// hyphens, flags, and pasted text never turn into unexpected Unicode.
         func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
             guard !referenceViewManager.isInHelpView else { return true }
             if let replacement = replacementString, replacement == "\n" {
@@ -271,8 +244,7 @@ struct PaneEditor: NSViewRepresentable {
         }
 
         /// Return pressed: run any recognised intent on the caret's line
-        /// before the newline lands. The newline is never consumed unless
-        /// the intent took over the buffer (`.help` opens the reference).
+        /// before the newline lands.
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
             guard !referenceViewManager.isInHelpView else {
                 // Read-only reference view: navigation still scrolls the
@@ -290,8 +262,7 @@ struct PaneEditor: NSViewRepresentable {
             return true
         }
 
-        /// A settings-side font change lands here: restyle typing and
-        /// re-render everything at the new size.
+        /// A settings-side font change lands here: restyle and re-render.
         func applyFontSizeIfChanged(to textView: NSTextView) {
             let size = PaneStyle.fontSize
             let themeID = PaneTheme.current.id
@@ -307,11 +278,9 @@ struct PaneEditor: NSViewRepresentable {
             highlighter.render(textView)
         }
 
-        // MARK: Intents
 
-        /// Typing `=` after a full expression asks for the answer inline:
-        /// `384 * 27 =` becomes `384 * 27 = 10368`. Deferred out of the
-        /// did-change notification so text storage is never mutated re-entrantly.
+        /// Typing `=` after a full expression asks for the answer inline.
+        /// Deferred so text storage is never mutated re-entrantly.
         private func schedulePendingCalculation(_ textView: NSTextView) {
             DispatchQueue.main.async { [weak self, weak textView] in
                 guard let self, let textView,
@@ -326,10 +295,7 @@ struct PaneEditor: NSViewRepresentable {
         }
 
         /// Reactive results: once typing quiets down, committed lines whose
-        /// stored answers drifted (a definition changed) are recomputed in
-        /// place. Debounced so it never fights an active keystroke, and
-        /// suppressed while undo is in play — the pass would otherwise
-        /// instantly reapply whatever ⌘Z just removed.
+        /// stored answers drifted are recomputed. Debounced, suppressed during undo.
         private func scheduleReactivePass(_ textView: NSTextView) {
             deferredPassTask?.cancel()
             deferredPassTask = Task { [weak self, weak textView] in
@@ -350,8 +316,7 @@ struct PaneEditor: NSViewRepresentable {
             applyCommits(IntentExecution.staleResultCommits(in: textView.string), to: textView)
         }
 
-        /// Returns true when the intent consumed the return key (the whole buffer
-        /// was taken over, so the default newline must not land).
+        /// Returns true when the intent consumed the return key.
         @discardableResult
         private func executeLineIntent(_ textView: NSTextView) -> Bool {
             guard let contentRange = caretLineRange(in: textView) else { return false }
@@ -430,8 +395,7 @@ struct PaneEditor: NSViewRepresentable {
             return false
         }
 
-        /// `.export`: send the whole note somewhere local. Reuses the same
-        /// text the note owns; no network involved.
+        /// `.export`: send the whole note somewhere local.
         private func exportNote(to destination: ExportDestination) {
             guard !referenceViewManager.isInHelpView else { return }
             do {
@@ -445,9 +409,6 @@ struct PaneEditor: NSViewRepresentable {
             }
         }
 
-        /// `.switch` stub: opens a quick switcher menu listing the notes
-        /// (marked as a menu so the real implementation goes here). The
-        /// caret-line newline then lands normally.
         private func showNoteSwitcherStub(_ textView: NSTextView) {
             guard !referenceViewManager.isInHelpView else { return }
             let menu = NSMenu(title: "Note Switcher")
@@ -500,8 +461,7 @@ struct PaneEditor: NSViewRepresentable {
             NoticeCenter.shared.show("Replaced \(count) occurrence\(count == 1 ? "" : "s") of \"\(find)\"")
         }
 
-        /// Live footer: preview what return would do on the caret line, and
-        /// offer the committed answer for copying. Suppressed in help view.
+        /// Live footer: preview what return would do, offer answer for copying.
         private func updateFooterStatus(_ textView: NSTextView) {
             guard !referenceViewManager.isInHelpView else { return }
             guard let contentRange = caretLineRange(in: textView) else {
@@ -521,11 +481,7 @@ struct PaneEditor: NSViewRepresentable {
                 readingEase: ease)
         }
 
-        // MARK: Dot-command autocompletion
 
-        /// Native completion list while typing a partial dot-command. The
-        /// range NSTextView reports starts at the letters after the dot, so
-        /// it is walked back to the token's start for the `.partial` prefix.
         func textView(
             _ textView: NSTextView,
             completionsForPartialWordRange charRange: NSRange,
@@ -550,11 +506,9 @@ struct PaneEditor: NSViewRepresentable {
 
         private var completionTask: Task<Void, Never>?
 
-        /// Auto-open the completion window once per `.partial` token via a
-        /// debounce, so the command list appears exactly when a tap on `.`
-        /// gets followed by a letter. `complete(_:)` closes an already-visible
-        /// window, which is why the anchor guards against re-calling it; the
-        /// window tracks further typing on its own.
+        /// Auto-open the completion window once per `.partial` token.
+        /// `complete(_:)` closes an already-visible window, so the anchor
+        /// guards against re-calling it.
         private func scheduleCompletion(_ textView: NSTextView) {
             completionTask?.cancel()
             completionTask = Task { [weak self, weak textView] in
@@ -585,9 +539,7 @@ struct PaneEditor: NSViewRepresentable {
             }
         }
 
-        /// Applies commits bottom-up so earlier ranges survive later
-        /// insertions, keeps one undo step, and restores the caret sensibly
-        /// when it sat inside a rewritten line.
+        /// Applies commits bottom-up so earlier ranges survive later insertions.
         private func applyCommits(_ commits: [IntentExecution.Commit], to textView: NSTextView) {
             guard !commits.isEmpty else { return }
             let ordered = commits.sorted { $0.range.location > $1.range.location }
@@ -629,8 +581,6 @@ struct PaneEditor: NSViewRepresentable {
             }
         }
 
-        /// The current line excluding its trailing newline, or nil when the
-        /// selection spans more than one position.
         private func caretLineRange(in textView: NSTextView) -> NSRange? {
             IntentExecution.caretLineRange(in: textView.string, selection: textView.selectedRange())
         }

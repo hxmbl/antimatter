@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// Runtime settings on a single page. Everything here applies immediately —
-/// the note restyles itself live.
 struct SettingsView: View {
     @AppStorage("appearance") private var appearance = "system"
     @AppStorage("conversion.network") private var currencyNetworkEnabled = false
@@ -196,9 +194,7 @@ struct SettingsView: View {
         .onAppear { syncToActiveChord() }
     }
 
-    /// Writes the chord, re-registers it with the system, then snaps the
-    /// UI back to whatever was actually accepted — refused combinations
-    /// never linger in the field.
+    /// Writes the chord, re-registers it, then snaps the UI to the accepted chord.
     private func applyShortcut(_ chord: GlobalShortcut) {
         usesControl = chord.control
         usesOption = chord.option

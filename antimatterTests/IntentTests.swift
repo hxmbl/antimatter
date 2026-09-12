@@ -145,7 +145,6 @@ struct IntentStopwatchTests {
 
 struct IntentCalculationTests {
 
-    // MARK: Typed-equals commit form
 
     @Test func trailingEqualsCommits() {
         let pending = IntentParser.pendingCalculation("384 * 27 =")
@@ -164,7 +163,6 @@ struct IntentCalculationTests {
         #expect(IntentParser.pendingCalculation("hello =") == nil)
     }
 
-    // MARK: Whole-line arithmetic on return
 
     @Test func plainArithmeticParses() {
         #expect(IntentParser.parseCalculation("(2+3)*4")?.result == 20)
@@ -193,7 +191,6 @@ struct IntentCalculationTests {
         #expect(IntentParser.parseCalculation("1.2.3 + 1") == nil)
     }
 
-    // MARK: Formatting
 
     @Test func resultsFormatCleanly() {
         #expect(IntentParser.format(10_368) == "10368")

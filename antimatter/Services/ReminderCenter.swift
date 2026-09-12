@@ -11,10 +11,8 @@ struct ActiveReminder: Identifiable, Codable, Equatable {
     var firedAt: Date?
 }
 
-/// Runs `.remind` prompts. A reminder rings once at its date: a Glass sound,
-/// a transient chip while the pane is open, and a system notification
-/// carrying the message. Notifications are scheduled with the system ahead
-/// of time, so a reminder fires even when the app is closed. All local.
+/// Runs `.remind` prompts. A reminder rings once at its date with a
+/// system notification.
 @MainActor
 final class ReminderCenter: ObservableObject {
     static let shared = ReminderCenter()
@@ -39,9 +37,7 @@ final class ReminderCenter: ObservableObject {
         StorageLocation.directory(named: "reminders").appendingPathComponent("reminders.json")
     }
 
-    /// Drops pending system-notification requests this center owns whose
-    /// reminder is no longer running — scoped to `reminderID`, so requests
-    /// from other suites (a timer, say) are never caught in the sweep.
+    /// Drops pending system-notification requests this center owns.
     private func pruneStaleNotifications() {
         let keep = Set(reminders.filter { $0.firedAt == nil }.map(\.id.uuidString))
         UNUserNotificationCenter.current().getPendingNotificationRequests { requests in
@@ -55,7 +51,6 @@ final class ReminderCenter: ObservableObject {
             UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: stale)
         }
     }
-
     /// Schedules a one-shot reminder. Returns false for dates already past.
     @discardableResult
     func schedule(message: String, at date: Date) -> Bool {
@@ -85,7 +80,6 @@ final class ReminderCenter: ObservableObject {
         persist()
     }
 
-    /// `.reminder cancel [all]`: cancel every pending reminder, fired or not.
     func cancelAll() {
         let identifiers = reminders.map(\.id.uuidString)
         reminders.removeAll()
@@ -99,7 +93,6 @@ final class ReminderCenter: ObservableObject {
         DebugLog.log("reminders cancelled — \(identifiers.count)")
     }
 
-    // MARK: Firing
 
     private func scheduleFire(_ reminder: ActiveReminder, announce: Bool) {
         guard reminder.firedAt == nil else { return }
@@ -140,8 +133,6 @@ final class ReminderCenter: ObservableObject {
             UNNotificationRequest(identifier: reminder.id.uuidString, content: content, trigger: trigger))
     }
 
-    /// Test hosts share the app's sandbox container; asking for permission
-    /// from tests would burn the system's one-time prompt for real users.
     private nonisolated static let isTestHost =
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
 
@@ -155,7 +146,6 @@ final class ReminderCenter: ObservableObject {
         }
     }
 
-    // MARK: Persistence
 
     private func load() {
         for url in [fileURL, Persistence.backupURL(for: fileURL)] {

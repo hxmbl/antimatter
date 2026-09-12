@@ -1,14 +1,5 @@
 import Foundation
 
-/// Date-shaped lines become answers instead of staying inert text.
-///
-/// * A bare ISO date (`2026-08-22`) quietly gains its weekday:
-///   `2026-08-22 = Saturday`.
-/// * `days until 2026-09-01` gains the day count from today:
-///   `days until 2026-09-01 = 8`.
-///
-/// Only strict `YYYY-MM-DD` counts; loose shapes like `8-22` remain
-/// ordinary text (and are still excluded from auto-calculation).
 nonisolated enum DateIntent {
     static func commit(
         _ rawLine: String,
@@ -32,14 +23,8 @@ nonisolated enum DateIntent {
         return nil
     }
 
-    /// Splits strict `YYYY-MM-DD` into calendar components. The date is
-    /// interpreted only later, in the caller's own calendar, so a figure
-    /// like `2026-08-22` keeps its weekday regardless of the user's
-    /// timezone — a UTC-midnight instant would otherwise show the previous
-    /// day's weekday in every zone west of GMT.
-    static func parseISO(_ input: String) -> DateComponents? {
-        // Strict shape first: the components alone accept loose forms like
-        // `2026-8-22`, which must stay ordinary text.
+     static func parseISO(_ input: String) -> DateComponents? {
+         // Strict shape first: loose forms like `2026-8-22` must stay text.
         guard input.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil else { return nil }
         let parts = input.split(separator: "-")
         guard parts.count == 3,

@@ -2,8 +2,6 @@ import SwiftUI
 import AppKit
 
 struct ContentView: View {
-    /// The pane's store. The primary window uses the shared store; ⌘N
-    /// windows pass their own scratchpad store here.
     @StateObject private var noteStore: NoteStore
     // Declared so a Settings-side change re-renders (and re-styles) the editor.
     @AppStorage("fontSize") private var fontSizeObservation = 15
@@ -18,27 +16,17 @@ struct ContentView: View {
     @AppStorage("appearance") private var appearanceObservation = "system"
     @State private var footer = FooterStatus()
     @State private var sidebarOpen = false
-    /// How strongly the top corners are currently clipping text: `1` while
-    /// the first line sits under them at the top of a note, easing toward
-    /// `0` as the note scrolls clear. The corner radius fades proportionally.
     @State private var topTextLevel: CGFloat = 0
 
     init(noteStore: NoteStore = NoteStore.shared) {
         _noteStore = StateObject(wrappedValue: noteStore)
     }
 
-    /// Dock mode runs as a regular window whose own title bar frames the
-    /// content, so the theme fills the whole window instead of floating as a
-    /// rounded card over a transparent gap. The floating modes keep the
-    /// padded card so the desktop shows around it.
     private var isDock: Bool { PaneStyle.displayMode == .dock }
     private var topInset: CGFloat { isDock ? 0 : PaneStyle.titleBarInset }
     private var horizontalInset: CGFloat { isDock ? 0 : PaneStyle.padding }
     private var bottomInset: CGFloat { isDock ? 0 : PaneStyle.padding + PaneStyle.footerHeight }
 
-    /// The card's visible radius: rectangular in dock mode, otherwise the
-    /// configured radius softened toward the relaxed minimum in proportion
-    /// to how much text is pinned under the top corners.
     private var clipRadius: CGFloat {
         isDock ? 0 : PaneStyle.cornerRadius(forLevel: topTextLevel)
     }
@@ -89,14 +77,13 @@ struct ContentView: View {
                     NoticeCenter.shared.show("Antimatter — type `.help` for every command")
                 }
             }
-            // Debounced saves leave a small window where quitting would lose
-            // the last keystrokes; flushing here closes it.
-            .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
-                // Any window closing posts here; only a pane's own file matters.
-                let identifier = (note.object as? NSWindow)?.identifier?.rawValue
-                guard identifier?.hasPrefix(PaneStyle.windowIdentifier) == true else { return }
-                noteStore.flush()
-            }
+             // Debounced saves leave a small window where quitting would lose
+             // the last keystrokes; flushing here closes it.
+             .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
+                 let identifier = (note.object as? NSWindow)?.identifier?.rawValue
+                 guard identifier?.hasPrefix(PaneStyle.windowIdentifier) == true else { return }
+                 noteStore.flush()
+             }
             // Settings that live on the NSWindow itself (level, fade, corner,
             // size clamp) are re-applied here; the rest take effect through
             // SwiftUI re-rendering.
@@ -113,8 +100,6 @@ struct ContentView: View {
     }
 }
 
-/// Captures SwiftUI's `openWindow` action so the global hot key can
-/// recreate the pane after it has been closed.
 private struct HotKeyWindowBridge: View {
     @Environment(\.openWindow) private var openWindow
 
@@ -125,11 +110,6 @@ private struct HotKeyWindowBridge: View {
     }
 }
 
-/// Allows window dragging from any edge even when at max size. The drag
-/// gesture must claim only the thin edge strip: `contentShape` is applied
-/// *before* the `.frame(maxWidth/maxHeight: .infinity)` expansion so the
-/// hit shape stays lip-sized, otherwise the invisible full-pane frame
-/// swallows every click, drag, and scroll meant for the text view.
 private struct WindowDragEdge: View {
     private let lip = PaneStyle.windowDragLip
 
@@ -171,8 +151,6 @@ private struct WindowDragEdge: View {
     }
 }
 
-/// Floating chips for running timers and the active paste stream,
-/// top-right of the pane.
 private struct CaptureStrip: View {
     @ObservedObject private var center = TimerCenter.shared
     @ObservedObject private var swatches = StopwatchCenter.shared
@@ -295,8 +273,6 @@ private struct TimerChip: View {
     }
 }
 
-/// A stopwatch counting up, top-right of the pane. Running ones tick and
-/// can be stopped (freezing the reading); stopped ones stay until dismissed.
 private struct StopwatchChip: View {
     let stopwatch: ActiveStopwatch
     let now: Date
@@ -349,7 +325,6 @@ private struct StopwatchChip: View {
     }
 }
 
-/// A reminder waiting to ring, top-right of the pane.
 private struct ReminderChip: View {
     let reminder: ActiveReminder
     let onDismiss: () -> Void
@@ -379,8 +354,6 @@ private struct ReminderChip: View {
     }
 }
 
-/// Transient notice when a flush failed; the store clears itself after a
-/// few seconds, so this simply renders whatever is current.
 private struct SaveErrorHint: View {
     let error: Error?
     let token: Int
@@ -407,8 +380,6 @@ private struct SaveErrorHint: View {
     }
 }
 
-/// Quiet status strip under the editor: a live "what ⏎ will do" preview,
-/// one-tap copy of a committed answer, and the pane's shortcuts.
 private struct PaneFooter: View {
     let status: FooterStatus
     @Binding var sidebarOpen: Bool

@@ -2,22 +2,8 @@ import Combine
 import Foundation
 
 /// Live currency and cryptocurrency conversions, opt-in.
-///
-/// Rates come from a single free source (Coinbase's exchange-rates endpoint),
-/// which prices both fiat and crypto in terms of a USD base. The table is
-/// fetched only when the user switches on `conversion.network` (or on launch
-/// if they already did), cached to disk, and refreshed at most once an hour —
-/// so a committed line reads a *synchronous* cached table and never blocks on
-/// the network. With the switch off, or before a successful fetch, no pair
-/// converts and a currency-shaped line simply stays text.
-///
-/// `rates[symbol]` is the amount of `symbol` you get for 1 USD, so
-/// `value to = value from * rates[to] / rates[from]`.
-///
-/// The table lives in a thread-safe box so the synchronous commit path
-/// (`UnitConverter`) and non-`@MainActor` unit tests can read it without
-/// hopping to an actor. The class itself is not actor-isolated; only the
-/// published `lastError` is touched on the main actor.
+/// Rates come from Coinbase, cached to disk, refreshed at most once an hour.
+/// `rates[symbol]` is the amount of `symbol` you get for 1 USD.
 final class CurrencyCenter: ObservableObject {
     static let shared = CurrencyCenter()
 
@@ -39,7 +25,6 @@ final class CurrencyCenter: ObservableObject {
         StorageLocation.directory(named: "currency").appendingPathComponent("rates.json")
     }
 
-    // MARK: Synchronous cache reads (commit path)
 
     /// Thread-safe read of one symbol's USD rate, or nil.
     nonisolated static func cachedRate(_ symbol: String) -> Double? {
@@ -66,7 +51,6 @@ final class CurrencyCenter: ObservableObject {
         RateCache.shared.symbols
     }
 
-    // MARK: Instance lifecycle
 
     /// Call on launch and when the toggle flips: loads the cache and, when
     /// networking is enabled, refreshes from the network if the cache is stale.
@@ -114,7 +98,6 @@ final class CurrencyCenter: ObservableObject {
         }
     }
 
-    // MARK: Persistence
 
     private struct CachedRates: Codable {
         var rates: [String: Double]

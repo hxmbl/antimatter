@@ -1,12 +1,5 @@
 import Foundation
 
-/// Tiny recursive-descent evaluator for plain arithmetic: `+ - * / % ^`,
-/// parentheses, unary sign, decimals, the typographic operators `× ÷ − – —`,
-/// a handful of functions (`sqrt`, `abs`, `round`, `min`, `max`), and
-/// variables resolved through a caller-supplied table. `^` is
-/// right-associative. Returns `nil` unless the whole input parses and the
-/// result is finite, so partial expressions, unknown names, and nonsense
-/// simply stay text.
 nonisolated enum ExpressionEvaluator {
     static func evaluate(_ input: String, variables: [String: Double] = [:]) -> Double? {
         let tokens = tokenize(input)
@@ -17,12 +10,7 @@ nonisolated enum ExpressionEvaluator {
         return value
     }
 
-    /// The numeric literals of an arithmetic line, in order, signed —
-    /// `-5` collects as -5 — or nil when the line is not pure arithmetic
-    /// (prose, timers, dates with letters). Aggregation uses this to collect
-    /// "the numbers in the note". Negation of a parenthesised group is not a
-    /// literal; only signs attached directly to numbers count.
-    static func numericLiterals(_ input: String) -> [Double]? {
+     static func numericLiterals(_ input: String) -> [Double]? {
         let tokens = tokenize(input)
         guard !tokens.isEmpty else { return nil }
         var cursor = 0
@@ -56,8 +44,6 @@ nonisolated enum ExpressionEvaluator {
         return literals
     }
 
-    // MARK: Tokenizer
-
     private enum Token: Equatable {
         case number(Double)
         case op(Character)
@@ -75,10 +61,9 @@ nonisolated enum ExpressionEvaluator {
         func flushNumber() {
             guard !digits.isEmpty else { return }
             let s = String(digits)
-            // Reject trailing dot: `1.` is a list marker, not a number.
-            guard !s.hasSuffix("."), let value = Double(s) else {
-                tokens.append(.op("\u{0}")) // poison token: never parses
-                digits.removeAll()
+             guard !s.hasSuffix("."), let value = Double(s) else {
+                 tokens.append(.op("\u{0}"))
+                     digits.removeAll()
                 return
             }
             tokens.append(.number(value))
@@ -122,9 +107,9 @@ nonisolated enum ExpressionEvaluator {
             case ",":
                 flushNumber(); flushName()
                 tokens.append(.comma)
-            default:
-                flushNumber(); flushName()
-                return [] // any other character means "this is not arithmetic"
+                default:
+                    flushNumber(); flushName()
+                    return []
             }
         }
         flushNumber(); flushName()
@@ -135,8 +120,6 @@ nonisolated enum ExpressionEvaluator {
         cursor < tokens.count ? tokens[cursor] : nil
     }
 
-    // MARK: Grammar
-    //
     // expression := term (('+' | '-') term)*
     // term       := power (('*' | '/' | '%') power)*
     // power      := unary ('^' power)?          right-associative
@@ -200,7 +183,7 @@ nonisolated enum ExpressionEvaluator {
         case .name(let name):
             cursor += 1
             guard case .lparen? = peek(tokens, &cursor) else {
-                return vars[name] // an unknown variable leaves the whole line as text
+                return vars[name] // unknown variable leaves line as text
             }
             cursor += 1
             guard let args = arguments(tokens, &cursor, vars), args.count >= 1 else { return nil }
@@ -247,10 +230,7 @@ nonisolated enum ExpressionEvaluator {
         }
     }
 
-    /// True when `expression` is just a single number — no operators,
-    /// no function calls, no variable references. Bare numbers like `1.`,
-    /// `42`, or signed forms such as `-5` should never auto-rewrite on return.
-    static func isBareNumber(_ expression: String) -> Bool {
+     static func isBareNumber(_ expression: String) -> Bool {
         let tokens = tokenize(expression)
         var cursor = 0
         if tokens.count >= 2, case .op(let sign)? = tokens.first, sign == "-" || sign == "+" {

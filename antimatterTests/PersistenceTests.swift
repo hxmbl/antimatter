@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import antimatter
 
-/// Tests for the atomic-write-plus-backup helper behind `NoteStore`.
+/// Tests for the atomic-write-plus-backup persistence layer.
 struct PersistenceTests {
 
     private func tempDir() -> URL {

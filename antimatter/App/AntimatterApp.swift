@@ -45,8 +45,7 @@ struct AntimatterApp: App {
     }
 }
 
-/// Bridges SwiftUI menu items to NSTextView's text-finder actions; the
-/// pane's text view runs the system find bar.
+/// Bridges SwiftUI menu items to NSTextView's text-finder actions.
 @MainActor
 enum FindSupport {
     static func perform(_ action: NSTextFinder.Action) {
@@ -93,8 +92,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
     }
 }
 
-/// Appearance and display-mode policy chosen in Settings, applied at launch
-/// and again whenever the display mode changes (no restart needed).
+/// Appearance and display-mode policy chosen in Settings.
 @MainActor
 enum LaunchPreferences {
     static func apply() {
@@ -144,12 +142,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         LocalBridge.shared.start()
     }
 
-    // The pane is a summoned utility: a hidden panel or a closed window must
-    // not take the whole app down. Without this, AppKit's
-    // `_scheduleCheckForTerminateAfterLastWindowClosed` timer calls
-    // `terminate:` a few seconds after the last visible window goes away —
-    // e.g. the accessory-mode panel is ordered out at launch or Escape hides
-    // the pane — and the app silently quits. ⌘Q still terminates normally.
+    // Without this, AppKit silently terminates a few seconds after the last
+    // visible window goes away (e.g. Escape hides the pane in accessory mode).
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
@@ -158,11 +152,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NoteStore.shared.flush()
     }
 
-    // MARK: - URL Scheme (antimatter://)
-
-    /// Handles every `antimatter://` deep link: a bare host opens the pane,
-    /// `note` creates a note, `append` adds to the active one, and `command`
-    /// runs a dot-command line (`.timer 5`, `.remind 10m …`, etc.).
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls { DeepLinkRouter.handle(url) }
         PaneHotKey.shared.revealPane()

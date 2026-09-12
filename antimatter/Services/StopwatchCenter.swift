@@ -6,17 +6,12 @@ struct ActiveStopwatch: Identifiable, Codable, Equatable {
     var label: String
     let startedAt: Date
     let createdAt: Date
-    /// Set when the user stops the watch; the frozen elapsed time stays on
-    /// the chip. nil means the watch is still running.
+    /// Set when stopped; the frozen elapsed time stays on the chip.
     var stoppedAt: Date?
 }
 
-/// Runs `.stopwatch` counters. A stopwatch counts up, unlike a timer, and
-/// it never "ends" — so there is no sound and no system notification; the
-/// chip in the corner is the whole surface. Elapsed time is derived from
-/// `startedAt`, so a stopwatch keeps counting across relaunches (close the
-/// app and reopen it later and the same watch is still running), and a
-/// stopped one lingers as its final reading until dismissed.
+/// Runs `.stopwatch` counters. Counts up, never "ends", no sound.
+/// Keeps counting across relaunches via `startedAt`.
 @MainActor
 final class StopwatchCenter: ObservableObject {
     static let shared = StopwatchCenter()
@@ -36,8 +31,7 @@ final class StopwatchCenter: ObservableObject {
         StorageLocation.directory(named: "stopwatches").appendingPathComponent("stopwatches.json")
     }
 
-    /// Starts a stopwatch counting from now. Returns false for an accidental
-    /// duplicate (pressing return twice on the same line).
+    /// Starts a stopwatch. Returns false for duplicates.
     @discardableResult
     func start(label: String) -> Bool {
         let timestamp = now()
@@ -94,10 +88,8 @@ final class StopwatchCenter: ObservableObject {
         TimerCenter.format(interval)
     }
 
-    // MARK: Persistence
 
-    /// Maximum age for a running stopwatch before it is auto-expired on load.
-    /// Prevents abandoned stopwatches from counting up indefinitely.
+    /// Maximum age before a running stopwatch is auto-expired on load.
     private static let maxRunningAge: TimeInterval = 24 * 3600
 
     private func load() {

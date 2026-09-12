@@ -1,15 +1,7 @@
 import Foundation
 
-/// Document-level math: variable definitions and whole-note aggregation.
-///
-/// A definition is a line shaped `name = expression` with a valid identifier
-/// and an expression that fully evaluates against the table built so far.
-/// Later definitions win; forward references and self-references do not
-/// resolve, so those lines simply stay text. (Committed results on such
-/// lines still recompute in `staleResultCommits`, which deliberately
-/// evaluates against the *final* table — a line like `a = b + 1 = 3` placed
-/// above `b = 2` will track `b` once it exists below. That asymmetry is a
-/// chosen feature: definitions declare, results follow.)
+/// Variable definitions and whole-note aggregation. Definitions are
+/// `name = expression` lines; later definitions win, forward references stay text.
 nonisolated enum VariableTable {
     static func scan(_ text: String) -> [String: Double] {
         var table: [String: Double] = [:]
@@ -53,15 +45,8 @@ nonisolated enum VariableTable {
     }
 }
 
-/// Collects the note's numbers for `.sum` / `.avg` / `.count`, ignoring
-/// prose.
-///
-/// A line contributes its numeric literals only when it is arithmetic:
-/// either a bare expression (`12`), a committed calculation whose stored
-/// result is excluded (`384 * 27 = 10368` contributes 384 and 27), or a
-/// definition's right-hand side. Anything with letters that fails to parse —
-/// prose, timers, units — contributes nothing, and date-shaped lines are
-/// skipped outright so notes never masquerade as numbers.
+/// Collects the note's numbers for `.sum` / `.avg` / `.count`.
+/// A line contributes only when it's arithmetic; prose, timers, and dates contribute nothing.
 nonisolated enum Aggregates {
     static func numbers(in text: String) -> [Double] {
         var collected: [Double] = []

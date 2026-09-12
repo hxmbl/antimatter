@@ -78,9 +78,6 @@ final class MenuBarController: NSObject {
             }
         }
 
-        // Accessory applications do not become active from a normal
-        // makeKeyAndOrderFront call. Activate first, then force the panel
-        // forward so the first click also places the caret in the editor.
         panel.hidesOnDeactivate = false
         NSApp.activate(ignoringOtherApps: true)
         panel.orderFrontRegardless()
@@ -127,9 +124,6 @@ final class MenuBarController: NSObject {
         panel.becomesKeyOnlyIfNeeded = false
         panel.title = "Antimatter"
 
-        // Dismiss on Escape while the panel is key.
-        // Let the event through when a paste stream is active so the
-        // text view can cancel it first.
         keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak panel] event in
             guard let panel, panel.isKeyWindow, event.keyCode == 53 else { return event }
             if PasteStream.shared.isStreaming { return event }

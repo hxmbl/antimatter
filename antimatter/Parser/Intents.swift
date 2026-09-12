@@ -1,30 +1,16 @@
 import Foundation
 
-/// Detects executable intents on a single line. Everything that does not
-/// parse stays ordinary text — only recognised commands do anything.
-///
-/// Dot-commands are explicit: `.timer 5`, `.timer 90s`, `.timer 1h 20m stand up`
-/// (a bare number means minutes, per the README). A plain word like `timer`
-/// in a note is just a word.
-///
-/// Calculations need no command at all — they happen automatically:
-/// * typing `=` after an expression (`384 * 27 =`) asks for the answer
-///   immediately — explicit intent wins even over the date heuristic;
-/// * pressing return on a line that is pure arithmetic rewrites it to
-///   `expression = result`. Lines shaped like dates (`2026-08-22`) are
-///   excluded so notes stay notes.
 nonisolated enum IntentParser {
     struct Timer: Equatable {
         let duration: TimeInterval
         let label: String
         let name: String?
         let fullScreen: Bool
-        /// True when the requested duration exceeded the cap and was
-        /// shortened — surfaced to the user as a transient notice.
+        /// True when the requested duration exceeded the cap and was shortened.
         var clamped = false
     }
 
-    /// The dot-command prefix; commands must be typed, not stumbled into.
+
     static let commandPrefix = "."
 
     struct Calculation: Equatable {
@@ -32,7 +18,6 @@ nonisolated enum IntentParser {
         let result: Double
     }
 
-    // MARK: Timers
 
     static func parseTimer(_ line: String) -> Timer? {
         let words = line.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
@@ -42,9 +27,7 @@ nonisolated enum IntentParser {
         var matchedAny = false
         var index = 1
         while index < words.count {
-            // "5 mins", "90 minutes", "2.5 h" — number and unit as separate
-            // words. Checked first so a bare number followed by a spelled-out
-            // unit is not eaten as "5 minutes" with the unit left labelled.
+            // "5 mins", "90 minutes", "2.5 h" — number and unit as separate words.
             if let value = bareNumber(words[index]),
                index + 1 < words.count,
                let unit = DurationUnit(words[index + 1])
@@ -88,17 +71,14 @@ nonisolated enum IntentParser {
         return Timer(duration: min(duration, maxDuration), label: label, name: name, fullScreen: fullScreen, clamped: capped)
     }
 
-    /// Largest supported timer: 30 days.
     static let maxDuration: TimeInterval = 60 * 60 * 24 * 30
 
-    /// `.timer cancel` / `.timer cancel all` — cancel every running timer.
     static func isTimerCancel(_ line: String) -> Bool {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return trimmed == commandPrefix + "timer cancel"
             || trimmed == commandPrefix + "timer cancel all"
     }
 
-    // MARK: Pomodoro
 
     struct Pomodoro: Equatable {
         let workDuration: TimeInterval
@@ -120,10 +100,7 @@ nonisolated enum IntentParser {
         return Pomodoro(workDuration: workMin * 60, breakDuration: breakMin * 60, cycles: min(cycles, 12))
     }
 
-    // MARK: Stopwatches
 
-    /// `.stopwatch` starts a stopwatch counting up; anything after the
-    /// command becomes its label. `.stopwatch cancel [all]` clears them.
     static func isStopwatch(_ line: String) -> Bool {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return trimmed == commandPrefix + "stopwatch"
@@ -136,8 +113,6 @@ nonisolated enum IntentParser {
             || trimmed == commandPrefix + "stopwatch cancel all"
     }
 
-    /// Everything after `.stopwatch ` — the labelled remainder. Empty for a
-    /// bare `.stopwatch`.
     static func stopwatchLabel(_ line: String) -> String {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         let prefix = commandPrefix + "stopwatch"
@@ -179,8 +154,7 @@ nonisolated enum IntentParser {
             }
         }
 
-        /// Full words and abbreviations; case-insensitive.
-        init?(_ rawValue: String) {
+         init?(_ rawValue: String) {
             switch rawValue.lowercased() {
             case "ms", "millisecond", "milliseconds": self = .milliseconds
             case "s", "sec", "secs", "second", "seconds": self = .seconds
@@ -192,10 +166,8 @@ nonisolated enum IntentParser {
         }
     }
 
-    // MARK: Calculations
 
-    /// The typed-equals commit form: the line ends with `=`.
-    static func pendingCalculation(_ line: String) -> Calculation? {
+     static func pendingCalculation(_ line: String) -> Calculation? {
         guard line.hasSuffix("=") else { return nil }
         let expression = line.dropLast().trimmingCharacters(in: .whitespacesAndNewlines)
         guard !expression.isEmpty, let result = ExpressionEvaluator.evaluate(expression) else { return nil }
@@ -206,8 +178,7 @@ nonisolated enum IntentParser {
         return Calculation(expression: expression, result: result)
     }
 
-    /// The whole-line arithmetic form used when return is pressed.
-    static func parseCalculation(_ line: String) -> Calculation? {
+     static func parseCalculation(_ line: String) -> Calculation? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               !looksLikeDate(trimmed),
@@ -219,18 +190,13 @@ nonisolated enum IntentParser {
         return Calculation(expression: trimmed, result: result)
     }
 
-    /// Guards note-taking: anything shaped like `2026-08-22` or `8-22`
-    /// never auto-calculates, no matter how valid the arithmetic would be.
-    /// Only tight numeric shapes count — spaced dashes (`100 - 25`) are
-    /// ordinary subtraction, not dates.
+    /// Anything shaped like `2026-08-22` or `8-22` never auto-calculates.
     static func looksLikeDate(_ input: String) -> Bool {
         input.range(of: #"\d{1,4}-\d{1,2}-\d{1,4}"#, options: .regularExpression) != nil
             || input.range(of: #"\b\d{1,2}-\d{1,2}\b"#, options: .regularExpression) != nil
     }
 
-    /// Locale-independent result formatting: integers stay integers,
-    /// everything else keeps up to 12 significant digits without noise.
-    static func format(_ value: Double) -> String {
+     static func format(_ value: Double) -> String {
         guard value.isFinite else { return "" }
         if value == value.rounded(), abs(value) < 1e15 {
             return String(Int64(value))

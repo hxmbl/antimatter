@@ -2,9 +2,6 @@ import SwiftUI
 import AppKit
 import Carbon.HIToolbox
 
-/// A keyboard shortcut: four modifier toggles plus one Carbon key code.
-/// Same shape `PaneHotKey.Chord` hands to the Carbon event system, kept
-/// independent here so the recorder doesn't drag the pixie engine around.
 struct GlobalShortcut: Equatable {
     var control = false
     var option = false
@@ -14,8 +11,6 @@ struct GlobalShortcut: Equatable {
 
     static let `default` = GlobalShortcut(control: true, option: true, command: false, shift: false, keyCode: kVK_Space)
 
-    /// A chord with no Control/Option/Command isn't registered — bare keys
-    /// and Shift alone would swallow ordinary typing system-wide.
     var isWellDefined: Bool { control || option || command }
 
     /// "⌃⌥ Space" style rendering.
@@ -40,8 +35,6 @@ struct GlobalShortcut: Equatable {
         )
     }
 
-    /// Held-modifier prefix shown live while recording; only the four
-    /// meaningful modifiers are reflected.
     static func modifierPrefix(for flags: NSEvent.ModifierFlags) -> String {
         let f = flags.intersection(.deviceIndependentFlagsMask)
         var s = ""
@@ -52,8 +45,6 @@ struct GlobalShortcut: Equatable {
         return s
     }
 
-    /// Keys that only change modifier state (⌃ ⌥ ⌘ ⇧, caps, fn). The
-    /// recorder waits for a real key on top of these.
     static func isModifierKey(_ code: Int) -> Bool {
         modifierKeyCodes.contains(code)
     }
@@ -152,9 +143,6 @@ struct GlobalShortcut: Equatable {
     }
 }
 
-/// A click-to-record shortcut field. While recording it watches key events
-/// with local monitors (which it swallows), shows the held modifiers live,
-/// and commits the chord on the next real key. Escape cancels.
 struct ShortcutField: View {
     let shortcut: GlobalShortcut
     var onRecord: (GlobalShortcut) -> Void

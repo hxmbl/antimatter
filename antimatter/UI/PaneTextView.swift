@@ -2,24 +2,10 @@ import AppKit
 import QuartzCore
 import Carbon.HIToolbox
 
-/// The pane's text view.
-///
-/// * A plain click on a link opens it — drag-safe: the click only counts if
-///   the mouse barely moved between down and up, so selecting still works.
-/// * Escape hides the pane.
-/// * Arrow keys use the native text-system caret movement.
-/// * Dropping an image captures its text (on-device OCR); ⌘F opens the
-///   system find bar.
 final class PaneTextView: NSTextView {
     var onCancelOperation: (() -> Void)?
     var onDroppedImage: ((NSImage) -> Void)?
-    /// Return true when the keystroke was swallowed (the full-screen help
-    /// view eats every key except navigation and the way out).
     var onHelpKeyDown: ((NSEvent) -> Bool)?
-    /// Reports how strongly text currently occupies the top corners: `1`
-    /// when the first line is pinned under them (populated note, scrolled
-    /// to the top), easing to `0` as the note scrolls clear, so the pane
-    /// can relax its corner radius proportionally.
     var onTopTextLevelChange: ((CGFloat) -> Void)?
 
     private var pendingClick: (location: NSPoint, modifiers: NSEvent.ModifierFlags)?
@@ -137,7 +123,6 @@ final class PaneTextView: NSTextView {
         super.didChangeText()
     }
 
-    /// The pane always builds its own text view with defaults.
     convenience init() {
         self.init(frame: .zero, textContainer: nil)
     }
@@ -165,24 +150,17 @@ final class PaneTextView: NSTextView {
     }
 
     private func commonInit() {
-        // The find bar is the platform's; ⌘F just has to reach it.
         usesFindBar = true
         isIncrementalSearchingEnabled = false
         registerForDraggedTypes([.fileURL, .tiff, .png])
     }
 
-    // MARK: Link activation
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-        // Only the command-drag move gesture claims the first click; a plain
-        // first click on an inactive dock-mode window just activates it.
         event?.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) ?? false
     }
 
     override func mouseDown(with event: NSEvent) {
-        // The floating pane may sit in front of the active app without being
-        // key; a click is what hands it typing, so make it key first. Without
-        // this, the first click surfaces the window but keystrokes still beep.
         window?.makeKeyAndOrderFront(nil)
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if modifiers.contains(.command), let window {
@@ -223,9 +201,7 @@ final class PaneTextView: NSTextView {
         super.mouseDragged(with: event)
     }
 
-    /// Flips a task-list checkbox, but only when the click actually lands on
-    /// the `[ ]`/`[x]` marker. Clicking any other part of a task line just
-    /// places the caret.
+    /// Flips a task-list checkbox, but only when the click lands on the marker.
     private func toggleTaskIfOnMarker(clickIndex: Int) {
         let location = selectedRange().location
         guard location != NSNotFound, let textStorage = textStorage else { return }
@@ -289,7 +265,6 @@ final class PaneTextView: NSTextView {
         return nil
     }
 
-    // MARK: Image drops → OCR
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
         containsImage(sender.draggingPasteboard) ? [.copy] : super.draggingEntered(sender)
@@ -319,11 +294,8 @@ final class PaneTextView: NSTextView {
         return images
     }
 
-    // MARK: Context menu — the escape hatch for menu-bar mode
 
-    /// Without a menu bar (Dock icon hidden) there is no Settings item and
-    /// no ⌘Q; the pane's right-click menu is what keeps accessory mode
-    /// escapable.
+    /// Without a menu bar, the pane's right-click menu is the escape hatch.
     override func menu(for event: NSEvent) -> NSMenu? {
         guard let menu = super.menu(for: event) else { return nil }
         let appDelegate = NSApplication.shared.delegate as? AppDelegate
@@ -344,7 +316,6 @@ final class PaneTextView: NSTextView {
         ])
     }
 
-    // MARK: Tab indents list items
 
     override func insertTab(_ sender: Any?) {
         if !indentCurrentListLine(direction: 1) { super.insertTab(sender) }
@@ -354,9 +325,7 @@ final class PaneTextView: NSTextView {
         if !indentCurrentListLine(direction: -1) { super.insertBacktab(sender) }
     }
 
-    /// Moves the caret's list-item line in or out by one indent step for
-    /// Tab / Shift-Tab. Returns false when the caret isn't sitting in a
-    /// plain list item, so Tab falls back to inserting a tab character.
+    /// Moves the caret's list-item line in or out by one indent step.
     private func indentCurrentListLine(direction: Int) -> Bool {
         guard let storage = textStorage,
               !hasMarkedText(),
@@ -400,19 +369,15 @@ final class PaneTextView: NSTextView {
             && (rest[index] == "." || rest[index] == ")")
     }
 
-    /// A text change that flows through the editing machinery, so the
-    /// delegate (binding sync, re-render, undo) sees it exactly like typing.
+    /// A text change that flows through the editing machinery like typing.
     private func replaceText(in range: NSRange, with replacement: String) {
         guard shouldChangeText(in: range, replacementString: replacement) else { return }
         textStorage?.replaceCharacters(in: range, with: replacement)
         didChangeText()
     }
 
-    // MARK: Top-corner clipping
 
-    /// Recomputes the top-corner relaxation level on text edits and on
-    /// scroll. Cheap; small deltas are dropped so SwiftUI isn't re-rendered
-    /// on every sub-pixel wheel tick.
+    /// Recomputes the top-corner relaxation level on text edits and scroll.
     @MainActor
     func reportTopTextLevel() {
         guard let scrollView = enclosingScrollView else { return }
@@ -426,7 +391,6 @@ final class PaneTextView: NSTextView {
         onTopTextLevelChange?(level)
     }
 
-    // MARK: Escape hides the pane / dismisses dotcommands
 
     override func keyDown(with event: NSEvent) {
         if onHelpKeyDown?(event) == true { return }
@@ -492,7 +456,6 @@ final class PaneTextView: NSTextView {
         return dismissed
     }
 
-    // MARK: Escape hides the pane
 
     override func cancelOperation(_ sender: Any?) {
         clearCaretGlide()
@@ -508,7 +471,6 @@ final class PaneTextView: NSTextView {
         return super.resignFirstResponder()
     }
 
-    // MARK: Line reordering (⌥⌘↑/⌥⌘↓)
 
     private func moveLineUp() {
         guard let textStorage = textStorage else { return }
@@ -589,7 +551,6 @@ final class PaneTextView: NSTextView {
         undoManager?.endUndoGrouping()
     }
 
-    // MARK: Auto markdown link on paste
 
     override func paste(_ sender: Any?) {
         let pasteboard = NSPasteboard.general
@@ -617,7 +578,6 @@ final class PaneTextView: NSTextView {
         super.paste(sender)
     }
 
-    // MARK: Copy current line when nothing selected
 
     override func copy(_ sender: Any?) {
         if selectedRange().length == 0 {

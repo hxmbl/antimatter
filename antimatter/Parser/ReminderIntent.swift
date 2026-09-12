@@ -1,14 +1,8 @@
 import Foundation
 
-/// Natural-language reminders: `.remind me in 10 minutes to stand up`,
-/// `.remind tomorrow at 3pm call mom`, `.remind in 1h "water the plants"`.
-///
-/// Time words are handled two ways: `NSDataDetector` resolves calendar
-/// language ("tomorrow at 3pm", "friday", "2026-10-01 12:00") and a small
-/// hand-rolled matcher resolves relative language ("in 10 minutes", "in 1h",
-/// bare "in 10" meaning minutes). Whatever text survives becomes the
-/// message, with optional `to`/`about` glue stripped — quoted messages are
-/// kept verbatim.
+/// Natural-language reminders: `.remind me in 10 minutes to stand up`.
+/// Uses NSDataDetector for calendar language and a hand-rolled matcher for
+/// relative time ("in 10 minutes", "in 1h").
 nonisolated enum ReminderIntent {
     struct Reminder: Equatable {
         let date: Date
@@ -17,8 +11,7 @@ nonisolated enum ReminderIntent {
 
     static let command = IntentParser.commandPrefix + "remind"
 
-    /// `.reminder cancel` / `.reminder cancel all` — cancel every active
-    /// reminder. Accepted with or without the trailing "all".
+    /// `.reminder cancel [all]` — cancel every active reminder.
     static func isCancelAll(_ rawLine: String) -> Bool {
         let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return trimmed == IntentParser.commandPrefix + "reminder cancel"
@@ -50,7 +43,6 @@ nonisolated enum ReminderIntent {
         return Reminder(date: date, message: message)
     }
 
-    // MARK: Relative time ("in 10 minutes", "in 1h", "in 10")
 
     private static let relativePattern = regex(
         #"in\s+(a|an|one|(\d+(?:\.\d+)?))\s*(milliseconds?|ms|seconds?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d)"#
@@ -84,7 +76,6 @@ nonisolated enum ReminderIntent {
         return nil
     }
 
-    // MARK: Absolute time ("tomorrow at 3pm", "friday 5pm", "2026-10-01")
 
     private static func absoluteTime(in text: String) -> (Date, String.Index)? {
         let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue)
@@ -97,7 +88,6 @@ nonisolated enum ReminderIntent {
         return (date, range.upperBound)
     }
 
-    // MARK: Message extraction
 
     private static func extractMessage(from text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)

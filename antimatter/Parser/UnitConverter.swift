@@ -1,12 +1,6 @@
 import Foundation
 
-/// Unit conversion: physical units from a built-in offline table
-/// (`12 kg → lb`, `3 mi -> km`, `100 °F -> c`), plus — only when the opt-in
-/// network switch is on — currency and cryptocurrency conversion using
-/// Coinbase's cached rates (`100 USD -> EUR`, `1 btc → usd`). The line is
-/// rewritten to include the answer: `12 kg → lb = 26.46`.
 nonisolated enum UnitConverter {
-    /// Base-unit factors per dimension; conversion requires matching dimensions.
     private static let linearUnits: [String: (dimension: String, factor: Double)] = [
         // length, base metre
         "mm": ("length", 0.001), "cm": ("length", 0.01), "m": ("length", 1),
@@ -17,9 +11,6 @@ nonisolated enum UnitConverter {
         "oz": ("mass", 0.028_349_523_125), "lb": ("mass", 0.453_592_37),
     ]
 
-    /// Characters treated as a conversion arrow: `→`, the digraph `->`, and
-    /// existing en/em dash forms. Plain typed hyphens remain literal; these
-    /// extra forms are accepted only for notes that already contain them.
     private static let arrows: Set<String> = ["→", "->", "–", "—", "—-", "—>"]
 
     static func commit(_ rawLine: String) -> String? {
@@ -43,9 +34,6 @@ nonisolated enum UnitConverter {
             else { return nil }
             return value * source.factor / target.factor
         }
-        // Currency pairs only ever convert when the opt-in network feed has a
-        // cached rate for both symbols; a physical unit never collides with a
-        // currency code we care about.
         return CurrencyCenter.convert(value: value, from: fromUnit, to: toUnit)
     }
 
@@ -53,12 +41,8 @@ nonisolated enum UnitConverter {
         linearUnits[unit] != nil
     }
 
-    // MARK: Parsing
 
-    /// `<number> <unit> <arrow> <unit>` — arrow may be `→`, `->`, or an
-    /// existing en/em dash; a bare `>` is deliberately not an arrow, so
-    /// comparison-shaped lines stay text.
-    static func parse(_ line: String) -> (value: Double, from: String, to: String)? {
+     static func parse(_ line: String) -> (value: Double, from: String, to: String)? {
         let words = splitPreservingArrow(line)
         guard words.count == 4,
               let value = Double(words[0])
@@ -69,9 +53,8 @@ nonisolated enum UnitConverter {
     }
 
     private static func splitPreservingArrow(_ line: String) -> [String] {
-        // Arrows can sit flush against their operand (`12 kg->lb`, `12kg→lb`)
-        // or be surrounded by spaces, so find the first arrow and split the
-        // line around it rather than relying on `" "` separation.
+         // Arrows can sit flush against their operand (`12 kg->lb`, `12kg→lb`)
+         // or be surrounded by spaces, so split around the first arrow.
         var earliest: (lower: String.Index, upper: String.Index)? = nil
         for arrow in arrows {
             if let range = line.range(of: arrow) {
@@ -91,7 +74,6 @@ nonisolated enum UnitConverter {
         return before + [arrowString] + after
     }
 
-    // MARK: Temperature
 
     private static func isTemperature(_ unit: String) -> Bool {
         unit == "c" || unit == "f" || unit == "k"

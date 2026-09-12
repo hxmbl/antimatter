@@ -1,20 +1,6 @@
 import AppKit
 import Foundation
 
-/// A deterministic Markdown parser covering the practical CommonMark/GFM
-/// surface: ATX and setext headings, fenced code blocks (``` / ~~~) with
-/// language tags, block quotes (nesting via repeated `>`), bullet and
-/// ordered lists with indentation-based nesting, task list items, GFM
-/// tables, thematic breaks, strong/emphasis/code/strikethrough spans,
-/// inline links, images (rendered as links over their alt text), autolinks
-/// and bare http(s) URLs.
-///
-/// `\` is the escape character everywhere, including inside code spans:
-/// it makes the next character literal so it can never start, end, or
-/// become markup. `\\` produces a literal backslash. Unmatched delimiters
-/// render as plain text.
-///
-/// The parser reports element ranges only; the renderer decides appearance.
 enum Markdown {
     struct Element: Equatable {
         nonisolated enum Kind: Equatable {
@@ -22,7 +8,6 @@ enum Markdown {
             case quote(level: Int)
             case codeBlock
             case language
-            /// A whole list-item line; the renderer indents by level.
             case listItem(level: Int)
             case taskMarker(done: Bool)
             case taskBody(done: Bool)
@@ -42,11 +27,8 @@ enum Markdown {
             case highlight
             case lineBreak
             case link(String)
-            /// Syntax characters the renderer displays dimmed.
             case hidden
-            /// Punctuation kept visible but dimmed.
             case marker
-            /// The backslash of an escaped character.
             case escape
 
             /// Elements that are syntax-only and rendered dimmed.
@@ -63,21 +45,14 @@ enum Markdown {
             case center
             case right
         }
-        // `TableAlignment` is parsed for parity with GFM (the divider's
-        // `:---:` / `---:` markers) but is display-inert in the pane:
-        // NSTextView styles whole lines, so a column's glyphs cannot be
-        // reflowed. The pane keeps the source's horizontal layout (monospaced
-        // cells, author-padded columns). The value is kept so a future
-        // real-table renderer can consume it without re-parsing.
 
         let kind: Kind
         let range: NSRange
     }
 
-    /// Largest supported ATX heading level.
+
     nonisolated static let maxHeadingLevel = 6
 
-    // MARK: - Entry point
 
     nonisolated static func parse(_ text: String) -> [Element] {
         var elements: [Element] = []
@@ -191,9 +166,8 @@ enum Markdown {
             }
         }
         // Sort by location, but keep insertion order for elements that share
-        // one: the renderer relies on block styles (heading, strong) being
-        // applied before their inner hidden markers, and Swift's sort does
-        // not guarantee stability on its own.
+        // one: the renderer relies on block styles being applied before
+        // their inner hidden markers, and Swift's sort is not stable.
         return elements.enumerated()
             .sorted { lhs, rhs in
                 lhs.element.range.location == rhs.element.range.location
@@ -203,7 +177,6 @@ enum Markdown {
             .map(\.element)
     }
 
-    // MARK: - Lines
 
     private nonisolated static func lineRanges(_ text: String) -> [Range<String.Index>] {
         var ranges: [Range<String.Index>] = []
@@ -239,7 +212,6 @@ enum Markdown {
         markerEnd < limit ? text.index(after: markerEnd) : markerEnd
     }
 
-    // MARK: - Thematic breaks
 
     private nonisolated static func isThematicBreak(_ range: Range<String.Index>, in text: String) -> Bool {
         var marker: Character?
@@ -263,7 +235,6 @@ enum Markdown {
         return count >= 3
     }
 
-    // MARK: - Headings
 
     private nonisolated static func parseHeading(_ text: String, in line: Range<String.Index>, from start: String.Index, into out: inout [Element]) -> Bool {
         guard text[start] == "#" else { return false }
@@ -301,7 +272,6 @@ enum Markdown {
         setextLevel(range, in: text) != nil
     }
 
-    // MARK: - Block quotes
 
     private nonisolated struct QuoteInfo {
         let arrows: Range<String.Index>
@@ -328,7 +298,6 @@ enum Markdown {
         scanInline(text, in: quote.content, into: &out)
     }
 
-    // MARK: - Fenced code
 
     private nonisolated struct FenceOpen {
         let char: Character
@@ -374,7 +343,6 @@ enum Markdown {
         return lower..<upper
     }
 
-    // MARK: - Lists
 
     private nonisolated struct ListItemInfo {
         let marker: Range<String.Index>
@@ -438,7 +406,6 @@ enum Markdown {
         }
     }
 
-    // MARK: - Tables
 
     private nonisolated static func isTableRow(_ line: Range<String.Index>, in text: String) -> Bool {
         !line.isEmpty && text[line].contains("|")
@@ -537,7 +504,6 @@ enum Markdown {
         }
     }
 
-    // MARK: - Inline scanning
 
     private nonisolated static let autolinkSchemes = ["https://", "http://", "mailto:"]
 
@@ -573,8 +539,7 @@ enum Markdown {
         }
     }
 
-    /// Allocation-free `hasPrefix` for a sub-range; slicing a substring per
-    /// candidate character dominated parse time on plain-text documents.
+    /// Allocation-free `hasPrefix` for a sub-range; slicing dominated parse time on plain text.
     private nonisolated static func startsWith(_ text: String, _ prefix: String, at start: String.Index, limit: String.Index) -> Bool {
         var i = start
         for character in prefix {
@@ -747,9 +712,7 @@ enum Markdown {
     }
 
     /// Reads a delimited span starting at `start`, returning the index just
-    /// past the closing delimiter, or `nil` when no non-empty span closes.
-    /// When `inclusive` is set the styled range also covers both delimiters,
-    /// which keeps background fills continuous around syntax markers.
+    /// past the closing delimiter, or nil when no non-empty span closes.
     private nonisolated static func readSpan(
         _ delimiter: Character,
         count required: Int,
@@ -816,7 +779,6 @@ enum Markdown {
         out.append(Element(kind: .hidden, range: NSRange(subRange, in: text)))
     }
 
-    // MARK: Links, images, autolinks
 
     private nonisolated static func readLink(
         _ text: String,
@@ -866,9 +828,8 @@ enum Markdown {
         return closeEnd
     }
 
-    /// Recognises bare URLs in running text: `https://`/`http://`/`mailto:`
-    /// addresses and schemeless `www.` hosts (which link to their https
-    /// form). Trailing punctuation stays outside the link.
+    /// Bare URLs in running text: `https://`, `http://`, `mailto:` and
+    /// schemeless `www.` hosts (linking to https form).
     private nonisolated static func readBareURL(_ text: String, from start: String.Index, limit: String.Index, into out: inout [Element]) -> String.Index? {
         var hrefPrefix = ""
         if startsWith(text, "https://", at: start, limit: limit) || startsWith(text, "http://", at: start, limit: limit) {
@@ -904,12 +865,8 @@ enum Markdown {
         return end
     }
 
-    // MARK: URL hygiene
 
-    /// A URL "shrunk" without a network call: tracking parameters are dropped
-    /// so the stored and displayed address is the clean canonical one. Used by
-    /// every link form (inline, autolink, bare) so pasting a campaign URL
-    /// never litters the note with `?utm_…`.
+    /// URL shrunk without a network call: tracking parameters are dropped.
     nonisolated static func stripTrackingParameters(from urlString: String) -> String {
         guard let url = URLComponents(string: urlString),
               let items = url.queryItems, !items.isEmpty else { return urlString }
@@ -920,8 +877,7 @@ enum Markdown {
         return cleaned.string ?? urlString
     }
 
-    /// Parameter names that exist only to track a referral, not to address a
-    /// resource. Common across every major campaign (UTM, social, ad, mail).
+    /// Tracking-only parameter names: UTM, social, ad, mail.
     private nonisolated static let trackingParameters: Set<String> = [
         "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
         "utm_id", "utm_cid", "utm_reader", "utm_referrer", "utm_name", "utm_pubreferrer",

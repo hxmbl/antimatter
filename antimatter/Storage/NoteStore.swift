@@ -60,8 +60,8 @@ final class NoteStore: ObservableObject {
                 notes = [first]
                 activeNoteID = first.id
             } else if !notes.contains(where: { $0.id == activeNoteID }) {
-                // load() restores the sliced active note from the snapshot;
-                // only fall back to the front of the stack when absent.
+                // load() restores the active note from the snapshot;
+                // fall back to the front of the stack only when absent.
                 activeNoteID = notes[0].id
             }
         }
@@ -70,8 +70,6 @@ final class NoteStore: ObservableObject {
     nonisolated static func defaultFileURL() -> URL {
         StorageLocation.directory(named: "notes").appendingPathComponent("notes.json")
     }
-
-    // MARK: - CRUD
 
     func create(text: String = "") -> Note {
         let note = Note(text: text)
@@ -136,11 +134,6 @@ final class NoteStore: ObservableObject {
         }
     }
 
-    // MARK: - Persistence
-
-    /// What actually lands on disk: the note stack, The Void, and the active
-    /// selection, so a relaunch restores exactly where the user was.
-    /// Internal so tests can verify persistence end-to-end.
     struct Snapshot: Codable, Equatable {
         var notes: [Note]
         var trash: [Note]
@@ -172,9 +165,6 @@ final class NoteStore: ObservableObject {
         }
     }
 
-    /// Pushes every note to iCloud when sync is switched on. Extra ⌘N
-    /// scratchpads are excluded — they have their own file and should not
-    /// collide with the main store's CloudKit snapshot.
     func syncIfNeeded() {
         guard syncEnabled, CloudKitSync.shared.isEnabled else { return }
         let toSync = notes

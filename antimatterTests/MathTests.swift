@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import antimatter
 
-/// M1: variables, functions, and whole-note aggregation.
+/// Variables, functions, and whole-note aggregation.
 struct VariableTests {
 
     private func eval(_ input: String, _ vars: [String: Double] = [:]) -> Double? {
@@ -128,8 +128,7 @@ struct ReactiveResultTests {
     }
 
     @Test func rewritesPreserveTheTrailingNewline() throws {
-        // Regression: line ranges used to include the newline, so applying
-        // a commit merged the rewritten line into the next one.
+        // Regression: line ranges used to include the newline.
         let text = "price = 4 * 5 = 48\nkeep me\n"
         let result = try #require(commits(text).first)
         let after = (text as NSString).replacingCharacters(in: result.range, with: result.replacement)
@@ -171,7 +170,7 @@ struct SignedLiteralTests {
     }
 }
 
-/// M2: dates and units.
+/// Dates and units.
 struct DateIntentTests {
 
     private var utcCalendar: Calendar {
@@ -237,8 +236,7 @@ struct DateIntentTests {
     }
 }
 
-/// Serialised: the currency tests share the one process-global `RateCache`,
-/// so running them concurrently (Swift Testing's default) makes them flaky.
+/// Serialized: currency tests share the process-global RateCache.
 @Suite(.serialized)
 struct UnitConverterTests {
 

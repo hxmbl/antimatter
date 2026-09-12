@@ -1,10 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Manages the full-screen reference view (help / debug): a read-only
-/// scrollable text viewer that temporarily replaces the note buffer.
-/// The note and its editor configuration are stashed on entry and
-/// restored on exit.
+/// Manages the full-screen reference view (help / debug). Stashes the note
+/// on entry and restores it on exit.
 @MainActor
 final class ReferenceViewManager {
     private(set) var isInHelpView = false
@@ -21,10 +19,7 @@ final class ReferenceViewManager {
         self.updateFooterStatus = updateFooterStatus
     }
 
-    /// Enter a full-screen reference block (`.help`, `.debug`): the note
-    /// and its editor configuration are stashed, the content takes the
-    /// whole buffer, and keystrokes are swallowed except navigation and
-    /// `q`/Escape.
+    /// Enter a full-screen reference block. Stashes the note and editor config.
     func enter(_ textView: NSTextView, content: String) {
         let container = textView.textContainer
         helpSnapshot = (
@@ -80,9 +75,8 @@ final class ReferenceViewManager {
         updateFooterStatus(textView)
     }
 
-    /// Keystroke swallowed by the full-screen reference view. `j`/`k`,
-    /// Page keys, and space/b/g/G scroll; arrows, Page Up/Down, Home/End
-    /// and system shortcuts pass through; `q` and Escape close.
+    /// Keystroke swallowed by the reference view. Navigation scrolls,
+    /// `q`/Escape close; everything else is consumed.
     func handleKey(_ event: NSEvent) -> Bool {
         guard isInHelpView, let textView = helpTextView else { return false }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)

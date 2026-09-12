@@ -1,22 +1,15 @@
 import AppKit
 import Foundation
 
-/// The result of running a command line through `ActionRunner`: whether the
-/// intent was honoured, plus a human-readable description the caller surfaces
-/// as feedback (pane notice, deep-link bridge response).
+/// The result of running a command line: whether the intent was honoured,
+/// plus a human-readable description.
 struct ActionOutcome: Codable, Equatable {
     let ok: Bool
     let message: String
 }
 
-/// Executes a dot-command (or automatic line like `384 * 27`) the same way the
-/// pane editor's coordinator does, but from a context with no caret or text
-/// view — a deep link, the loopback bridge, or a test. Returns feedback
-/// instead of mutating a view.
-///
-/// Pure-answer commands (`.sum`, `.avg`, `.count`, calculations, date/unit
-/// rewrites) have no caret line to rewrite, so they append their committed
-/// line to the active note and report the value.
+/// Executes a dot-command from a context with no caret or text view —
+/// a deep link, the loopback bridge, or a test.
 @MainActor
 enum ActionRunner {
     /// Runs the trimmed line against the active note's text.
@@ -155,7 +148,6 @@ enum ActionRunner {
         return "\(secs) sec"
     }
 
-    // MARK: Helpers
 
     private static func appendLine(_ text: String) {
         var note = NoteStore.shared.activeNote

@@ -1,11 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// Visual knobs for the floating pane. Each knob reads its value from
-/// UserDefaults at render time, so Settings changes apply live without a
-/// restart; the baked-in fallback is the first-launch default.
 enum PaneStyle {
-    // MARK: Display Mode
 
     enum DisplayMode: String, CaseIterable {
         case dock = "dock"
@@ -18,26 +14,15 @@ enum PaneStyle {
         return DisplayMode(rawValue: raw) ?? .menuBar
     }
 
-    // MARK: Transparency
 
-    /// System blur behind the pane. `false` is a flat tint only (raise `tintOpacity`).
     static var usesBlur: Bool {
         UserDefaults.standard.object(forKey: "pane.usesBlur") as? Bool ?? PaneTheme.current.usesBlur
     }
 
-    /// Blur recipe. More see-through → more solid:
-    /// `.fullScreenUI`, `.hudWindow`, `.popover`, `.sidebar`, `.menu`,
-    /// `.underWindowBackground`, `.headerView`, `.titlebar`, `.contentBackground`
     static let material: NSVisualEffectView.Material = .fullScreenUI
 
-    /// `.behindWindow` lets the desktop show through. `.withinWindow` blurs only app content.
     static let blending: NSVisualEffectView.BlendingMode = .behindWindow
 
-    /// Extra wash on top of the blur. `0` is blur-only (most transparent).
-    /// Neutral-theme presets (default, grid light/dark) keep the original
-    /// label-color wash so the pane stays gray-on-gray; only colorful themes
-    /// tint with their accent. The wash adapts to the system appearance so a
-    /// light tint never veils the pane in dark mode.
     static var tint: Color {
         let isDark = NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         switch PaneTheme.current.id {
@@ -51,44 +36,26 @@ enum PaneStyle {
         (UserDefaults.standard.object(forKey: "pane.tintOpacity") as? Double) ?? 0.10
     }
 
-    /// Fades the entire window, including text. `1` is no extra fade.
     static var windowAlpha: CGFloat {
         CGFloat((UserDefaults.standard.object(forKey: "pane.windowAlpha") as? Double) ?? 1.0)
     }
 
-    // MARK: Chrome
 
-    /// The user's configured corner radius; `effectiveCornerRadius` is what
-    /// rendering actually uses.
     static var cornerRadius: CGFloat {
         CGFloat((UserDefaults.standard.object(forKey: "pane.cornerRadius") as? Double) ?? PaneTheme.current.cornerRadius)
     }
 
-    /// Runtime override from the active pane: while text sits under the top
-    /// corners, the pane relaxes them so glyphs stay readable. Dock mode is
-    /// always a plain rectangular window and never honors it.
     static var cornerRadiusOverride: CGFloat?
 
-    /// The radius used when rendering. Rectangular in dock mode; elsewhere
-    /// the configured radius, relaxed while text is being clipped at the
-    /// top corners.
     static var effectiveCornerRadius: CGFloat {
         guard displayMode != .dock else { return 0 }
         return cornerRadiusOverride ?? cornerRadius
     }
 
-    /// The small radius the pane drops to while text touches the top
-    /// corners. Matches the low end of the Settings slider, so relaxation
-    /// reads as "the pane's minimum rounding".
     static let relaxedCornerRadius: CGFloat = 6
 
-    /// Scroll distance over which the top-corner relaxation fades back to
-    /// the full radius. Roughly one line of text.
     static let topClipRelaxBand: CGFloat = 24
 
-    /// Interpolates the corner radius for a given relaxation level from
-    /// `1` (first line pinned under the top corners → `relaxedCornerRadius`)
-    /// down to `0` (scrolled clear → the configured radius).
     static func cornerRadius(forLevel level: CGFloat) -> CGFloat {
         let t = min(max(level, 0), 1)
         return cornerRadius - (cornerRadius - relaxedCornerRadius) * t
@@ -96,10 +63,8 @@ enum PaneStyle {
 
     static let padding: CGFloat = 16
 
-    /// Height of the quiet status strip under the editor.
     static let footerHeight: CGFloat = 26
 
-    /// Small top breathing room; the pane has no window controls.
     static let titleBarInset: CGFloat = 8
     static var maxWidth: CGFloat {
         CGFloat((UserDefaults.standard.object(forKey: "pane.maxWidth") as? Double) ?? 600)
@@ -115,38 +80,27 @@ enum PaneStyle {
     static let border: Color = .white
     static let borderOpacity: Double = 0.16
 
-    // MARK: Theme
 
     static var backgroundColor: Color { PaneTheme.current.background }
     static var textColor: Color { PaneTheme.current.text }
     static var accentColor: Color { PaneTheme.current.accent }
     static var textNSColor: NSColor { PaneTheme.current.textNSColor }
     static var accentNSColor: NSColor { PaneTheme.current.accentNSColor }
-    /// Syntax markers and code comments stay the system "secondary" gray —
-    /// accenting them would tint whole notes and fight the plain-text ethos.
     static var secondaryTextNSColor: NSColor { NSColor.secondaryLabelColor }
     static var gridPaper: Bool { PaneTheme.current.gridPaper }
 
-    // MARK: Type
 
-    /// Runtime-adjustable (Settings); falls back to the theme until set.
     static var fontSize: CGFloat {
         CGFloat((UserDefaults.standard.object(forKey: "fontSize") as? Int) ?? PaneTheme.current.fontSize)
     }
     static let lineSpacing: CGFloat = 4
 
-    // MARK: Scroller
 
-    /// Overlay scroller that appears while scrolling and fades out afterward.
     static let showScrollerWhileScrolling = true
 
-    // MARK: Behavior
 
-    /// Identifies the pane: SwiftUI scene id, `openWindow` id, and
-    /// NSWindow.identifier all use this so the hot key can find the window.
     static let windowIdentifier = "pane"
 
-    /// UserDefaults key marking the one-time welcome notice as shown.
     static let didWelcomeKey = "did.welcome"
 
     /// Keeps the pane above ordinary windows.
@@ -154,7 +108,6 @@ enum PaneStyle {
         UserDefaults.standard.object(forKey: "pane.floats") as? Bool ?? true
     }
 
-    /// Escape hides the pane (the hot key brings it back).
     static var hidesOnEscape: Bool {
         UserDefaults.standard.object(forKey: "pane.hidesOnEscape") as? Bool ?? true
     }
@@ -162,8 +115,6 @@ enum PaneStyle {
         UserDefaults.standard.object(forKey: "pane.showWordCount") as? Bool ?? false
     }
 
-    /// UserDefaults key the pane's frame is autosaved under; relaunches
-    /// reopen where the user left it.
     static let frameAutosaveName = "pane-frame"
 
     // Global hot key: control + option + space by default, editable at

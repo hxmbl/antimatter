@@ -1,18 +1,12 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// Registers a system-wide hot key — control+option+space by default — and
-/// toggles the pane whenever it fires, even when the app is inactive.
-/// The chord is editable at runtime (Settings); `reinstall` swaps the
-/// registration without touching the event handler.
-/// All AppKit window work happens on the main actor; the Carbon callback
-/// hops over with `Task { @MainActor }`.
+/// Registers a system-wide hot key and toggles the pane when it fires.
 @MainActor
 final class PaneHotKey {
     static let shared = PaneHotKey()
 
-    /// The chord actually registered with the system — the source of truth
-    /// Settings syncs its toggles to, so refused chords never linger in the UI.
+    /// The chord actually registered with the system.
     struct Chord: Equatable {
         var control = false
         var option = false
@@ -24,8 +18,7 @@ final class PaneHotKey {
     private(set) var activeChord = Chord()
 
     var onToggle: (() -> Void)?
-    /// Set from SwiftUI's `openWindow` environment action; recreates the
-    /// pane after the user closed it with the red button.
+    /// Recreates the pane after the user closed it with the red button.
     var openWindow: (() -> Void)?
 
     private var hotKeyRef: EventHotKeyRef?
@@ -54,8 +47,7 @@ final class PaneHotKey {
         registerChord()
     }
 
-    /// Swaps to whatever chord `PaneStyle` now reports. Invalid chords are
-    /// refused and the previous one keeps working.
+    /// Swaps to whatever chord PaneStyle now reports.
     func reinstall() {
         registerChord()
     }
@@ -94,8 +86,7 @@ final class PaneHotKey {
         }
     }
 
-    /// Registers `chord` and returns its reference, or nil when the system
-    /// refuses it (bad key code, already bound elsewhere).
+    /// Registers `chord` and returns its reference, or nil if refused.
     private static func register(_ chord: Chord) -> EventHotKeyRef? {
         var modifiers: UInt32 = 0
         if chord.control { modifiers |= UInt32(controlKey) }
@@ -113,9 +104,7 @@ final class PaneHotKey {
         onToggle?()
     }
 
-    /// Shows the pane when hidden or closed, hides the focused pane when
-    /// visible. With several panes open, only the focused one toggles, so
-    /// they can be dismissed one at a time.
+    /// Shows the pane when hidden, hides the focused pane when visible.
     func togglePane() {
         let mode = PaneStyle.displayMode
         switch mode {
@@ -134,8 +123,7 @@ final class PaneHotKey {
         }
     }
 
-    /// Brings the frontmost pane forward (hot key when hidden, notification
-    /// clicks); creates the primary pane when every window is closed.
+    /// Brings the frontmost pane forward; creates one when none exist.
     func revealPane() {
         let mode = PaneStyle.displayMode
         switch mode {

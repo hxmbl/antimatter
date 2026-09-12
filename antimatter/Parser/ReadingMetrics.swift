@@ -1,6 +1,5 @@
 import Foundation
 
-/// Flesch-Kincaid readability metrics.
 enum ReadingMetrics {
     static func fleschKincaidEase(_ text: String) -> Double {
         guard !text.isEmpty else { return 0 }

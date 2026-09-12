@@ -1,25 +1,14 @@
 import AppKit
 import Foundation
 
-// MARK: - Renderer
 
-/// Owns the rendered state of one text view: the parsed elements, the line
-/// table, and the lines the selection currently covers. Text edits trigger a
-/// full re-render. Selection changes never alter the document's glyph
-/// attributes, so caret movement cannot make Unicode graphemes reflow or
-/// expose display-only replacement artifacts. Syntax-only characters are
-/// hidden with stable attributes on every render rather than toggled based on
-/// the caret.
+/// Renders Markdown styling to an NSTextView. Selection changes never alter
+/// the document's glyph attributes, so caret movement cannot reflow glyphs.
 final class MarkdownHighlighter {
     private var source = ""
     private var elements: [Markdown.Element] = []
 
-    /// Re-parses the text and re-applies Markdown styling to the entire
-    /// document. The raw string stays untouched, so editing, undo, copying,
-    /// and persistence remain plain-text Markdown; only the display changes.
-    ///
-    /// Markdown syntax-only characters stay hidden. Keeping those attributes
-    /// stable avoids caret-dependent glyph changes in NSTextView.
+    /// Re-parses and re-applies Markdown styling. The raw string stays untouched.
     func render(_ textView: NSTextView) {
         guard let storage = textView.textStorage else { return }
         let text = textView.string
@@ -38,9 +27,7 @@ final class MarkdownHighlighter {
         self.source = text
         self.elements = elements
         
-        // Table cells re-style their inline spans in the cell's monospaced
-        // face (see `inlineFont` below), so cell range lookup is needed during
-        // the style pass. Ranges are emitted in document order.
+        // Table cells need monospaced face for column alignment.
         let cellRanges = elements.compactMap { element -> NSRange? in
             guard case .tableCell = element.kind else { return nil }
             return element.range
@@ -65,18 +52,8 @@ final class MarkdownHighlighter {
             case .language, .marker, .hr, .tablePipe, .taskMarker:
                 storage.addAttribute(.foregroundColor, value: PaneStyle.secondaryTextNSColor, range: element.range)
             case .tableRow:
-                // The whole row shares one monospaced face — pipes, padding
-                // spaces, and dashes included — so the column widths an author
-                // bakes into the source with spaces stay visually straight.
                 storage.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: baseSize, weight: .regular), range: element.range)
-            case .tableCell(let alignment):
-                // `alignment` is parsed (left/center/right from the divider's
-                // `:---:` markers) but display-inert: NSTextView applies one
-                // paragraph style per line, never per cell, so a column's
-                // markers cannot make its glyphs reflow. Future table renderers
-                // can consume it; the pane keeps columns where the source put
-                // them (monospaced, padded by the author).
-                _ = alignment
+            case .tableCell:
                 storage.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: baseSize, weight: .regular), range: element.range)
                 storage.addAttribute(.backgroundColor, value: NSColor.quaternarySystemFill, range: element.range)
             case .taskBody(let done):
@@ -161,7 +138,6 @@ final class MarkdownHighlighter {
         }
     }
 
-    // MARK: Font sizing
 
     private struct Heading {
         let range: NSRange
@@ -237,7 +213,6 @@ final class MarkdownHighlighter {
         return NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
     }
 
-    // MARK: Paragraph style
 
     private func paragraphStyle(
         spacingBefore: CGFloat = 0,
@@ -254,7 +229,6 @@ final class MarkdownHighlighter {
         return style
     }
     
-    // MARK: Code Highlighting
     
     private func applyCodeHighlighting(to storage: NSTextStorage, text: String, elements: [Markdown.Element], baseSize: CGFloat) {
         var currentLanguage: String?

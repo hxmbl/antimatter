@@ -62,7 +62,6 @@ struct MarkdownTests {
         }
     }
 
-    // MARK: Headings
 
     @Test func headingsAreRecognisedFromLevel1Through6() {
         for level in 1...Markdown.maxHeadingLevel {
@@ -106,7 +105,6 @@ struct MarkdownTests {
         #expect(!containsHeading(parse("---")))
     }
 
-    // MARK: Thematic breaks
 
     @Test func thematicBreaksAreRecognised() {
         for marker in ["---", "***", "___", "- - -", "* * *"] {
@@ -119,7 +117,6 @@ struct MarkdownTests {
         #expect(!kinds("**bold**").contains(.hr))
     }
 
-    // MARK: Block quotes
 
     @Test func blockquoteHidesArrowAndStylesContent() {
         let elements = parse("> note **loud**")
@@ -142,7 +139,6 @@ struct MarkdownTests {
         #expect(parse("a > b").isEmpty)
     }
 
-    // MARK: Lists
 
     @Test func bulletMarkersStayDimmed() {
         for bullet in ["- item", "* item", "+ item"] {
@@ -175,7 +171,6 @@ struct MarkdownTests {
         #expect(parse("2026-08-22").isEmpty)
     }
 
-    // MARK: Task lists
 
     @Test func uncheckedTaskMarksItsBracket() {
         let elements = parse("- [ ] milk")
@@ -189,7 +184,6 @@ struct MarkdownTests {
         #expect(elements.contains { $0.kind == .taskBody(done: true) && $0.range.location == 6 })
     }
 
-    // MARK: Fenced code
 
     @Test func fencedCodeBlocksStyleTheirLines() {
         let elements = parse("```swift\nlet x = 1\n```")
@@ -217,7 +211,6 @@ struct MarkdownTests {
         #expect(blocks.count == 2)
     }
 
-    // MARK: Tables
 
     @Test func tablesMarkPipesAndBoldTheHeader() {
         let source = "| a | b |\n|---|---|\n| 1 | 2 |"
@@ -232,7 +225,6 @@ struct MarkdownTests {
         #expect(parse("just | one line").isEmpty)
     }
 
-    // MARK: Inline spans
 
     @Test func strongSpanCollapsesItsMarkers() {
         let elements = parse("**bold**")
@@ -281,7 +273,6 @@ struct MarkdownTests {
         #expect(parse("one\\\ntwo").contains { $0.kind == .lineBreak })
     }
 
-    // MARK: Links
 
     @Test func inlineLinkCollapsesSyntaxAndKeepsLabel() {
         let elements = parse("[label](https://example.com)")
@@ -330,9 +321,7 @@ struct MarkdownTests {
     }
 
     /// The renderer applies block styles before their inner hidden markers;
-    /// that ordering contract is what the sort tiebreaker guarantees. Strong
-    /// and emphasis spans exclude their markers, so the sorted order puts
-    /// the leading hidden range first; code spans are inclusive.
+    /// the sort tiebreaker guarantees this ordering.
     @Test func sameLocationElementsKeepInsertionOrder() {
         #expect(kinds("**b**") == [.hidden, .strong, .hidden])
         #expect(kinds("`c`") == [.code, .hidden, .hidden])
@@ -344,7 +333,6 @@ struct MarkdownTests {
         #expect(kinds("https://exa mple.com").contains(.link("https://exa")))
     }
 
-    // MARK: Escapes
 
     @Test func escapedAsteriskDoesNotOpenASpan() {
         let elements = parse("2 \\* 3 = 6")
@@ -383,7 +371,6 @@ struct MarkdownTests {
         #expect(elements.contains { $0.kind == .link("") } == false)
     }
 
-    // MARK: Combinations
 
     @Test func inlineStylesWorkInsideHeadings() {
         let elements = parse("## Hi **there**")
@@ -408,7 +395,6 @@ struct MarkdownTests {
         #expect(parse("hello world").isEmpty)
     }
 
-    // MARK: Tracking-parameter stripping
 
     @Test func trackingParametersAreStrippedFromInlineLinks() {
         let elements = parse("[label](https://example.com/page?utm_source=x&id=42)")
@@ -581,9 +567,7 @@ struct MarkdownHighlightTests {
         )
         let stringColor = highlighted.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
         let closingColor = highlighted.attribute(.foregroundColor, at: 17, effectiveRange: nil) as? NSColor
-        // String highlighting now uses the richer theme (hex-based, adapts to light/dark)
-        // rather than the flat systemGreen. Verify both ends share the same string color
-        // and that it is distinct from the default text color.
+        // Verify string color is distinct from default text color.
         #expect(stringColor != nil)
         #expect(closingColor != nil)
         #expect(stringColor == closingColor)

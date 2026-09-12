@@ -2,9 +2,8 @@ import Foundation
 import Testing
 @testable import antimatter
 
-/// Tests for the glue layer extracted out of `PaneEditor.Coordinator`:
-/// caret line ranges, calculation rewrites, return-key decisions, and the
-/// deferred-commit staleness guards. All pure — no text view required.
+/// Tests for caret line ranges, calculation rewrites, return-key decisions,
+/// and deferred-commit staleness guards.
 struct CaretLineRangeTests {
 
     private func range(_ text: String, _ location: Int, _ length: Int = 0) -> NSRange? {

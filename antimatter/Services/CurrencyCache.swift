@@ -4,9 +4,7 @@ import Foundation
 // explicitly nonisolated so the synchronous conversion commit path can read
 // them from anywhere (and non-@MainActor unit tests can exercise them).
 
-/// UserDefaults key: opt-in switch that lets currency conversion reach the
-/// network. Off by default — a bare number→unit conversion stays fully
-/// offline, and the note can never phone home until the user says so.
+/// Opt-in switch for network currency conversion. Off by default.
 enum CurrencyPreference {
     nonisolated static let networkKey = "conversion.network"
 
@@ -15,11 +13,8 @@ enum CurrencyPreference {
     }
 }
 
-/// Thread-safe bag holding the last good rate table. The fetching
-/// `CurrencyCenter` instance writes to it; `nonisolated` readers (the
-/// synchronous commit path in `UnitConverter`, and non-`@MainActor` unit
-/// tests) read it through a lock. Explicitly Sendable: every access is
-/// guarded by `lock`, which is exactly what `@unchecked` asserts.
+/// Thread-safe rate table. Written by CurrencyCenter, read synchronously
+/// by UnitConverter via a lock.
 final class RateCache: @unchecked Sendable {
     nonisolated static let shared = RateCache()
 

@@ -1,28 +1,9 @@
 import Foundation
 
-/// The glue layer between raw typing and executed intents, extracted from
-/// `PaneEditor.Coordinator` so the reentrancy-sensitive decisions can be
-/// tested without an `NSTextView`. This type only decides; the coordinator
-/// keeps the side effects (undo coalescing, text insertion, timer starts).
-///
-/// Subtlety that lives here:
-/// * **Caret line range** — the line under the caret, newline
-///   stripped, nil for selections spanning characters.
-/// * **Return-key dispatch** — timers first, then dot-commands (`.sum`),
-///   paste streaming, dates, units, variable definitions, calculations.
-/// * **Reactive results** — committed `expr = number` lines whose number no
-///   longer matches the freshly evaluated expression are collected as
-///   commits so editing a definition updates its dependents.
-/// * **Deferred commit** — the staleness guards that keep an async answer
-///   from landing in text the user has already moved past.
+/// Glue layer between raw typing and executed intents.
 nonisolated enum IntentExecution {
 
-    // MARK: Caret line range
-
-    /// The line under the caret with its trailing newline removed,
-    /// or nil when the selection spans characters or sits outside the text.
-    /// An empty final line yields a zero-length range; callers decide
-    /// whether that is worth acting on.
+    /// The line under the caret with its trailing newline removed.
     static func caretLineRange(in text: String, selection: NSRange) -> NSRange? {
         guard selection.length == 0 else { return nil }
         let ns = text as NSString
@@ -34,19 +15,14 @@ nonisolated enum IntentExecution {
         return range
     }
 
-    // MARK: Commits
-
     /// A committed answer: replace `range` in the buffer with `replacement`.
     struct Commit: Equatable {
         let range: NSRange
         let replacement: String
     }
 
-    /// Everything needed to rewrite the segment at `contentRange` into
-    /// `expression = result`, or nil when nothing should happen: nil or
-    /// out-of-bounds ranges, prose, date-shaped notes, identity results.
-    /// Handles both commit forms — a typed trailing `=` and whole-line
-    /// arithmetic on return. Leading indentation is preserved.
+    /// Everything needed to rewrite a segment into `expression = result`,
+    /// or nil when nothing should happen.
     static func calculationCommit(in text: String, at contentRange: NSRange?) -> Commit? {
         guard let contentRange, contentRange.length > 0,
               NSMaxRange(contentRange) <= (text as NSString).length
@@ -62,8 +38,6 @@ nonisolated enum IntentExecution {
         let replacement = indent + calculation.expression + " = " + IntentParser.format(calculation.result)
         return Commit(range: contentRange, replacement: replacement)
     }
-
-    // MARK: Aggregates
 
     nonisolated enum AggregateKind: Equatable {
         case sum
@@ -117,17 +91,9 @@ nonisolated enum IntentExecution {
         return Commit(range: contentRange, replacement: indent + trimmedKeyword + " = " + IntentParser.format(value))
     }
 
-    // MARK: Reactive results
 
-    /// Committed answer lines whose stored result drifted: `expr = number`
-    /// (or `name = expr = number`) where the expression now evaluates to
-    /// something else, and aggregate lines (`.sum = 46`) whose note changed.
-    /// Editing a definition lands here, which is what makes dependent lines
-    /// recompute live. Prose, dates, units, and anything that does not
-    /// evaluate are left untouched.
-    ///
-    /// Commit ranges exclude the trailing newline: `lineRange(for:)`
-    /// includes it, and replacing it would merge this line into the next.
+    /// Committed answer lines whose stored result drifted, and aggregate
+    /// lines whose note changed. Editing a definition lands here.
     static func staleResultCommits(in text: String) -> [Commit] {
         let variables = VariableTable.scan(text)
         let ns = text as NSString
@@ -174,7 +140,6 @@ nonisolated enum IntentExecution {
         return commits
     }
 
-    // MARK: Return-key decision
 
     enum LineAction: Equatable {
         case startTimer(IntentParser.Timer)
@@ -340,7 +305,6 @@ nonisolated enum IntentExecution {
         return indent + trimmed + " = " + IntentParser.format(value)
     }
 
-    // MARK: Export
 
     /// Parses a `.export <destination>` line into its destination, or nil.
     static func exportDestination(from line: String) -> ExportDestination? {
@@ -361,7 +325,6 @@ nonisolated enum IntentExecution {
         }
     }
 
-    // MARK: Help
 
     /// The reference block `.help` expands into on return: every dot-command
     /// plus the automatic line replies. Kept in the parser layer so it can be
@@ -401,7 +364,6 @@ nonisolated enum IntentExecution {
           12 kg -> lb         →  12 kg -> lb = 26.46
         """
 
-    // MARK: Live preview
 
     /// A short string describing what return would do on `line`, living
     /// alongside the caret so the answer previews before the newline lands.
@@ -489,7 +451,6 @@ nonisolated enum IntentExecution {
         return nil
     }
 
-    // MARK: Answer extraction
 
     /// The copyable answer embedded in a committed line: the trailing number
     /// of `expr = 48`, `.sum = 46`, or `days until … = 8`, or the weekday of
@@ -508,7 +469,6 @@ nonisolated enum IntentExecution {
         return nil
     }
 
-    // MARK: Dot-command autocompletion
 
     /// Completion vocabulary for typing after a `.` — teaches the commands
     /// at the moment of use, with no chrome.
@@ -543,7 +503,6 @@ nonisolated enum IntentExecution {
         return matches.isEmpty ? nil : matches.map { $0.name + " " }
     }
 
-    // MARK: Deferred commit guard
 
     /// Guard for the did-change-deferred commit. The answer may land several
     /// runloop turns after typing, so it must be dropped when the buffer has

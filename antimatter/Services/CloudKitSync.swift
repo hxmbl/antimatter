@@ -4,11 +4,9 @@ import CryptoKit
 import Foundation
 import Security
 
-/// Keychain service/account identifiers for the sync encryption key.
 private let kKeychainService = "com.antimatter.sync-encryption-key"
 private let kKeychainAccount = "sync-encryption-key"
 
-/// Represents a synced note record.
 struct SyncNote: Identifiable, Equatable {
     let id: UUID
     var text: String
@@ -27,11 +25,8 @@ struct SyncNote: Identifiable, Equatable {
     }
 }
 
-/// E2E-encrypted iCloud sync via CloudKit.
-/// Notes are encrypted on-device before upload using AES-GCM.
-/// The container is created lazily and only when iCloud is actually
-/// available, so a build without the iCloud entitlement or a signed-out
-/// account degrades to a surfaced error instead of a crash.
+/// E2E-encrypted iCloud sync via CloudKit. Notes are encrypted on-device
+/// before upload using AES-GCM.
 @MainActor
 final class CloudKitSync: ObservableObject {
     static let shared = CloudKitSync()
@@ -48,12 +43,8 @@ final class CloudKitSync: ObservableObject {
     private let database: CKDatabase?
     private let encryptionKey: SymmetricKey?
 
-    /// `CKContainer.default()` throws an Objective-C exception — a hard crash
-    /// in Swift — when the app isn't signed with an iCloud container
-    /// entitlement, and `ubiquityIdentityToken` alone can't tell a
-    /// provisioned app apart from a bare signed test host. Read the signed
-    /// entitlements directly so an unprovisioned build degrades to a surfaced
-    /// "iCloud unavailable" state instead of crashing.
+    /// Reads signed entitlements directly so an unprovisioned build degrades
+    /// to a surfaced error instead of crashing.
     private static func iCloudContainerIsSignedIn() -> Bool {
         guard let task = SecTaskCreateFromSelf(nil) else { return false }
         var readError: Unmanaged<CFError>?
@@ -68,8 +59,7 @@ final class CloudKitSync: ObservableObject {
         return FileManager.default.ubiquityIdentityToken != nil
     }
 
-    /// Stores the encryption key in the Keychain instead of UserDefaults
-    /// (which stores raw bytes in an unencrypted plist).
+    /// Stores the encryption key in the Keychain (not UserDefaults).
     private static func saveEncryptionKey(_ key: SymmetricKey) {
         let keyData = key.withUnsafeBytes { Data($0) }
         let query: [String: Any] = [
@@ -85,7 +75,6 @@ final class CloudKitSync: ObservableObject {
         }
     }
 
-    /// Reads the encryption key from the Keychain.
     private static func loadEncryptionKey() -> SymmetricKey? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -123,7 +112,6 @@ final class CloudKitSync: ObservableObject {
         }
     }
 
-    // MARK: - Encryption
 
     private func encrypt(_ text: String) throws -> Data? {
         guard let key = encryptionKey, let data = text.data(using: .utf8) else { return nil }
@@ -138,7 +126,6 @@ final class CloudKitSync: ObservableObject {
         return String(data: decrypted, encoding: .utf8)
     }
 
-    // MARK: - Sync Operations
 
     func syncNote(_ note: SyncNote) async {
         guard isEnabled else { return }
@@ -168,9 +155,7 @@ final class CloudKitSync: ObservableObject {
         }
     }
 
-    /// Pushes all notes (with their deletions handled via `deletedNoteIDs`)
-    /// in one pass. Deleted (Void) notes are removed from iCloud so trashing
-    /// on one Mac reflects on the others.
+    /// Pushes all notes and deletions in one pass.
     func sync(notes: [Note], trash: [Note]) async {
         guard isEnabled else { return }
         guard let database else {

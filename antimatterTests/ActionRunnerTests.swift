@@ -6,8 +6,7 @@ import Testing
 @Suite(.serialized)
 struct ActionRunnerTests {
 
-    /// `ActionRunner.run` turns a command line into an outcome and appends the
-    /// committed aggregate line to the active note.
+    /// `ActionRunner.run` turns a command line into an outcome.
     @Test func sumAppendsResultAndReportsValue() {
         _ = NoteStore.shared.create(text: "5\n3\n10\n")
         defer { resetActiveNote() }
@@ -68,8 +67,7 @@ struct ActionRunnerTests {
         #expect(ActionRunner.naturalDuration(3900) == "1 h 5 min")
     }
 
-    /// Drops the test-created notes so the suite's shared singleton doesn't
-    /// leak state between cases; the isolated storage dir is throwaway anyway.
+    /// Drops the test-created notes so the shared singleton doesn't leak state.
     private func resetActiveNote() {
         var note = NoteStore.shared.activeNote
         note.text = ""
