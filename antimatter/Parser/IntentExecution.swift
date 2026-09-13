@@ -54,15 +54,38 @@ nonisolated enum IntentExecution {
         case avg
         case count
 
-        /// Dot-commands only: `.sum`, `.total`, `.avg`, `.average`, `.count`.
+        private static let aliases: [(command: String, kind: AggregateKind)] = [
+            ("sum", .sum), ("total", .sum),
+            ("avg", .avg), ("average", .avg),
+            ("count", .count),
+        ]
+
+        /// Whole-line match: the entire trimmed token must be the command
+        /// (`.sum`, `.total`, `.avg`, `.average`, `.count`) with no arguments.
         init?(keyword: String) {
             guard keyword.hasPrefix(IntentParser.commandPrefix) else { return nil }
-            switch String(keyword.dropFirst(IntentParser.commandPrefix.count)).lowercased() {
-            case "sum", "total": self = .sum
-            case "avg", "average": self = .avg
-            case "count": self = .count
-            default: return nil
+            let stem = String(keyword.dropFirst(IntentParser.commandPrefix.count)).lowercased()
+            guard !stem.contains(" ") else { return nil }
+            for (command, kind) in Self.aliases where command == stem {
+                self = kind
+                return
             }
+            return nil
+        }
+
+        /// Split `.sum 10 20 30` into its kind, the command name typed,
+        /// and the unparsed argument string (may be empty for bare `.sum`).
+        static func split(_ line: String) -> (kind: AggregateKind, command: String, args: String)? {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.hasPrefix(IntentParser.commandPrefix) else { return nil }
+            let stem = String(trimmed.dropFirst(IntentParser.commandPrefix.count)).lowercased()
+            for (command, kind) in Self.aliases {
+                guard stem == command || stem.hasPrefix(command + " ") else { continue }
+                let args = String(stem.dropFirst(command.count))
+                    .trimmingCharacters(in: .whitespaces)
+                return (kind, IntentParser.commandPrefix + command, args)
+            }
+            return nil
         }
 
         /// The aggregate over the note's numbers, or nil with no data —
@@ -85,14 +108,25 @@ nonisolated enum IntentExecution {
         }
     }
 
+    /// Numbers an aggregate command should operate on: explicit arguments
+    /// (`.sum 10 20 30`) win, otherwise the whole note's numbers.
+    static func aggregateNumbers(forLine line: String, in text: String) -> [Double] {
+        if let (_, _, args) = AggregateKind.split(line),
+           !args.trimmingCharacters(in: .whitespaces).isEmpty {
+            return ExpressionEvaluator.listLiterals(args)
+        }
+        return Aggregates.numbers(in: text)
+    }
+
     /// Rewrites a `.sum` / `.avg` / `.count` line into `.sum = 102`,
-    /// aggregating the arithmetic numbers found across the whole note.
+    /// aggregating explicit arguments when given, otherwise the numbers
+    /// found across the whole note.
     static func aggregateCommit(
         _ kind: AggregateKind, keyword: String, in text: String, at contentRange: NSRange?
     ) -> Commit? {
         guard let contentRange, contentRange.length > 0,
               NSMaxRange(contentRange) <= (text as NSString).length,
-              let value = kind.value(of: Aggregates.numbers(in: text))
+              let value = kind.value(of: aggregateNumbers(forLine: keyword, in: text))
         else { return nil }
         let ns = text as NSString
         let line = ns.substring(with: contentRange)
@@ -244,12 +278,19 @@ nonisolated enum IntentExecution {
             }
             return .hint(".remind needs a time and a message — e.g. `.remind in 10 mins stand up`")
         }
-        if let kind = AggregateKind(keyword: trimmed) {
+        if let parts = AggregateKind.split(trimmed) {
             guard let buffer else { return .nothing }
-            let numbers = Aggregates.numbers(in: buffer)
-            return numbers.isEmpty
-                ? .hint("No numbers in the note to \(kind.name)")
-                : .insertAggregate(kind)
+            let numbers = aggregateNumbers(forLine: trimmed, in: buffer)
+            guard !numbers.isEmpty else {
+                let whereTo = parts.args.isEmpty
+                    ? "in the note to \(parts.kind.name)"
+                    : "after `\(parts.command)` to \(parts.kind.name)"
+                return .hint("No numbers \(whereTo)")
+            }
+            return .insertAggregate(parts.kind)
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "time" {
+            return .rewriteLine(TimeIntent.commit(trimmed))
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "export" {
             return .hint("Export where? — `.export notes` or `.export obsidian`")
@@ -370,6 +411,17 @@ nonisolated enum IntentExecution {
     /// plus the automatic line replies. Kept in the parser layer so it can be
     /// tested and translated without touching an `NSTextView`.
     static let helpText = """
+        Reference view keys:
+            j/k  lines  ·  h/l  horizontal  
+            space/f  page ↓  ·  b  page ↑
+            Ctrl-d/Ctrl-u  half page  ·  
+            gg/G  top/bottom  ·  
+            H/M/L  screen third  ·  
+            0/$  line ends
+            w/b/e  word jumps  ·  
+            type a number first to repeat ·  
+            q/Esc  close
+
         Commands — type one and press return:
 
         Timers & Reminders
@@ -392,9 +444,12 @@ nonisolated enum IntentExecution {
           .paste                  stream clipboard copies into the note until dismissed
 
         Math & Aggregates
-          .sum  .total            sum the numbers in this note
-          .avg  .average          average the note's numbers
-          .count                  count the note's numbers
+          .sum  .total            sum the note's numbers (`.sum 10 20 30` = 60)
+          .avg  .average          average the note's numbers (`.avg 10 20 30`)
+          .count                  count the note's numbers (`.count 10 20 30`)
+
+        Utilities
+          .time                   stamp the current time (`.time = 2:31 PM`)
 
         Search & System
           .find                   open the find bar (also ⌘F)
@@ -404,10 +459,6 @@ nonisolated enum IntentExecution {
           .stats                  show your usage statistics
           .exit  .quit            quit Antimatter
           .help                   open this reference full-screen (press q to close)
-
-        Reference view keys:  j/k  lines  ·  h/l  horizontal  ·  space/f  page ↓  ·  b  page ↑
-        ·  Ctrl-d/Ctrl-u  half page  ·  gg/G  top/bottom  ·  H/M/L  screen third  ·  0/$  line ends
-        ·  w/b/e  word jumps  ·  type a number first to repeat ·  q/Esc  close
 
         Automatic — press return on a line:
           384 * 27            →  384 * 27 = 10368
@@ -452,9 +503,12 @@ nonisolated enum IntentExecution {
         {
             return "⏎ reminder in \(ReminderCenter.format(reminder.date.timeIntervalSinceNow))"
         }
-        if let kind = AggregateKind(keyword: trimmed), let buffer {
-            guard let value = kind.value(of: Aggregates.numbers(in: buffer)) else { return nil }
+        if let parts = AggregateKind.split(trimmed), let buffer {
+            guard let value = parts.kind.value(of: aggregateNumbers(forLine: trimmed, in: buffer)) else { return nil }
             return "⏎ \(trimmed) = \(IntentParser.format(value))"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "time" {
+            return "⏎ .time = \(TimeIntent.format(Date()))"
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "paste" {
             return "⏎ begins paste stream"
@@ -566,9 +620,13 @@ nonisolated enum IntentExecution {
         DotCommand(name: ".paste", description: "stream clipboard into the note"),
         DotCommand(name: ".export notes", description: "send the note to Apple Notes"),
         DotCommand(name: ".export obsidian", description: "save the note as markdown in a vault"),
-        DotCommand(name: ".sum", description: "sum the note's numbers"),
-        DotCommand(name: ".avg", description: "average the note's numbers"),
-        DotCommand(name: ".count", description: "count the note's numbers"),
+        DotCommand(name: ".sum", description: "sum the note's numbers (or `.sum 10 20 30`)",
+                   snippet: ".sum "),
+        DotCommand(name: ".avg", description: "average the note's numbers (or `.avg 10 20 30`)",
+                   snippet: ".avg "),
+        DotCommand(name: ".count", description: "count the note's numbers (or `.count 10 20 30`)",
+                   snippet: ".count "),
+        DotCommand(name: ".time", description: "stamp the current time"),
         DotCommand(name: ".find", description: "open the find bar"),
         DotCommand(name: ".replace", description: "global replace (`.replace find → replace`)",
                    snippet: ".replace <find> → <replace> "),

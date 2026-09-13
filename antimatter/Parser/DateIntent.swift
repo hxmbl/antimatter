@@ -43,3 +43,23 @@ nonisolated enum DateIntent {
         String(rawLine.prefix(while: { $0 == " " || $0 == "\t" }))
     }
 }
+
+/// `.time` stamps the current wall-clock time onto a line: pressing return on
+/// `.time` rewrites it to `.time = 2:31 PM`. Deterministic for tests via `now`.
+nonisolated enum TimeIntent {
+    /// The exact stamp used: `h:mm a` in en_US_POSIX so AM/PM tokens never
+    /// depend on the host locale, but in the user's own time zone.
+    static func format(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "h:mm a"
+        formatter.timeZone = .current
+        return formatter.string(from: date)
+    }
+
+    static func commit(_ rawLine: String, now: Date = Date()) -> String {
+        let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        let indent = String(rawLine.prefix(while: { $0 == " " || $0 == "\t" }))
+        return indent + trimmed + " = " + format(now)
+    }
+}

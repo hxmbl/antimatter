@@ -390,7 +390,7 @@ struct CommandCompletionTests {
     }
 
     @Test func partialDotCommandsMatch() {
-        #expect(completions(".ti") == [".timer "])
+        #expect(completions(".ti") == [".timer ", ".time "])
         #expect(completions(".sto") == [".stopwatch "])
         #expect(completions(".pom") == [".pomodoro 25/5/4 "])
         #expect(completions(".su")?.contains(".sum ") == true)
@@ -477,5 +477,69 @@ struct DeferredCommitGuardTests {
 
     @Test func lostFocusMeansStale() {
         #expect(stale(view: "384 * 27 =", bound: "384 * 27 =", focus: false))
+    }
+}
+
+/// `.sum 10 20 30` (and friends) aggregate the numbers typed on the line,
+/// falling back to the whole note when no arguments are given. `.time`
+/// stamps the wall clock.
+struct InlineAggregateAndTimeTests {
+
+    @Test func inlineSumWinsOverTheNote() {
+        #expect(IntentExecution.preview(forLine: ".sum 10 20 30", in: "999") == "⏎ .sum 10 20 30 = 60")
+        let commit = IntentExecution.aggregateCommit(
+            .sum, keyword: ".sum 10 20 30",
+            in: "999\n.sum 10 20 30",
+            at: NSRange(location: 4, length: 13))
+        #expect(commit?.replacement == ".sum 10 20 30 = 60")
+    }
+
+    @Test func inlineAvgAndCountWorkTheSameWay() {
+        #expect(IntentExecution.preview(forLine: ".avg 10 20 30", in: "999") == "⏎ .avg 10 20 30 = 20")
+        #expect(IntentExecution.preview(forLine: ".count 10 20 30", in: "999") == "⏎ .count 10 20 30 = 3")
+        #expect(IntentExecution.preview(forLine: ".total 10 20 30", in: "999") == "⏎ .total 10 20 30 = 60")
+        #expect(IntentExecution.preview(forLine: ".average 10 20 30", in: "999") == "⏎ .average 10 20 30 = 20")
+    }
+
+    @Test func bareAggregatesStillReadTheWholeNote() {
+        #expect(IntentExecution.preview(forLine: ".sum", in: "5\n10\n.sum") == "⏎ .sum = 15")
+        #expect(IntentExecution.preview(forLine: ".count", in: "5\n10\n.count") == "⏎ .count = 2")
+    }
+
+    @Test func inlineArgumentsStayTiedToTheCommand() {
+        // `sum` without the dot is prose even with numbers after it.
+        #expect(IntentExecution.action(forLine: "sum 10 20", in: "sum 10 20") == .nothing)
+        // Numbers elsewhere in a note don't leak into explicit arguments.
+        #expect(IntentExecution.preview(forLine: ".sum", in: "10\n.sum") == "⏎ .sum = 10")
+    }
+
+    @Test func nonNumericArgumentsHint() {
+        guard case .hint(let message) = IntentExecution.action(forLine: ".sum hello", in: "10") else {
+            Issue.record(".sum hello should hint")
+            return
+        }
+        #expect(message.contains("No numbers"))
+    }
+
+    @Test func timeCommandRewritesTheLine() {
+        guard case .rewriteLine(let replacement) = IntentExecution.action(forLine: ".time", in: "") else {
+            Issue.record(".time should rewrite the line")
+            return
+        }
+        #expect(replacement.hasPrefix(".time = "))
+        #expect(replacement.range(of: #":\d{2} (AM|PM)$"#, options: .regularExpression) != nil)
+    }
+
+    @Test func timeFormatAndIndentSurvive() {
+        let fixed = Date(timeIntervalSince1970: 0)
+        let stamp = TimeIntent.format(fixed)
+        #expect(stamp.range(of: #"^\d{1,2}:\d{2} (AM|PM)$"#, options: .regularExpression) != nil)
+        #expect(TimeIntent.commit("  .time", now: fixed).hasPrefix("  .time = "))
+    }
+
+    @Test func timeAppearsInDiscovery() {
+        #expect(IntentExecution.helpText.contains(".time"))
+        #expect(IntentExecution.dotCommands.contains { $0.name == ".time" })
+        #expect(IntentExecution.preview(forLine: ".time")?.contains(".time") == true)
     }
 }

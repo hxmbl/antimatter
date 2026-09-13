@@ -48,6 +48,36 @@ nonisolated enum ExpressionEvaluator {
         return literals
     }
 
+    /// Every signed number in `input`, in order — tolerant of lists and
+    /// prose (`10 20 30` → [10, 20, 30]; `-5, 3` → [-5, 3]). Unlike
+    /// `numericLiterals` it doesn't require the input to be one expression.
+    static func listLiterals(_ input: String) -> [Double] {
+        let tokens = tokenize(input)
+        guard !tokens.isEmpty else { return [] }
+        var literals: [Double] = []
+        var sign = 1.0
+        var expectsOperand = true
+        for token in tokens {
+            switch token {
+            case .number(let value):
+                literals.append(sign * value)
+                sign = 1
+                expectsOperand = false
+            case .op(let op) where op == "-" && expectsOperand:
+                sign = -sign // unary minus: stays expecting an operand
+            case .lparen, .comma:
+                sign = 1
+                expectsOperand = true
+            case .op, .rparen:
+                sign = 1
+                expectsOperand = true
+            case .name:
+                expectsOperand = false
+            }
+        }
+        return literals
+    }
+
     // MARK: Tokenizer
 
     private enum Token: Equatable {

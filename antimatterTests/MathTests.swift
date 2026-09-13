@@ -168,6 +168,18 @@ struct SignedLiteralTests {
             #expect(literals(input)!.reduce(0, +) == ExpressionEvaluator.evaluate(input))
         }
     }
+
+    @Test func listLiteralsAreTolerantOfSpaceSeparatedLists() {
+        // A list like `10 20 30` isn't one expression, so numericLiterals
+        // declines it — listLiterals is the permissive variant for `.sum`.
+        #expect(ExpressionEvaluator.numericLiterals("10 20 30") == nil)
+        #expect(ExpressionEvaluator.listLiterals("10 20 30") == [10, 20, 30])
+        #expect(ExpressionEvaluator.listLiterals("-5 3") == [-5, 3])
+        #expect(ExpressionEvaluator.listLiterals("1.5, 2.5") == [1.5, 2.5])
+        #expect(ExpressionEvaluator.listLiterals("2 * 3 4") == [2, 3, 4])
+        #expect(ExpressionEvaluator.listLiterals("no numbers") == [])
+        #expect(ExpressionEvaluator.listLiterals("") == [])
+    }
 }
 
 /// Dates and units.

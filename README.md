@@ -34,7 +34,7 @@ No setup, no account, no data leaves your Mac until you ask it to.
 
 - **Instant math** — type `384 * 27 =` for the answer as you type, or press return on a pure-arithmetic line to rewrite it to `384 * 27 = 10368`. Operators: `+ - * / % ^`, parens, `sqrt abs round min max`, and the typographic `× ÷ −`.
 - **Reactive variables** — `price = 4 * 12` defines a variable; later lines use `price / 2`. Edit a definition and every committed dependent recomputes live.
-- **Aggregates** — `.sum`, `.avg`, `.count` scan the note's numbers (prose ignored) and rewrite to `.sum = 46`. Recompute as the note changes.
+- **Aggregates** — `.sum`, `.avg`, `.count` scan the note's numbers (prose ignored) and rewrite to `.sum = 46`. Recompute as the note changes. Type numbers after the command to sum a list instead: `.sum 10 20 30` → `.sum 10 20 30 = 60`.
 - **Dates & units, offline** — return on `2026-08-22` appends its weekday; `days until …` counts down; `12 kg -> lb` converts. Built-in table, no network.
 - **Currency & crypto, opt-in** — flip *Settings → Notes → Live currency & crypto conversion* and `100 USD → EUR` converts with live rates; `1 BTC → USD` works too. Off by default so the note never touches the network until you ask. Rates refresh at most once an hour (Coinbase, fiat + crypto).
 - **Markdown that knows how to disappear** — Notion-style syntax collapsing: headings, block quotes, fenced code, lists, task lists, tables, bold/italic/inline code/strikethrough, links, bare URLs, `\` escapes. Syntax collapses away from the caret and reappears on its line.
@@ -73,9 +73,10 @@ No setup, no account, no data leaves your Mac until you ask it to.
 | `.new` | Create a new, empty note (swipe left/right to switch) |
 | `.clear` | Clear the current note |
 | `.switch` | Switch to another note (quick switcher menu) |
-| `.sum` / `.total` | Sum the note's numbers |
-| `.avg` / `.average` | Average the note's numbers |
-| `.count` | Count the note's numbers |
+| `.sum` / `.total` | Sum the note's numbers, or the numbers you type: `.sum 10 20 30` → 60 |
+| `.avg` / `.average` | Average the note's numbers (or `.avg 10 20 30`) |
+| `.count` | Count the note's numbers (or `.count 10 20 30`) |
+| `.time` | Stamp the current time: `.time` → `.time = 2:31 PM` |
 | `.export notes` | Send the note to Apple Notes |
 | `.export obsidian` | Save the note as markdown in your vault |
 | `.find` | Open the find bar (also `⌘F`) |

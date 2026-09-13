@@ -97,7 +97,7 @@ enum ActionRunner {
             return outcome(true, "Settings opened")
 
         case .insertAggregate(let kind):
-            guard let value = kind.value(of: Aggregates.numbers(in: buffer)) else {
+            guard let value = kind.value(of: IntentExecution.aggregateNumbers(forLine: trimmed, in: buffer)) else {
                 return outcome(false, "No numbers in the note to \(kind.name)")
             }
             let result = IntentParser.format(value)
