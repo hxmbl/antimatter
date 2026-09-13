@@ -115,6 +115,12 @@ final class MarkdownHighlighter {
             }
         }
 
+        // Keep substitution source editable and index-stable, but visually
+        // quiet so its evaluated ghost can sit beside the definition.
+        for span in ExpressionEvaluator.interpolationSpans(in: text) {
+            storage.addAttribute(.foregroundColor, value: PaneStyle.secondaryTextNSColor, range: span.range)
+        }
+
         // Second pass: apply syntax highlighting to code blocks with language identifiers
         applyCodeHighlighting(to: storage, text: text, elements: elements, baseSize: baseSize)
         storage.endEditing()

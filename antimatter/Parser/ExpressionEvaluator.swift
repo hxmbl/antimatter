@@ -81,6 +81,42 @@ nonisolated enum ExpressionEvaluator {
         return literals
     }
 
+    /// Returns balanced `$()` spans as UTF-16 ranges plus their inner text.
+    /// The ranges preserve the source indexes used by AppKit text storage.
+    static func interpolationSpans(in input: String) -> [(range: NSRange, inner: String)] {
+        let ns = input as NSString
+        var spans: [(range: NSRange, inner: String)] = []
+        var index = 0
+        while index + 1 < ns.length {
+            guard ns.character(at: index) == unichar(36), ns.character(at: index + 1) == unichar(40) else {
+                index += 1
+                continue
+            }
+            let start = index
+            var cursor = index + 2
+            var depth = 1
+            var closed = false
+            while cursor < ns.length {
+                switch ns.character(at: cursor) {
+                case unichar(40): depth += 1
+                case unichar(41):
+                    depth -= 1
+                    if depth == 0 {
+                        let innerRange = NSRange(location: start + 2, length: cursor - start - 2)
+                        spans.append((NSRange(location: start, length: cursor - start + 1), ns.substring(with: innerRange)))
+                        index = cursor + 1
+                        closed = true
+                    }
+                default: break
+                }
+                if closed { break }
+                cursor += 1
+            }
+            if !closed { index = start + 2 }
+        }
+        return spans
+    }
+
     // MARK: Tokenizer
 
     private enum Token: Equatable {

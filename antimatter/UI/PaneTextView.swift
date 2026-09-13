@@ -137,6 +137,7 @@ final class PaneTextView: NSTextView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+        drawVariableGhosts(in: dirtyRect)
         guard hasActiveCaret, let glide = caretGlide else { return }
         let elapsed = CACurrentMediaTime() - glide.start
         let progress = min(max(elapsed / glide.duration, 0), 1)
@@ -160,6 +161,36 @@ final class PaneTextView: NSTextView {
 
         color.withAlphaComponent(0.85).setFill()
         NSBezierPath(roundedRect: rect, xRadius: 1, yRadius: 1).fill()
+    }
+
+    private func drawVariableGhosts(in dirtyRect: NSRect) {
+        guard let storage = textStorage, let layoutManager, let textContainer else { return }
+        let source = storage.string
+        let variables = VariableTable.scan(source)
+        let ns = source as NSString
+        for span in ExpressionEvaluator.interpolationSpans(in: source) {
+            let lineRange = ns.lineRange(for: span.range)
+            let line = ns.substring(with: lineRange).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard line.hasPrefix(":"), line.contains(" = "),
+                  let value = ExpressionEvaluator.evaluate(span.inner, variables: variables, buffer: source),
+                  value.isFinite else { continue }
+
+            var contentEnd = NSMaxRange(lineRange)
+            if contentEnd > 0, ns.character(at: contentEnd - 1) == unichar(10) { contentEnd -= 1 }
+            let characterRange = NSRange(location: lineRange.location, length: max(0, contentEnd - lineRange.location))
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: characterRange, actualCharacterRange: nil)
+            let lineRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            let origin = NSPoint(x: textContainerOrigin.x + lineRect.maxX + 10, y: textContainerOrigin.y + lineRect.minY)
+            let ghost = IntentParser.format(value)
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedSystemFont(ofSize: PaneStyle.fontSize - 1, weight: .regular),
+                .foregroundColor: PaneStyle.secondaryTextNSColor.withAlphaComponent(0.72)
+            ]
+            let size = (ghost as NSString).size(withAttributes: attributes)
+            let rect = NSRect(origin: origin, size: size)
+            guard dirtyRect.intersects(rect) else { continue }
+            (ghost as NSString).draw(in: rect, withAttributes: attributes)
+        }
     }
 
     override func didChangeText() {
