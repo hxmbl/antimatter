@@ -34,7 +34,7 @@ jobs:
             CODE_SIGN_IDENTITY="-"
 
   publish-macos-release:
-    name: Build and release app
+    name: Build and release universal macOS app
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [test-intel, test-arm]
     runs-on: macos-26
@@ -51,23 +51,30 @@ jobs:
             -scheme antimatter \
             -configuration Release \
             -derivedDataPath .release-build \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_ALLOWED=NO
 
       - name: Package app
         run: |
+          executable=".release-build/Build/Products/Release/antimatter.app/Contents/MacOS/antimatter"
+          architectures="$(lipo -archs "$executable")"
+          echo "Architectures: $architectures"
+          grep -qw arm64 <<< "$architectures"
+          grep -qw x86_64 <<< "$architectures"
           mkdir -p dist
           ditto -c -k --sequesterRsrc --keepParent \
             .release-build/Build/Products/Release/antimatter.app \
             "dist/Antimatter-${GITHUB_REF_NAME}.zip"
 
-      - name: Create GitHub release
+      - name: Upload app to GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          gh release upload "$GITHUB_REF_NAME" \
             "dist/Antimatter-${GITHUB_REF_NAME}.zip" \
-            --generate-notes
+            --clobber
   test-arm:
     name: Build and run tests ARM
     runs-on: macos-26
