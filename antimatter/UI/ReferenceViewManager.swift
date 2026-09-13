@@ -13,6 +13,10 @@ final class ReferenceViewManager {
     private let status: Binding<FooterStatus>
     private let updateFooterStatus: (NSTextView) -> Void
 
+    /// Vim motion state: a pending repeat count and a half-typed `gg`.
+    private var pendingCount = 0
+    private var pendingIsG = false
+
     init(highlighter: MarkdownHighlighter, status: Binding<FooterStatus>, updateFooterStatus: @escaping (NSTextView) -> Void) {
         self.highlighter = highlighter
         self.status = status
@@ -50,7 +54,7 @@ final class ReferenceViewManager {
         textView.setSelectedRange(NSRange(location: 0, length: 0))
         textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
         textView.window?.makeFirstResponder(textView)
-        status.wrappedValue = FooterStatus(preview: "q to close · j/k scroll", answerToCopy: nil)
+        status.wrappedValue = FooterStatus(preview: "q/Esc close · j/k lines · f/b pages · gg/G top/bottom", answerToCopy: nil)
     }
 
     /// Restore the stashed note and normal editing.
@@ -75,33 +79,185 @@ final class ReferenceViewManager {
         updateFooterStatus(textView)
     }
 
-    /// Keystroke swallowed by the reference view. Navigation scrolls,
-    /// `q`/Escape close; everything else is consumed.
+    /// Keystroke swallowed by the reference view. Full vim navigation
+    /// with repeat-count prefix (e.g. `5j`, `3G`, `2w`), horizontal scroll,
+    /// page/half-page jumps, and word motions.
     func handleKey(_ event: NSEvent) -> Bool {
         guard isInHelpView, let textView = helpTextView else { return false }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        // System keys pass through: ⌘F still searches, ⌘Q still quits.
-        if flags.contains(.command) || flags.contains(.control) { return false }
-        // Escape: close the reference (instead of hiding the pane).
-        if event.keyCode == 53 { exit(); return true }
+
+        // Esc always closes.
+        if event.keyCode == 53 {
+            resetVim(); exit(); return true
+        }
+
+        // Ctrl-d / Ctrl-u / Ctrl-f / Ctrl-b — page motions.
+        if flags == [.control] {
+            switch event.keyCode {
+            case 2:  scrollByFraction(textView, 0.5);  resetVim(); return true  // d
+            case 32: scrollByFraction(textView, -0.5); resetVim(); return true  // u
+            case 3:  textView.scrollPageDown(nil);      resetVim(); return true  // f
+            case 11: textView.scrollPageUp(nil);        resetVim(); return true  // b
+            default: break
+            }
+        }
+
+        // Command / Control + anything else → system navigation passes through.
+        if flags.contains(.command) || flags.contains(.control) {
+            resetVim(); return false
+        }
+
         guard let characters = event.charactersIgnoringModifiers else { return true }
+
+        // Arrow / Page Up / Page Down / Home / End → native pass-through.
+        let navKeyCodes: Set<UInt16> = [115, 116, 119, 121, 123, 124, 125, 126]
+        if navKeyCodes.contains(event.keyCode) { resetVim(); return false }
+
+        // Number prefix for repeat counts.
+        if let n = Int(characters) {
+            if pendingCount == 0 && n == 0 {
+                scrollHorizontally(textView, delta: -.infinity)
+                resetVim(); return true
+            }
+            pendingCount = pendingCount * 10 + n
+            return true
+        }
+
+        let count = pendingCount > 0 ? pendingCount : 1
+
         switch characters {
         case "q", "Q":
-            exit()
+            resetVim(); exit(); return true
+
+        case "j":
+            for _ in 0..<count { textView.scrollLineDown(nil) }
+            resetVim(); return true
+        case "k":
+            for _ in 0..<count { textView.scrollLineUp(nil) }
+            resetVim(); return true
+
+        case "h":
+            scrollHorizontally(textView, delta: -CGFloat(count) * hStep(textView))
+            resetVim(); return true
+        case "l":
+            scrollHorizontally(textView, delta: CGFloat(count) * hStep(textView))
+            resetVim(); return true
+
+        case " ", "f":
+            textView.scrollPageDown(nil)
+            resetVim(); return true
+        case "b":
+            textView.scrollPageUp(nil)
+            resetVim(); return true
+
+        case "w":
+            scrollHorizontally(textView, delta: CGFloat(count) * wStep(textView))
+            resetVim(); return true
+        case "e":
+            scrollHorizontally(textView, delta: CGFloat(count) * wStep(textView))
+            resetVim(); return true
+
+        case "g":
+            if pendingIsG {
+                moveToLine(textView, count, total: lineCount(textView))
+                resetVim(); return true
+            }
+            pendingIsG = true
             return true
-        case "j": textView.scrollLineDown(nil); return true
-        case "k": textView.scrollLineUp(nil); return true
-        case " ", "f": textView.scrollPageDown(nil); return true
-        case "b": textView.scrollPageUp(nil); return true
-        case "g": textView.scrollToBeginningOfDocument(nil); return true
-        case "G": textView.scrollToEndOfDocument(nil); return true
-        default: break
+
+        case "G":
+            if count > 1 {
+                moveToLine(textView, count, total: lineCount(textView))
+            } else {
+                scrollByFraction(textView, 1.0)
+            }
+            resetVim(); return true
+
+        case "H":
+            goToScreenFraction(textView, 0.0)
+            resetVim(); return true
+        case "M":
+            goToScreenFraction(textView, 0.5)
+            resetVim(); return true
+        case "L":
+            goToScreenFraction(textView, 0.97)
+            resetVim(); return true
+
+        case "$":
+            scrollHorizontally(textView, delta: .infinity)
+            resetVim(); return true
+
+        default:
+            break
         }
-        // Arrow / Page Up / Page Down / Home / End still scroll the
-        // reference text via native responder navigation.
-        let navKeyCodes: Set<UInt16> = [115, 116, 119, 121, 123, 124, 125, 126]
-        if navKeyCodes.contains(event.keyCode) { return false }
-        // Everything else is consumed so it never modifies the reference.
+
+        // If a pending count was held without a matching motion, discard it.
+        resetVim()
         return true
+    }
+
+    // MARK: – Vim helpers
+
+    private func resetVim() { pendingCount = 0; pendingIsG = false }
+
+    private func scrollView(of textView: NSTextView) -> NSScrollView? { textView.enclosingScrollView }
+
+    private func horizontalMax(for scrollView: NSScrollView) -> CGFloat {
+        max(0, (scrollView.documentView?.frame.width ?? 0) - scrollView.contentView.bounds.width)
+    }
+
+    private func hStep(_ textView: NSTextView) -> CGFloat {
+        (textView.font?.pointSize ?? 14) * 0.6 * 8
+    }
+
+    private func wStep(_ textView: NSTextView) -> CGFloat {
+        (textView.font?.pointSize ?? 14) * 0.6 * 4
+    }
+
+    private func scrollHorizontally(_ textView: NSTextView, delta: CGFloat) {
+        guard let scrollView = scrollView(of: textView) else { return }
+        let cv = scrollView.contentView
+        let current = cv.bounds.origin
+        let maxX = horizontalMax(for: scrollView)
+        let nx: CGFloat
+        if delta == .infinity { nx = maxX }
+        else if delta == -.infinity { nx = 0 }
+        else { nx = min(max(0, current.x + delta), maxX) }
+        guard nx != current.x else { return }
+        cv.scroll(to: NSPoint(x: nx, y: current.y))
+    }
+
+    private func scrollByFraction(_ textView: NSTextView, _ fraction: CGFloat) {
+        guard let scrollView = scrollView(of: textView) else { return }
+        let cv = scrollView.contentView
+        let dy = cv.bounds.height * fraction
+        let current = cv.bounds.origin
+        let maxY = max(0, (scrollView.documentView?.frame.height ?? 0) - cv.bounds.height)
+        let ny = min(max(0, current.y + dy), maxY)
+        guard ny != current.y else { return }
+        cv.scroll(to: NSPoint(x: current.x, y: ny))
+    }
+
+    private func lineCount(_ textView: NSTextView) -> Int {
+        max(1, textView.string.components(separatedBy: .newlines).count)
+    }
+
+    private func moveToLine(_ textView: NSTextView, _ line: Int, total: Int) {
+        guard total > 0 else { return }
+        let clamped = min(max(line, 1), total)
+        let frac = total == 1 ? 0 : Double(clamped - 1) / Double(total - 1)
+        let ns = textView.string as NSString
+        let index = min(Int(Double(ns.length) * frac), ns.length)
+        textView.scrollRangeToVisible(NSRange(location: index, length: 0))
+    }
+
+    private func goToScreenFraction(_ textView: NSTextView, _ fraction: CGFloat) {
+        guard let container = textView.textContainer, let layout = textView.layoutManager else { return }
+        let visible = textView.visibleRect
+        let x = visible.midX
+        let y = visible.minY + visible.height * fraction
+        let index = layout.characterIndex(for: NSPoint(x: x, y: y), in: container,
+                                          fractionOfDistanceBetweenInsertionPoints: nil)
+        textView.scrollRangeToVisible(NSRange(location: min(index, (textView.string as NSString).length), length: 0))
     }
 }

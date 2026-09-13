@@ -6,6 +6,7 @@ final class PaneTextView: NSTextView {
     var onCancelOperation: (() -> Void)?
     var onDroppedImage: ((NSImage) -> Void)?
     var onHelpKeyDown: ((NSEvent) -> Bool)?
+    var onTabKeyDown: (() -> Bool)?
     var onTopTextLevelChange: ((CGFloat) -> Void)?
 
     private var pendingClick: (location: NSPoint, modifiers: NSEvent.ModifierFlags)?
@@ -427,6 +428,7 @@ final class PaneTextView: NSTextView {
 
 
     override func insertTab(_ sender: Any?) {
+        if onTabKeyDown?() == true { return }
         if !indentCurrentListLine(direction: 1) { super.insertTab(sender) }
     }
 

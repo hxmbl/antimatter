@@ -405,7 +405,9 @@ nonisolated enum IntentExecution {
           .exit  .quit            quit Antimatter
           .help                   open this reference full-screen (press q to close)
 
-        Reference view keys:  j/k  scroll  ·  space/b  page  ·  g/G  top/bottom  ·  q/Esc  close
+        Reference view keys:  j/k  lines  ·  h/l  horizontal  ·  space/f  page ↓  ·  b  page ↑
+        ·  Ctrl-d/Ctrl-u  half page  ·  gg/G  top/bottom  ·  H/M/L  screen third  ·  0/$  line ends
+        ·  w/b/e  word jumps  ·  type a number first to repeat ·  q/Esc  close
 
         Automatic — press return on a line:
           384 * 27            →  384 * 27 = 10368
@@ -536,43 +538,78 @@ nonisolated enum IntentExecution {
     }
 
 
-    // MARK: Command completion
+    struct DotCommand: Equatable {
+        var name: String
+        var description: String
+        var snippet: String
+
+        init(name: String, description: String, snippet: String? = nil) {
+            self.name = name
+            self.description = description
+            self.snippet = snippet ?? (name + " ")
+        }
+    }
 
     /// Completion vocabulary for typing after a `.` — teaches the commands
     /// at the moment of use, with no chrome.
-    static let dotCommands: [(name: String, description: String)] = [
-        (".new", "create a new, empty note"),
-        (".clear", "clear the current note"),
-        (".switch", "switch to another note"),
-        (".timer", "start or cancel a countdown"),
-        (".stopwatch", "start or cancel a stopwatch"),
-        (".remind", "set a natural-language reminder"),
-        (".reminder", "cancel reminders (`.reminder cancel all`)"),
-        (".pomodoro", "start a pomodoro cycle (`.pomodoro 25/5/4`)"),
-        (".paste", "stream clipboard into the note"),
-        (".export notes", "send the note to Apple Notes"),
-        (".export obsidian", "save the note as markdown in a vault"),
-        (".sum", "sum the note's numbers"),
-        (".avg", "average the note's numbers"),
-        (".count", "count the note's numbers"),
-        (".find", "open the find bar"),
-        (".replace", "global replace (`.replace find → replace`)"),
-        (".settings", "open the settings window"),
-        (".debug", "show diagnostics and the event log"),
-        (".stats", "show your usage statistics"),
-        (".exit", "quit Antimatter"),
-        (".quit", "quit Antimatter (same as .exit)"),
-        (".help", "show the command reference"),
+    static let dotCommands: [DotCommand] = [
+        DotCommand(name: ".new", description: "create a new, empty note"),
+        DotCommand(name: ".clear", description: "clear the current note"),
+        DotCommand(name: ".switch", description: "switch to another note"),
+        DotCommand(name: ".timer", description: "start or cancel a countdown"),
+        DotCommand(name: ".stopwatch", description: "start or cancel a stopwatch"),
+        DotCommand(name: ".remind", description: "set a natural-language reminder",
+                   snippet: ".remind <what> <when> "),
+        DotCommand(name: ".reminder", description: "cancel reminders (`.reminder cancel all`)"),
+        DotCommand(name: ".pomodoro", description: "start a pomodoro cycle",
+                   snippet: ".pomodoro 25/5/4 "),
+        DotCommand(name: ".paste", description: "stream clipboard into the note"),
+        DotCommand(name: ".export notes", description: "send the note to Apple Notes"),
+        DotCommand(name: ".export obsidian", description: "save the note as markdown in a vault"),
+        DotCommand(name: ".sum", description: "sum the note's numbers"),
+        DotCommand(name: ".avg", description: "average the note's numbers"),
+        DotCommand(name: ".count", description: "count the note's numbers"),
+        DotCommand(name: ".find", description: "open the find bar"),
+        DotCommand(name: ".replace", description: "global replace (`.replace find → replace`)",
+                   snippet: ".replace <find> → <replace> "),
+        DotCommand(name: ".settings", description: "open the settings window"),
+        DotCommand(name: ".debug", description: "show diagnostics and the event log"),
+        DotCommand(name: ".stats", description: "show your usage statistics"),
+        DotCommand(name: ".exit", description: "quit Antimatter"),
+        DotCommand(name: ".quit", description: "quit Antimatter (same as .exit)"),
+        DotCommand(name: ".help", description: "show the command reference"),
     ]
 
-    /// Completion strings for text typed after a dot, or nil when the caret
-    /// token is not a partial dot-command (`.ti`, `.su`).
-    static func completions(for prefix: String) -> [String]? {
-        guard prefix.hasPrefix(IntentParser.commandPrefix) else { return nil }
+    // MARK: Command completion
+
+    /// Completion candidates with rich metadata, used by the intellisense panel.
+    /// Returns all matching commands for the partial token after the `.` prefix,
+    /// or an empty list when the token is not a partial dot-command.
+    static func completionCandidates(for prefix: String) -> [DotCommand] {
+        guard prefix.hasPrefix(IntentParser.commandPrefix) else { return [] }
         let partial = String(prefix.dropFirst(IntentParser.commandPrefix.count)).lowercased()
-        guard !partial.isEmpty else { return nil }
-        let matches = dotCommands.filter { $0.name.dropFirst(IntentParser.commandPrefix.count).hasPrefix(partial) }
-        return matches.isEmpty ? nil : matches.map { $0.name + " " }
+        return dotCommands.filter { $0.name.dropFirst(IntentParser.commandPrefix.count).hasPrefix(partial) }
+    }
+
+    /// Completion strings for text typed after a dot, or nil when the caret
+    /// token is not a partial dot-command (`.ti`, `.su`). A bare `.` yields
+    /// nil here — the intellisense panel asks for everything via
+    /// `completionCandidates(for:)` instead.
+    static func completions(for prefix: String) -> [String]? {
+        guard prefix.dropFirst(IntentParser.commandPrefix.count).count > 0 else { return nil }
+        let c = completionCandidates(for: prefix)
+        return c.isEmpty ? nil : c.map(\.snippet)
+    }
+
+    /// The first `<placeholder>` inside a snippet and where it sits in the
+    /// inserted text, ready to be selected so the user types over it.
+    static func placeholderRange(in snippet: String) -> (NSRange, String)? {
+        guard let open = snippet.range(of: "<"),
+              let close = snippet.range(of: ">", range: open.upperBound..<snippet.endIndex)
+        else { return nil }
+        let start = snippet.distance(from: snippet.startIndex, to: open.lowerBound)
+        let text = String(snippet[open.lowerBound..<close.upperBound])
+        return (NSRange(location: start, length: (text as NSString).length), text)
     }
 
 

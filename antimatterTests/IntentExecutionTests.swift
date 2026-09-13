@@ -392,7 +392,7 @@ struct CommandCompletionTests {
     @Test func partialDotCommandsMatch() {
         #expect(completions(".ti") == [".timer "])
         #expect(completions(".sto") == [".stopwatch "])
-        #expect(completions(".pom") == [".pomodoro "])
+        #expect(completions(".pom") == [".pomodoro 25/5/4 "])
         #expect(completions(".su")?.contains(".sum ") == true)
         #expect(completions(".sw")?.contains(".switch ") == true)
         #expect(completions(".h")?.contains(".help ") == true)

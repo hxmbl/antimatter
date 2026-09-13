@@ -55,6 +55,9 @@ struct PaneEditor: NSViewRepresentable {
         textView.onHelpKeyDown = { [weak coordinator = context.coordinator] event in
             coordinator?.referenceViewManager.handleKey(event) ?? false
         }
+        textView.onTabKeyDown = { [weak coordinator = context.coordinator] in
+            coordinator?.attemptTabCompletion() ?? false
+        }
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
@@ -152,7 +155,9 @@ struct PaneEditor: NSViewRepresentable {
         private var appliedThemeID = PaneTheme.current.id
         /// Undo replays suppress automatic rewrites until a real keystroke arrives.
         private var autoRewritesSuppressed = false
-        private var completionAnchor: Int?
+        private var suppressedTokenStart: Int?
+        private var completionTask: Task<Void, Never>?
+        private let completionPanel = CommandCompletionPanel()
         lazy var referenceViewManager: ReferenceViewManager = ReferenceViewManager(
             highlighter: highlighter,
             status: status,
@@ -186,7 +191,11 @@ struct PaneEditor: NSViewRepresentable {
                 text.wrappedValue = newText
             }
             scheduleStatusUpdate(textView)
-            scheduleCompletion(textView)
+            if completionPanel.isShown {
+                syncCompletion(textView)
+            } else {
+                scheduleCompletion(textView)
+            }
         }
 
         /// Defer Markdown rendering until AppKit finishes the current edit
@@ -490,33 +499,7 @@ struct PaneEditor: NSViewRepresentable {
         }
 
 
-        func textView(
-            _ textView: NSTextView,
-            completionsForPartialWordRange charRange: NSRange,
-            indexOfSelectedItem index: UnsafeMutablePointer<Int>?
-        ) -> [String]? {
-            guard let ns = textView.string as NSString? else { return nil }
-            var start = charRange.location
-            while start > 0 {
-                let character = ns.character(at: start - 1)
-                if character == unichar(" ") || character == unichar("\t") || character == unichar("\n") {
-                    break
-                }
-                start -= 1
-            }
-            let tokenRange = NSRange(location: start, length: NSMaxRange(charRange) - start)
-            guard tokenRange.length > 0 else { return nil }
-            let token = ns.substring(with: tokenRange)
-            guard let matches = IntentExecution.completions(for: token) else { return nil }
-            index?.pointee = 0
-            return matches
-        }
-
-        private var completionTask: Task<Void, Never>?
-
-        /// Auto-open the completion window once per `.partial` token.
-        /// `complete(_:)` closes an already-visible window, so the anchor
-        /// guards against re-calling it.
+        /// Auto-open the completion panel once per `.partial` token.
         private func scheduleCompletion(_ textView: NSTextView) {
             completionTask?.cancel()
             completionTask = Task { [weak self, weak textView] in
@@ -526,24 +509,90 @@ struct PaneEditor: NSViewRepresentable {
                       textView.window?.firstResponder == textView,
                       textView.selectedRange().length == 0
                 else { return }
-                let ns = textView.string as NSString
-                let location = textView.selectedRange().location
-                guard location > 0, location <= ns.length else { return }
-                var start = location
-                while start > 0 {
-                    let character = ns.character(at: start - 1)
-                    if character == unichar(" ") || character == unichar("\t") || character == unichar("\n") {
-                        break
-                    }
-                    start -= 1
+                self.syncCompletion(textView)
+            }
+        }
+
+        /// Open the panel now for the caret's dot-command token. Returns true
+        /// when Tab was consumed by completion.
+        func attemptTabCompletion() -> Bool {
+            guard !referenceViewManager.isInHelpView else { return false }
+            completionTask?.cancel()
+            if completionPanel.isShown {
+                completionPanel.acceptSelected()
+                return true
+            }
+            guard let textView = ownedTextView,
+                  let tokenRange = completionTokenRange(in: textView),
+                  tokenRange.length > 0
+            else { return false }
+            let token = (textView.string as NSString).substring(with: tokenRange)
+            let candidates = IntentExecution.completionCandidates(for: token)
+            guard !candidates.isEmpty, suppressedTokenStart != tokenRange.location else { return false }
+            completionPanel.onAccept = { [weak self] entry, tokenStart in
+                self?.acceptCompletion(entry, tokenStart: tokenStart)
+            }
+            completionPanel.show(in: textView, candidates: candidates, tokenStart: tokenRange.location)
+            return true
+        }
+
+        /// Open the panel if the caret sits on a partial dot-command, refresh
+        /// it while it's open, or dismiss when the token stopped matching.
+        private func syncCompletion(_ textView: NSTextView) {
+            guard !referenceViewManager.isInHelpView else { return }
+            completionPanel.onAccept = { [weak self] entry, tokenStart in
+                self?.acceptCompletion(entry, tokenStart: tokenStart)
+            }
+            guard let tokenRange = completionTokenRange(in: textView), tokenRange.length > 1 else {
+                completionPanel.dismiss()
+                return
+            }
+            if let suppressed = suppressedTokenStart, suppressed != tokenRange.location {
+                suppressedTokenStart = nil
+            }
+            if suppressedTokenStart == tokenRange.location { return }
+            let token = (textView.string as NSString).substring(with: tokenRange)
+            let candidates = IntentExecution.completionCandidates(for: token)
+            guard !candidates.isEmpty else {
+                completionPanel.dismiss()
+                return
+            }
+            if completionPanel.isShown {
+                completionPanel.refilter(candidates: candidates)
+            } else {
+                completionPanel.show(in: textView, candidates: candidates, tokenStart: tokenRange.location)
+            }
+        }
+
+        /// The unbroken token ending at the caret, or nil when none sits there.
+        private func completionTokenRange(in textView: NSTextView) -> NSRange? {
+            let ns = textView.string as NSString
+            let location = textView.selectedRange().location
+            guard location > 0, location <= ns.length else { return nil }
+            var start = location
+            while start > 0 {
+                let character = ns.character(at: start - 1)
+                if character == unichar(" ") || character == unichar("\t") || character == unichar("\n") {
+                    break
                 }
-                guard start != completionAnchor, location - start > 0 else { return }
-                let token = ns.substring(with: NSRange(location: start, length: location - start))
-                guard let matches = IntentExecution.completions(for: token),
-                      matches.contains(where: { $0.trimmingCharacters(in: .whitespaces) != token })
-                else { return }
-                completionAnchor = start
-                textView.complete(textView)
+                start -= 1
+            }
+            return NSRange(location: start, length: location - start)
+        }
+
+        /// Replace the typed partial with the chosen snippet, selecting its
+        /// first placeholder. Counts toward `.stats` like real typing.
+        private func acceptCompletion(_ entry: IntentExecution.DotCommand, tokenStart: Int) {
+            guard let textView = ownedTextView else { return }
+            let caret = textView.selectedRange().location
+            guard caret >= tokenStart, caret <= (textView.string as NSString).length else { return }
+            let tokenLength = caret - tokenStart
+            textView.breakUndoCoalescing()
+            textView.insertText(entry.snippet, replacementRange: NSRange(location: tokenStart, length: tokenLength))
+            StatsCenter.shared.record(typed: (entry.snippet as NSString).length, deleted: tokenLength)
+            suppressedTokenStart = tokenStart
+            if let (range, _) = IntentExecution.placeholderRange(in: entry.snippet) {
+                textView.setSelectedRange(NSRange(location: tokenStart + range.location, length: range.length))
             }
         }
 
