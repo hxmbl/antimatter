@@ -83,6 +83,10 @@ enum ActionRunner {
             clearNote()
             return outcome(true, "Note cleared")
 
+        case .deleteNote:
+            deleteNote()
+            return outcome(true, "Note deleted")
+
         case .export(let destination):
             do {
                 let result = try ExportCenter.export(destination, text: NoteStore.shared.activeNote.text)
@@ -161,6 +165,20 @@ enum ActionRunner {
         note.modifiedAt = Date()
         NoteStore.shared.activeNote = note
         NoteStore.shared.flush()
+    }
+
+    private static func deleteNote() {
+        var note = NoteStore.shared.activeNote
+        // Remove the .delete command line if present
+        let lines = note.text.components(separatedBy: "\n")
+        let filteredLines = lines.filter { line in
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !trimmed.lowercased().hasPrefix(".delete")
+        }
+        note.text = filteredLines.joined(separator: "\n")
+        NoteStore.shared.activeNote = note
+        // Delete the note (this will handle active note selection and saving)
+        NoteStore.shared.delete(note)
     }
 
     // MARK: Feedback formatting

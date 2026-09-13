@@ -275,6 +275,8 @@ nonisolated enum IntentExecution {
         case clearNote
         /// Bring up the note switcher menu (`.switch`).
         case showNoteSwitcher
+        /// Delete the active note (`.delete`).
+        case deleteNote
         /// Export the whole note somewhere local (`.export notes` / `.export obsidian`).
         case export(ExportDestination)
         /// Expand `.help` into the command reference block.
@@ -369,6 +371,9 @@ nonisolated enum IntentExecution {
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "switch" {
             return .showNoteSwitcher
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "delete" {
+            return .deleteNote
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "help" {
             return .showHelp
@@ -497,6 +502,7 @@ nonisolated enum IntentExecution {
           .new                    create a new, empty note (swipe left/right to switch)
           .clear                  clear the current note
           .switch                 switch to another note (menu)
+          .delete                 delete the current note
           .export notes           send the note to Apple Notes
           .export obsidian        save the note as a markdown file in your vault
           .paste                  stream clipboard copies into the note until dismissed
@@ -579,6 +585,9 @@ nonisolated enum IntentExecution {
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "switch" {
             return "⏎ switches to another note"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "delete" {
+            return "⏎ deletes the note"
         }
         if let destination = exportDestination(from: trimmed) {
             return "⏎ exports the note to \(destinationTitle(destination))"
@@ -678,6 +687,7 @@ nonisolated enum IntentExecution {
         DotCommand(name: ".new", description: "create a new, empty note", category: .noteManagement),
         DotCommand(name: ".clear", description: "clear the current note", category: .noteManagement),
         DotCommand(name: ".switch", description: "switch to another note", category: .noteManagement),
+        DotCommand(name: ".delete", description: "delete the current note", category: .noteManagement),
         DotCommand(name: ".timer", description: "start a countdown — .timer <duration> [label]",
                    snippet: ".timer <duration> ", category: .timers),
         DotCommand(name: ".timer cancel all", description: "cancel every running timer",

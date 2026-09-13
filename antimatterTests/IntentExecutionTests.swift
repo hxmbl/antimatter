@@ -189,6 +189,18 @@ struct ReturnKeyActionTests {
         #expect(IntentExecution.action(forLine: "switch", in: "") == .nothing)
     }
 
+    @Test func deleteNoteIsACommand() {
+        if case .deleteNote = IntentExecution.action(forLine: ".delete", in: "") {} else {
+            Issue.record(".delete should delete the current note")
+        }
+        #expect(IntentExecution.preview(forLine: ".delete") == "⏎ deletes the note")
+        #expect(IntentExecution.helpText.contains(".delete"))
+        #expect(IntentExecution.dotCommands.contains { $0.name == ".delete" })
+        #expect(IntentExecution.completions(for: ".de")?.contains(".delete ") == true)
+        // Without the dot it is an ordinary line.
+        #expect(IntentExecution.action(forLine: "delete", in: "") == .nothing)
+    }
+
     @Test func replaceAcceptsBothArrows() {
         for line in [".replace foo → bar", ".replace foo -> bar"] {
             if case .replaceAll(let find, let replace) = IntentExecution.action(forLine: line, in: "") {
@@ -249,7 +261,7 @@ struct ReturnKeyActionTests {
         #expect(IntentExecution.helpText.contains(".settings"))
         #expect(IntentExecution.helpText.contains(".debug"))
         #expect(IntentExecution.completions(for: ".se")?.contains(".settings ") == true)
-        #expect(IntentExecution.completions(for: ".de")?.contains(".debug ") == true)
+        #expect(IntentExecution.completions(for: ".deb")?.contains(".debug ") == true)
         // Without the dot they are ordinary prose lines.
         #expect(IntentExecution.action(forLine: "settings", in: "") == .nothing)
         #expect(IntentExecution.action(forLine: "debug", in: "") == .nothing)

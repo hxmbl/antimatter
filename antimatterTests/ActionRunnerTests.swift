@@ -50,6 +50,18 @@ struct ActionRunnerTests {
         #expect(NoteStore.shared.activeNote.text == "")
     }
 
+    @Test func deleteDeletesTheActiveNote() {
+        let first = NoteStore.shared.create(text: "first note")
+        let second = NoteStore.shared.create(text: "second note to delete")
+        defer { resetActiveNote() }
+        let outcome = ActionRunner.run(".delete")
+        #expect(outcome.ok == true)
+        #expect(outcome.message == "Note deleted")
+        #expect(!NoteStore.shared.notes.contains { $0.id == second.id })
+        #expect(NoteStore.shared.trash.contains { $0.id == second.id })
+        #expect(NoteStore.shared.activeNoteID == first.id)
+    }
+
     @Test func appendAddsToActiveNote() {
         _ = NoteStore.shared.create(text: "first")
         defer { resetActiveNote() }
@@ -98,6 +110,7 @@ struct ActionRunnerTests {
         note.text = ""
         note.modifiedAt = Date()
         NoteStore.shared.activeNote = note
+        NoteStore.shared.emptyVoid()
         NoteStore.shared.flush()
     }
 }

@@ -435,6 +435,15 @@ struct PaneEditor: NSViewRepresentable {
             case .clearNote:
                 text.wrappedValue = ""
                 return true
+            case .deleteNote:
+                // Remove the command line first, then delete the note
+                if let commandLineRange = caretLineRange(in: textView) {
+                    textView.breakUndoCoalescing()
+                    textView.insertText("", replacementRange: commandLineRange)
+                }
+                noteStore.delete(noteStore.activeNote)
+                text.wrappedValue = noteStore.activeNote.text
+                return true
             case .showNoteSwitcher:
                 showNoteSwitcher(textView)
                 return true
