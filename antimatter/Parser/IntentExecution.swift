@@ -150,8 +150,19 @@ nonisolated enum IntentExecution {
     /// Committed answer lines whose stored result drifted, and aggregate
     /// lines whose note changed. Editing a definition lands here.
     static func staleResultCommits(in text: String) -> [Commit] {
-        let variables = VariableTable.scan(text)
         let ns = text as NSString
+        var variables = VariableTable.scan(text)
+        // Bare literal assignments provide context for dependent expressions,
+        // while computed assignments remain ordinary note text.
+        for fullRange in VariableTable.lineRanges(ns) {
+            let trimmed = ns.substring(with: fullRange)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let (name, expression) = VariableTable.arithmeticDefinition(trimmed),
+                  !trimmed.hasPrefix(":"),
+                  let value = Double(expression.trimmingCharacters(in: .whitespaces))
+            else { continue }
+            variables[name.lowercased()] = value
+        }
         var commits: [Commit] = []
         for fullRange in VariableTable.lineRanges(ns) {
             guard let lineRange = strippedLineRange(fullRange, in: ns) else { continue }

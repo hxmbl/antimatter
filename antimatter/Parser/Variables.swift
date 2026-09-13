@@ -36,6 +36,17 @@ nonisolated enum VariableTable {
         return name.dropFirst().allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
     }
 
+    static func arithmeticDefinition(_ line: String) -> (name: String, expression: String)? {
+        if let definition = splitDefinition(line) {
+            return definition
+        }
+        guard let separator = line.range(of: " = ") else { return nil }
+        let name = String(line[..<separator.lowerBound]).trimmingCharacters(in: .whitespaces)
+        let expression = String(line[separator.upperBound...]).trimmingCharacters(in: .whitespaces)
+        guard isIdentifier(name), !expression.isEmpty else { return nil }
+        return (name, expression)
+    }
+
     static func lineRanges(_ ns: NSString) -> [NSRange] {
         var ranges: [NSRange] = []
         var location = 0
@@ -63,7 +74,7 @@ nonisolated enum Aggregates {
             // result stripped); other lines contribute themselves minus a
             // trailing committed answer.
             let candidate: String
-            if let (_, rhs) = VariableTable.splitDefinition(trimmed) {
+            if let (_, rhs) = VariableTable.arithmeticDefinition(trimmed) {
                 candidate = mathCore(ofCommittedLine: rhs) ?? rhs
             } else {
                 candidate = mathCore(ofCommittedLine: trimmed) ?? trimmed
