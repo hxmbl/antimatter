@@ -82,6 +82,8 @@ No setup, no account, no data leaves your Mac until you ask it to.
 | `.replace find → replace` | Global replace in the note |
 | `.settings` | Open settings |
 | `.debug` | Show diagnostics + event log |
+| `.stats` | Show your usage statistics (typed, deleted, notes, version, time with Antimatter) |
+| `.exit` / `.quit` | Quit Antimatter |
 | `.help` | Full-screen command reference |
 
 Not sure which command does what? Type `.` — a native completion window lists them as you type.

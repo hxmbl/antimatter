@@ -136,7 +136,7 @@ final class NoteStore: ObservableObject {
         }
         let note = create()
         promoteToSlot(note, at: index)
-        return note
+        return notes.first { $0.id == note.id } ?? note
     }
 
     func slotNotes() -> [Note] {

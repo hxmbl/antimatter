@@ -224,6 +224,7 @@ struct PaneEditor: NSViewRepresentable {
         /// hyphens, flags, and pasted text never turn into unexpected Unicode.
         func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
             guard !referenceViewManager.isInHelpView else { return true }
+            recordUsage(affectedCharRange, replacement: replacementString, in: textView)
             if let replacement = replacementString, replacement == "\n" {
                 let ns = textView.string as NSString
                 var lineStart = 0, lineEnd = 0, contentsEnd = 0
@@ -370,6 +371,12 @@ struct PaneEditor: NSViewRepresentable {
                 (NSApplication.shared.delegate as? AppDelegate)?.openSettings(nil)
             case .showDebug:
                 referenceViewManager.enter(textView, content: DebugReport.generate())
+                return true
+            case .showStats:
+                referenceViewManager.enter(textView, content: StatsCenter.shared.report)
+                return true
+            case .quit:
+                NSApplication.shared.terminate(nil)
                 return true
             case .showFindPanel:
                 let item = NSMenuItem()
@@ -584,6 +591,18 @@ struct PaneEditor: NSViewRepresentable {
 
         private func caretLineRange(in textView: NSTextView) -> NSRange? {
             IntentExecution.caretLineRange(in: textView.string, selection: textView.selectedRange())
+        }
+
+        /// Counts one edit's inserted and removed characters toward `.stats`.
+        /// Whole-document replacements are programmatic reloads (`.replace`'s
+        /// main pass, note switching), not the user typing, so they're skipped.
+        private func recordUsage(_ range: NSRange, replacement: String?, in textView: NSTextView) {
+            let length = (textView.string as NSString).length
+            guard range.length < length || length == 0 else { return }
+            let typed = replacement?.count ?? 0
+            let deleted = range.length
+            guard typed > 0 || deleted > 0 else { return }
+            StatsCenter.shared.record(typed: typed, deleted: deleted)
         }
     }
 }

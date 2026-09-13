@@ -261,6 +261,34 @@ struct ReturnKeyActionTests {
         #expect(IntentExecution.action(forLine: "debug", in: "") == .nothing)
     }
 
+    @Test func statsIsACommand() {
+        if case .showStats = IntentExecution.action(forLine: ".stats", in: "") {} else {
+            Issue.record(".stats should open the usage report")
+        }
+        #expect(IntentExecution.preview(forLine: ".stats") == "⏎ shows your usage statistics")
+        #expect(IntentExecution.helpText.contains(".stats"))
+        #expect(IntentExecution.dotCommands.contains { $0.name == ".stats" })
+        #expect(IntentExecution.completions(for: ".st")?.contains(".stats ") == true)
+        // Without the dot it is an ordinary prose line.
+        #expect(IntentExecution.action(forLine: "stats", in: "") == .nothing)
+    }
+
+    @Test func exitAndQuitQuitTheApp() {
+        for line in [".exit", ".quit"] {
+            #expect(IntentExecution.action(forLine: line, in: "") == .quit)
+            #expect(IntentExecution.preview(forLine: line) == "⏎ quits Antimatter")
+        }
+        #expect(IntentExecution.helpText.contains(".exit"))
+        #expect(IntentExecution.helpText.contains(".quit"))
+        #expect(IntentExecution.dotCommands.contains { $0.name == ".exit" })
+        #expect(IntentExecution.dotCommands.contains { $0.name == ".quit" })
+        #expect(IntentExecution.completions(for: ".e")?.contains(".exit ") == true)
+        #expect(IntentExecution.completions(for: ".q")?.contains(".quit ") == true)
+        // Without the dot they are ordinary prose lines.
+        #expect(IntentExecution.action(forLine: "exit", in: "") == .nothing)
+        #expect(IntentExecution.action(forLine: "quit", in: "") == .nothing)
+    }
+
     @Test func quietFailuresNowSaySomething() {
         // Unknown dot-commands, a duration-less timer, and an empty
         // aggregate each raise a hint instead of dying silently.

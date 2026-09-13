@@ -155,6 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PaneHotKey.shared.install()
         UNUserNotificationCenter.current().delegate = notificationRouter
         LaunchPreferences.apply()
+        _ = StatsCenter.shared
         CurrencyCenter.shared.activate()
         LocalBridge.shared.start()
         Task { @MainActor in
@@ -170,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         NoteStore.shared.flush()
+        StatsCenter.shared.flush()
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {

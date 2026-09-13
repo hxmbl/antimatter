@@ -189,6 +189,10 @@ nonisolated enum IntentExecution {
         case showSettings
         /// Expand `.debug` into a diagnostics + log reference block.
         case showDebug
+        /// Expand `.stats` into the usage report.
+        case showStats
+        /// Quit Antimatter cleanly (`.exit` / `.quit`).
+        case quit
         /// Trigger the text view's native find panel.
         case showFindPanel
         /// Global replace in the current note.
@@ -273,6 +277,14 @@ nonisolated enum IntentExecution {
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "debug" {
             return .showDebug
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "stats" {
+            return .showStats
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "exit"
+            || trimmed.lowercased() == IntentParser.commandPrefix + "quit"
+        {
+            return .quit
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "find" {
             return .showFindPanel
@@ -389,6 +401,8 @@ nonisolated enum IntentExecution {
           .replace find → replace global replace in the note
           .settings               open the settings window
           .debug                  show diagnostics and the event log
+          .stats                  show your usage statistics
+          .exit  .quit            quit Antimatter
           .help                   open this reference full-screen (press q to close)
 
         Reference view keys:  j/k  scroll  ·  space/b  page  ·  g/G  top/bottom  ·  q/Esc  close
@@ -464,6 +478,14 @@ nonisolated enum IntentExecution {
         if trimmed.lowercased() == IntentParser.commandPrefix + "debug" {
             return "⏎ shows diagnostics and the event log"
         }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "stats" {
+            return "⏎ shows your usage statistics"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "exit"
+            || trimmed.lowercased() == IntentParser.commandPrefix + "quit"
+        {
+            return "⏎ quits Antimatter"
+        }
         if trimmed.lowercased() == IntentParser.commandPrefix + "find" {
             return "⏎ opens the find bar"
         }
@@ -537,6 +559,9 @@ nonisolated enum IntentExecution {
         (".replace", "global replace (`.replace find → replace`)"),
         (".settings", "open the settings window"),
         (".debug", "show diagnostics and the event log"),
+        (".stats", "show your usage statistics"),
+        (".exit", "quit Antimatter"),
+        (".quit", "quit Antimatter (same as .exit)"),
         (".help", "show the command reference"),
     ]
 

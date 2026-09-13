@@ -206,9 +206,12 @@ struct MarkdownTests {
     }
 
     @Test func closingFenceNeedsMatchingLengths() {
+        // A 3-tick closer can't close a 4-tick opener (CommonMark requires
+        // the closer to be at least as long), so all three content lines stay
+        // inside the fence — one unterminated block, one element per line.
         let elements = parse("````\ncode\n```\nmore code")
         let blocks = elements.filter { $0.kind == .codeBlock }
-        #expect(blocks.count == 2)
+        #expect(blocks.count == 3)
     }
 
 

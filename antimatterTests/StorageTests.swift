@@ -125,9 +125,12 @@ struct NoteStoreTests {
         let note = store.note(forSlot: 3)
         #expect(note.isSlot && note.slotIndex == 3)
         #expect(store.slotNotes().map(\.id) == [note.id])
+        let pinnedCount = store.notes.count
         // Repeat presses return the same pinned note instead of creating more.
-        store.note(forSlot: 3)
-        #expect(store.notes.count == 1)
+        let again = store.note(forSlot: 3)
+        #expect(again.id == note.id)
+        #expect(store.notes.count == pinnedCount)
+        #expect(store.slotNotes().count == 1)
         #expect(store.activeNoteID == note.id)
     }
 }

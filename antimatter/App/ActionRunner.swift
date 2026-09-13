@@ -117,6 +117,16 @@ enum ActionRunner {
             appendLine(clean)
             return outcome(true, clean)
 
+        case .showStats:
+            return outcome(true, StatsCenter.shared.report)
+
+        case .quit:
+            guard !StorageLocation.isIsolatedRun else {
+                return outcome(false, "Quit skipped — isolated run")
+            }
+            NSApplication.shared.terminate(nil)
+            return outcome(true, "Goodbye")
+
         case .showHelp, .showDebug, .showFindPanel, .replaceAll, .showNoteSwitcher:
             return outcome(false, "This needs the pane — open it and press return on the line")
 

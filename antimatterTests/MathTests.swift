@@ -175,6 +175,9 @@ struct DateIntentTests {
 
     private var utcCalendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
+        // en_US pins full weekday names ("Saturday"), matching
+        // weekdayIsCorrectOutsideUTC, regardless of where the tests run.
+        calendar.locale = Locale(identifier: "en_US")
         calendar.timeZone = TimeZone(identifier: "UTC")!
         return calendar
     }

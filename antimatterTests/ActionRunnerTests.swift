@@ -67,6 +67,22 @@ struct ActionRunnerTests {
         #expect(NoteStore.shared.activeNote.text == "some ordinary notes")
     }
 
+    @Test func statsReportsUsage() {
+        let outcome = ActionRunner.run(".stats")
+        #expect(outcome.ok == true)
+        #expect(outcome.message.contains("Antimatter"))
+        #expect(outcome.message.contains("version"))
+        #expect(outcome.message.contains("typed"))
+    }
+
+    @Test func quitIsDeferredUnderTest() {
+        // Terminating inside a test suite would kill the runner; the isolated
+        // check turns `.quit` into a benign failure instead.
+        let outcome = ActionRunner.run(".quit")
+        #expect(outcome.ok == false)
+        #expect(outcome.message.contains("isolated"))
+    }
+
     @Test func naturalDurationReadsNaturally() {
         #expect(ActionRunner.naturalDuration(0) == "0 sec")
         #expect(ActionRunner.naturalDuration(0.1) == "1 sec")
