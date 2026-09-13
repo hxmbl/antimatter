@@ -42,7 +42,8 @@ final class LocalBridge {
         }
         guard let listener else { return }
         listener.newConnectionHandler = { [weak self] connection in
-            Task { @MainActor in self?.accept(connection) }
+            guard let self else { return }
+            Task { @MainActor in self.accept(connection) }
         }
         listener.start(queue: queue)
     }

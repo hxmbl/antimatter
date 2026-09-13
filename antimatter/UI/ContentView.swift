@@ -18,6 +18,7 @@ struct ContentView: View {
     @State private var sidebarOpen = false
     @State private var topTextLevel: CGFloat = 0
 
+    @MainActor
     init(noteStore: NoteStore = NoteStore.shared) {
         _noteStore = StateObject(wrappedValue: noteStore)
     }

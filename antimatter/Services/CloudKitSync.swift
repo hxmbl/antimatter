@@ -206,13 +206,20 @@ final class CloudKitSync: ObservableObject {
         syncStatus = .syncing
 
         do {
-            var encryptedNotes: [(Note, Data?)] = []
+            var encryptedNotes: [(id: UUID, createdAt: Date, modifiedAt: Date, isSlot: Bool, title: String, encryptedText: Data?)] = []
             for note in notes {
                 let encrypted = try encrypt(note.text)
-                encryptedNotes.append((note, encrypted))
+                encryptedNotes.append((
+                    id: note.id,
+                    createdAt: note.createdAt,
+                    modifiedAt: note.modifiedAt,
+                    isSlot: note.isSlot,
+                    title: note.title,
+                    encryptedText: encrypted
+                ))
             }
             try await withThrowingTaskGroup(of: Void.self) { group in
-                for (note, encryptedData) in encryptedNotes {
+                for note in encryptedNotes {
                     group.addTask {
                         let recordID = CKRecord.ID(recordName: note.id.uuidString)
                         let record = CKRecord(recordType: "Note", recordID: recordID)
@@ -221,15 +228,16 @@ final class CloudKitSync: ObservableObject {
                         record["modifiedAt"] = note.modifiedAt as CKRecordValue
                         record["isSlot"] = note.isSlot as CKRecordValue
                         record["title"] = note.title as CKRecordValue
-                        if let encryptedData {
+                        if let encryptedData = note.encryptedText {
                             record["encryptedText"] = encryptedData as CKRecordValue
                         }
                         try await database.save(record)
                     }
                 }
                 for voided in trash {
+                    let noteID = voided.id
                     group.addTask {
-                        try await CloudKitSync.shared.deleteNote(voided.id)
+                        try await CloudKitSync.shared.deleteNote(noteID)
                     }
                 }
             }
