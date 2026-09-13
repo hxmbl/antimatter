@@ -10,20 +10,20 @@ struct VariableTests {
     }
 
     @Test func definitionsScanAndLaterOnesWin() {
-        let table = VariableTable.scan("price = 4 * 12\ntotal = price * 2\nprice = 10")
+        let table = VariableTable.scan(":price = 4 * 12\n:total = :price * 2\n:price = 10")
         #expect(table["price"] == 10)
         #expect(table["total"] == 96) // evaluated before the redefinition landed
     }
 
     @Test func forwardAndSelfReferencesStayText() {
-        let table = VariableTable.scan("a = b + 1\nb = 2")
+        let table = VariableTable.scan(":a = :b + 1\n:b = 2")
         #expect(table["a"] == nil)
         #expect(table["b"] == 2)
-        #expect(VariableTable.scan("x = x + 1")["x"] == nil)
+        #expect(VariableTable.scan(":x = :x + 1")["x"] == nil)
     }
 
     @Test func nonDefinitionsAreIgnored() {
-        let table = VariableTable.scan("hello world\n2026-08-22 = 3\ntimer 5\n_x9 = 4")
+        let table = VariableTable.scan("hello world\n2026-08-22 = 3\ntimer 5\n:_x9 = 4")
         #expect(table.count == 1)
         #expect(table["_x9"] == 4)
     }
@@ -34,6 +34,13 @@ struct VariableTests {
         // Names are case-insensitive — friendlier in a scratchpad.
         #expect(eval("price * PRICE", vars) == 2304)
         #expect(eval("missing + 1", vars) == nil)
+    }
+
+    @Test func explicitVariablesAndCommandSubstitutionAreNumeric() {
+        let text = ":total = $(.sum 10 20 50 40)"
+        #expect(VariableTable.scan(text)["total"] == 120)
+        #expect(VariableTable.scan("total = 100")["total"] == nil)
+        #expect(ExpressionEvaluator.evaluate(":total", variables: ["total": 120]) == 120)
     }
 
     @Test func functionsWork() {

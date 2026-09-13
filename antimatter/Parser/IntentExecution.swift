@@ -118,6 +118,18 @@ nonisolated enum IntentExecution {
         return Aggregates.numbers(in: text)
     }
 
+    /// Evaluates a numeric command inside `$()` without committing anything.
+    static func commandDryRun(_ line: String, buffer: String?) -> Double? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let parts = AggregateKind.split(trimmed) {
+            return parts.kind.value(of: aggregateNumbers(forLine: trimmed, in: buffer ?? ""))
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "time" {
+            return TimeIntent.numeric()
+        }
+        return nil
+    }
+
     /// Rewrites a `.sum` / `.avg` / `.count` line into `.sum = 102`,
     /// aggregating explicit arguments when given, otherwise the numbers
     /// found across the whole note.
@@ -362,20 +374,18 @@ nonisolated enum IntentExecution {
         return .nothing
     }
 
-    /// A definition gaining its value on return: `price = 4 * 12` becomes
-    /// `price = 4 * 12 = 48`. The right-hand side must evaluate against the
-    /// note's variables, and bare-number definitions (`a = 5`) stay put —
-    /// writing `a = 5 = 5` helps nobody.
+    /// Preserve established bare `name = expression` behavior. Explicit
+    /// `:name = expression` definitions stay literal.
     private static func assignmentCommit(line: String, buffer: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let (_, rhs) = VariableTable.splitDefinition(trimmed),
+        guard !trimmed.hasPrefix(":"),
+              let (_, rhs) = VariableTable.splitDefinition(trimmed),
               let value = ExpressionEvaluator.evaluate(rhs, variables: VariableTable.scan(buffer)),
               IntentParser.format(value) != rhs
         else { return nil }
         let indent = String(line.prefix(while: { $0 == " " || $0 == "\t" }))
         return indent + trimmed + " = " + IntentParser.format(value)
     }
-
 
     // MARK: Command parsing helpers
 

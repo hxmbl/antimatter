@@ -1,7 +1,8 @@
 import Foundation
 
 /// Variable definitions and whole-note aggregation. Definitions are
-/// `name = expression` lines; later definitions win, forward references stay text.
+/// `:name = expression` lines; later definitions win, forward references stay
+/// text. Bare `name = expression` is ordinary note text.
 nonisolated enum VariableTable {
     static func scan(_ text: String) -> [String: Double] {
         var table: [String: Double] = [:]
@@ -10,20 +11,22 @@ nonisolated enum VariableTable {
             let trimmed = ns.substring(with: lineRange)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard let (name, rhs) = splitDefinition(trimmed),
-                  let value = ExpressionEvaluator.evaluate(rhs, variables: table)
+                  let value = ExpressionEvaluator.evaluate(rhs, variables: table, buffer: text)
             else { continue }
             table[name] = value
         }
         return table
     }
 
-    /// Splits `name = expression`, validating the identifier shape.
+    /// Splits an explicit `:name = expression` definition.
     static func splitDefinition(_ trimmedLine: String) -> (name: String, expression: String)? {
         guard let separator = trimmedLine.range(of: " = ") else { return nil }
-        let name = String(trimmedLine[..<separator.lowerBound])
+        var name = String(trimmedLine[..<separator.lowerBound])
             .trimmingCharacters(in: .whitespaces)
         let rhs = String(trimmedLine[separator.upperBound...])
             .trimmingCharacters(in: .whitespaces)
+        guard name.hasPrefix(":") else { return nil }
+        name.removeFirst()
         guard isIdentifier(name), !rhs.isEmpty else { return nil }
         return (name.lowercased(), rhs)
     }
@@ -65,6 +68,9 @@ nonisolated enum Aggregates {
             } else {
                 candidate = mathCore(ofCommittedLine: trimmed) ?? trimmed
             }
+            // A whole-note substitution such as `$(.sum)` must not count the
+            // definition currently being scanned and recurse into itself.
+            if candidate.contains("$(") { continue }
             guard !candidate.isEmpty,
                   let literals = ExpressionEvaluator.numericLiterals(candidate)
             else { continue }

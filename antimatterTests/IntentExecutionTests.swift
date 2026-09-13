@@ -137,14 +137,8 @@ struct ReturnKeyActionTests {
         }
     }
 
-    @Test func definitionsGainTheirValueOnReturn() {
-        let buffer = "price = 4 * 12"
-        if case .rewriteLine(let replacement) = IntentExecution.action(forLine: buffer, in: buffer) {
-            #expect(replacement == "price = 4 * 12 = 48")
-        } else {
-            Issue.record("definition should gain its value")
-        }
-        // Bare-number definitions stay put — `a = 5 = 5` helps nobody.
+    @Test func bareDefinitionsStayText() {
+        #expect(IntentExecution.action(forLine: "price = 4 * 12", in: "price = 4 * 12") == .nothing)
         #expect(IntentExecution.action(forLine: "a = 5", in: "a = 5") == .nothing)
     }
 

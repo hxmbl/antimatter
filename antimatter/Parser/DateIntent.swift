@@ -62,4 +62,12 @@ nonisolated enum TimeIntent {
         let indent = String(rawLine.prefix(while: { $0 == " " || $0 == "\t" }))
         return indent + trimmed + " = " + format(now)
     }
+
+    /// Numeric form for `$()` substitution: the clock time as a decimal
+    /// `HH.MM` in 24-hour form, e.g. 11:11 → 11.11, 2:05 → 14.05.
+    static func numeric(_ date: Date = Date(), calendar: Calendar = .current) -> Double {
+        let hour = calendar.component(.hour, from: date)
+        let minute = calendar.component(.minute, from: date)
+        return Double(hour) + Double(minute) / 100
+    }
 }

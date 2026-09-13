@@ -502,8 +502,17 @@ struct PaneEditor: NSViewRepresentable {
         /// Auto-open the completion panel once per `.partial` token.
         private func scheduleCompletion(_ textView: NSTextView) {
             completionTask?.cancel()
+            let ns = textView.string as NSString
+            let location = textView.selectedRange().location
+            var start = location
+            while start > 0 {
+                let character = ns.character(at: start - 1)
+                if character == unichar(" ") || character == unichar("\t") || character == unichar("\n") { break }
+                start -= 1
+            }
+            let isDotCommand = start < location && ns.character(at: start) == unichar(".")
             completionTask = Task { [weak self, weak textView] in
-                try? await Task.sleep(for: .milliseconds(240))
+                if !isDotCommand { try? await Task.sleep(for: .milliseconds(240)) }
                 guard !Task.isCancelled, let self, let textView else { return }
                 guard !autoRewritesSuppressed,
                       textView.window?.firstResponder == textView,
