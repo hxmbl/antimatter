@@ -172,7 +172,8 @@ final class PaneTextView: NSTextView {
             let lineRange = ns.lineRange(for: span.range)
             let line = ns.substring(with: lineRange).trimmingCharacters(in: .whitespacesAndNewlines)
             guard line.hasPrefix(":"), line.contains(" = "),
-                  let value = ExpressionEvaluator.evaluate(span.inner, variables: variables, buffer: source),
+                  let value = ExpressionEvaluator.evaluate(span.inner, variables: variables, buffer: source)
+                    ?? IntentExecution.commandDryRun(span.inner, buffer: source),
                   value.isFinite else { continue }
 
             var contentEnd = NSMaxRange(lineRange)
