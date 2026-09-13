@@ -6,18 +6,34 @@ on:
   pull_request:
 
 jobs:
-  test:
-    name: Build and run tests
-    runs-on: macos-15
-
+  test-intel:
+    name: Build and run tests intel
+    runs-on: macos-26-intel
     concurrency:
-      group: antimatter-${{ github.ref }}
+      group: antimatter-intel-${{ github.ref }}
       cancel-in-progress: true
 
-    # Report-only by design: commits never have to compile, they only have to
-    # be fixable. CI surfaces breakage so the "refine" passes can find it,
-    # without ever blocking the fast push.
-    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      # Ad-hoc signing (CODE_SIGN_IDENTITY=-) is enough for a macOS hosted
+      # test run; it embeds entitlements without needing a developer account.
+      # CloudKit degrades gracefully when iCloud is unsigned-in, so the suite
+      # stays green on runners without an iCloud account.
+      - name: Build and test
+        run: |
+          xcodebuild test \
+            -project antimatter.xcodeproj \
+            -scheme antimatter \
+            -destination 'platform=macOS' \
+            -derivedDataPath .ci-build \
+            CODE_SIGN_IDENTITY="-"
+  test-arm:
+    name: Build and run tests ARM
+    runs-on: macos-26
+    concurrency:
+      group: antimatter-arm-${{ github.ref }}
+      cancel-in-progress: true
 
     steps:
       - uses: actions/checkout@v4
