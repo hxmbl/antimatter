@@ -43,11 +43,14 @@ struct StatsCenterTests {
             .appendingPathComponent("stats.json")
         let center = StatsCenter(fileURL: url)
         center.record(typed: 100, deleted: 40)
+        center.record(command: ".sum")
+        center.record(command: ".sum")
         center.flush()
 
         let reloaded = StatsCenter(fileURL: url)
         #expect(reloaded.typed == 100)
         #expect(reloaded.deleted == 40)
+        #expect(reloaded.usageCount(for: ".sum") == 2)
     }
 
     @Test func reloadKeepsTheOriginalInstallDate() {

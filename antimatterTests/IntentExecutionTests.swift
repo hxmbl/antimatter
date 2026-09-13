@@ -384,12 +384,61 @@ struct CommandCompletionTests {
     }
 
     @Test func partialDotCommandsMatch() {
-        #expect(completions(".ti") == [".timer ", ".time "])
+        #expect(completions(".ti") == [".timer <duration> ", ".time "])
         #expect(completions(".sto") == [".stopwatch "])
         #expect(completions(".pom") == [".pomodoro 25/5/4 "])
         #expect(completions(".su")?.contains(".sum ") == true)
         #expect(completions(".sw")?.contains(".switch ") == true)
         #expect(completions(".h")?.contains(".help ") == true)
+    }
+
+    @Test func fuzzyAndDescriptionMatchesFindCommands() {
+        let fuzzyNames = IntentExecution.completionCandidates(for: ".rmnd").map(\.name)
+        #expect(fuzzyNames.contains(".remind"))
+
+        let descriptionMatches = IntentExecution.completionCandidates(for: ".countdown").map(\.name)
+        #expect(descriptionMatches.contains(".timer"))
+    }
+
+    @Test func commandVocabularyIncludesConcreteArgumentHints() {
+        let timer = IntentExecution.dotCommands.first { $0.name == ".timer" }
+        #expect(timer?.snippet == ".timer <duration> ")
+        #expect(timer?.description.contains("<duration>") == true)
+
+        let cancelTimer = IntentExecution.dotCommands.first { $0.name == ".timer cancel all" }
+        #expect(cancelTimer?.snippet == ".timer cancel all ")
+
+        let cancelReminder = IntentExecution.dotCommands.first { $0.name == ".reminder cancel all" }
+        #expect(cancelReminder?.snippet == ".reminder cancel all ")
+    }
+
+    @Test func completionCandidatesStayGroupedByCategory() {
+        let candidates = IntentExecution.completionCandidates(for: ".")
+        let categories = candidates.map(\.category)
+        let order = Dictionary(uniqueKeysWithValues:
+            IntentExecution.DotCommandCategory.allCases.enumerated().map { ($0.element, $0.offset) })
+        let categoryOrder = categories.map { order[$0]! }
+        #expect(categoryOrder == categoryOrder.sorted())
+    }
+
+    @Test func usageCountRanksWithinACategory() {
+        let usage: [String: Int] = [".stats": 9, ".settings": 1]
+        let names = IntentExecution.completionCandidates(for: ".s") { usage[$0, default: 0] }
+            .filter { $0.category == .searchSystem }
+            .map(\.name)
+        #expect(names.first == ".stats")
+        #expect(names.contains(".settings"))
+    }
+
+    @Test func multiWordCommandsStayHiddenUntilTheirParentIsTyped() {
+        let timer = IntentExecution.completionCandidates(for: ".ti").map(\.name)
+        #expect(timer.contains(".timer"))
+        #expect(!timer.contains(".timer cancel all"))
+        let timerReady = IntentExecution.completionCandidates(for: ".timer").map(\.name)
+        #expect(timerReady.contains(".timer cancel all"))
+        let export = IntentExecution.completionCandidates(for: ".ex").map(\.name)
+        #expect(export.contains(".export notes"))
+        #expect(export.contains(".exit"))
     }
 
     @Test func nonCommandsAndEmptyPrefixesDoNotMatch() {
@@ -471,6 +520,72 @@ struct DeferredCommitGuardTests {
 
     @Test func lostFocusMeansStale() {
         #expect(stale(view: "384 * 27 =", bound: "384 * 27 =", focus: false))
+    }
+}
+
+struct TimeReevaluationTests {
+
+    @Test func containsTimeExpressionsDetectsTimeCommands() {
+        #expect(IntentExecution.containsTimeExpressions(".time"))
+        #expect(IntentExecution.containsTimeExpressions(".time = 2:30 PM"))
+        #expect(IntentExecution.containsTimeExpressions("some text\n.time\nmore text"))
+        #expect(IntentExecution.containsTimeExpressions("notes\n.time = 10:00 AM\ntodo"))
+    }
+
+    @Test func containsTimeExpressionsIgnoresNonTimeLines() {
+        #expect(!IntentExecution.containsTimeExpressions(""))
+        #expect(!IntentExecution.containsTimeExpressions("hello world"))
+        #expect(!IntentExecution.containsTimeExpressions(".timer 5"))
+        #expect(!IntentExecution.containsTimeExpressions(".sum"))
+        #expect(!IntentExecution.containsTimeExpressions("time"))
+    }
+
+    @Test func staleTimeCommitsUpdatesCommittedTimeLines() {
+        let now = Date()
+        let earlier = now.addingTimeInterval(-120)
+        let text = ".time = \(TimeIntent.format(earlier))"
+        let commits = IntentExecution.staleTimeCommits(in: text, now: now)
+        #expect(commits.count == 1)
+        #expect(commits.first?.replacement == ".time = \(TimeIntent.format(now))")
+    }
+
+    @Test func staleTimeCommitsIgnoresUncommittedTimeLines() {
+        let text = ".time"
+        let commits = IntentExecution.staleTimeCommits(in: text)
+        #expect(commits.isEmpty, "Uncommitted .time should not generate commits")
+    }
+
+    @Test func staleTimeCommitsIgnoresNonTimeLines() {
+        let text = ".timer 5\n.sum\n384 * 27 = 10368"
+        let commits = IntentExecution.staleTimeCommits(in: text)
+        #expect(commits.isEmpty, "Non-.time lines should not generate time commits")
+    }
+
+    @Test func staleTimeCommitsPreservesIndentation() {
+        let now = Date()
+        let text = "  .time = \(TimeIntent.format(now.addingTimeInterval(-120)))"
+        let commits = IntentExecution.staleTimeCommits(in: text, now: now)
+        #expect(commits.count == 1)
+        #expect(commits.first?.replacement.hasPrefix("  .time = ") == true)
+    }
+
+    @Test func staleTimeCommitsHandlesMultipleTimeLines() {
+        let now = Date()
+        let stamp = TimeIntent.format(now.addingTimeInterval(-120))
+        let text = ".time = \(stamp)\nsome text\n.time = \(stamp)"
+        let commits = IntentExecution.staleTimeCommits(in: text, now: now)
+        #expect(commits.count == 2)
+    }
+
+    @Test func staleTimeCommitsHandlesMixedContent() {
+        let now = Date()
+        let stamp = TimeIntent.format(now.addingTimeInterval(-120))
+        let text = ".timer 5\n.time = \(stamp)\n384 * 27 = 10368\n.time = \(stamp)"
+        let commits = IntentExecution.staleTimeCommits(in: text, now: now)
+        #expect(commits.count == 2)
+        for commit in commits {
+            #expect(commit.replacement.hasPrefix(".time = "))
+        }
     }
 }
 

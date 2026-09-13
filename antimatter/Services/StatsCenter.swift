@@ -12,6 +12,26 @@ final class StatsCenter {
         var typed: Int
         var deleted: Int
         var installDate: Date
+        var commandUsage: [String: Int]
+
+        private enum CodingKeys: String, CodingKey {
+            case typed, deleted, installDate, commandUsage
+        }
+
+        init(typed: Int, deleted: Int, installDate: Date, commandUsage: [String: Int] = [:]) {
+            self.typed = typed
+            self.deleted = deleted
+            self.installDate = installDate
+            self.commandUsage = commandUsage
+        }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            typed = try values.decode(Int.self, forKey: .typed)
+            deleted = try values.decode(Int.self, forKey: .deleted)
+            installDate = try values.decode(Date.self, forKey: .installDate)
+            commandUsage = try values.decodeIfPresent([String: Int].self, forKey: .commandUsage) ?? [:]
+        }
     }
 
     private var payload: Payload
@@ -42,12 +62,27 @@ final class StatsCenter {
     /// The first moment Antimatter recorded a launch.
     var installDate: Date { payload.installDate }
 
+    private var commandUsage: [String: Int] {
+        get { payload.commandUsage }
+        set { payload.commandUsage = newValue }
+    }
+
     /// Accumulate one edit's inserted and removed character counts.
     func record(typed: Int, deleted: Int) {
         guard typed > 0 || deleted > 0 else { return }
         payload.typed += typed
         payload.deleted += deleted
         scheduleSave()
+    }
+
+    /// Record a successfully accepted completion for usage-based ranking.
+    func record(command: String) {
+        commandUsage[command, default: 0] += 1
+        scheduleSave()
+    }
+
+    func usageCount(for command: String) -> Int {
+        commandUsage[command, default: 0]
     }
 
     func flush() {

@@ -147,19 +147,14 @@ nonisolated enum IntentExecution {
         return Commit(range: contentRange, replacement: indent + trimmedKeyword + " = " + IntentParser.format(value))
     }
 
-
     /// Committed answer lines whose stored result drifted, and aggregate
     /// lines whose note changed. Editing a definition lands here.
     static func staleResultCommits(in text: String) -> [Commit] {
         let variables = VariableTable.scan(text)
         let ns = text as NSString
         var commits: [Commit] = []
-        for fullRange in VariableTable.lineRanges(ns) where fullRange.length > 0 {
-            var lineRange = fullRange
-            if ns.character(at: NSMaxRange(lineRange) - 1) == unichar(10) {
-                lineRange.length -= 1
-            }
-            guard lineRange.length > 0 else { continue }
+        for fullRange in VariableTable.lineRanges(ns) {
+            guard let lineRange = strippedLineRange(fullRange, in: ns) else { continue }
             let line = ns.substring(with: lineRange)
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             let parts = trimmed.components(separatedBy: " = ")
@@ -194,6 +189,59 @@ nonisolated enum IntentExecution {
             commits.append(Commit(range: lineRange, replacement: replacement))
         }
         return commits
+    }
+
+    // MARK: Time-based reevaluation
+
+    /// Detects whether the document contains any `.time` expressions that would benefit from live updates.
+    static func containsTimeExpressions(_ text: String) -> Bool {
+        let ns = text as NSString
+        for fullRange in VariableTable.lineRanges(ns) {
+            guard let range = strippedLineRange(fullRange, in: ns) else { continue }
+            let trimmed = ns.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines)
+            let command = trimmed.split(whereSeparator: { $0.isWhitespace }).first.map(String.init)
+            if command?.lowercased() == IntentParser.commandPrefix + "time" {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Committed `.time` lines whose stored timestamp has drifted (minute boundary crossed).
+    static func staleTimeCommits(in text: String, now: Date = Date()) -> [Commit] {
+        let ns = text as NSString
+        var commits: [Commit] = []
+        let newTimestamp = TimeIntent.format(now)
+        for fullRange in VariableTable.lineRanges(ns) {
+            guard let lineRange = strippedLineRange(fullRange, in: ns) else { continue }
+            let line = ns.substring(with: lineRange)
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.contains(" = ") else { continue }
+
+            let parts = trimmed.components(separatedBy: " = ")
+            guard parts.count >= 2 else { continue }
+            let command = parts[0].trimmingCharacters(in: .whitespaces)
+            guard command.lowercased() == IntentParser.commandPrefix + "time" else { continue }
+
+            let storedTimestamp = parts[1].trimmingCharacters(in: .whitespaces)
+            guard newTimestamp != storedTimestamp else { continue }
+
+            let indent = String(line.prefix(while: { $0 == " " || $0 == "\t" }))
+            commits.append(Commit(
+                range: lineRange,
+                replacement: indent + command + " = " + newTimestamp))
+        }
+        return commits
+    }
+
+    /// Line range with a trailing newline stripped, or nil when empty.
+    private static func strippedLineRange(_ fullRange: NSRange, in ns: NSString) -> NSRange? {
+        guard fullRange.length > 0 else { return nil }
+        var range = fullRange
+        if ns.character(at: NSMaxRange(range) - 1) == unichar(10) {
+            range.length -= 1
+        }
+        return range.length > 0 ? range : nil
     }
 
 
@@ -422,14 +470,14 @@ nonisolated enum IntentExecution {
     /// tested and translated without touching an `NSTextView`.
     static let helpText = """
         Reference view keys:
-            j/k  lines  ·  h/l  horizontal  
+            j/k  lines  ·  h/l  horizontal
             space/f  page ↓  ·  b  page ↑
-            Ctrl-d/Ctrl-u  half page  ·  
-            gg/G  top/bottom  ·  
-            H/M/L  screen third  ·  
+            Ctrl-d/Ctrl-u  half page  ·
+            gg/G  top/bottom  ·
+            H/M/L  screen third  ·
             0/$  line ends
-            w/b/e  word jumps  ·  
-            type a number first to repeat ·  
+            w/b/e  word jumps  ·
+            type a number first to repeat ·
             q/Esc  close
 
         Commands — type one and press return:
@@ -602,71 +650,151 @@ nonisolated enum IntentExecution {
     }
 
 
+    enum DotCommandCategory: String, CaseIterable {
+        case timers = "Timers & Reminders"
+        case noteManagement = "Note Management"
+        case math = "Math & Aggregates"
+        case utilities = "Utilities"
+        case searchSystem = "Search & System"
+    }
+
     struct DotCommand: Equatable {
         var name: String
         var description: String
         var snippet: String
+        var category: DotCommandCategory
 
-        init(name: String, description: String, snippet: String? = nil) {
+        init(name: String, description: String, snippet: String? = nil, category: DotCommandCategory) {
             self.name = name
             self.description = description
             self.snippet = snippet ?? (name + " ")
+            self.category = category
         }
     }
 
     /// Completion vocabulary for typing after a `.` — teaches the commands
     /// at the moment of use, with no chrome.
     static let dotCommands: [DotCommand] = [
-        DotCommand(name: ".new", description: "create a new, empty note"),
-        DotCommand(name: ".clear", description: "clear the current note"),
-        DotCommand(name: ".switch", description: "switch to another note"),
-        DotCommand(name: ".timer", description: "start or cancel a countdown"),
-        DotCommand(name: ".stopwatch", description: "start or cancel a stopwatch"),
+        DotCommand(name: ".new", description: "create a new, empty note", category: .noteManagement),
+        DotCommand(name: ".clear", description: "clear the current note", category: .noteManagement),
+        DotCommand(name: ".switch", description: "switch to another note", category: .noteManagement),
+        DotCommand(name: ".timer", description: "start a countdown — .timer <duration> [label]",
+                   snippet: ".timer <duration> ", category: .timers),
+        DotCommand(name: ".timer cancel all", description: "cancel every running timer",
+                   snippet: ".timer cancel all ", category: .timers),
+        DotCommand(name: ".stopwatch", description: "start a stopwatch — .stopwatch [label]",
+                   snippet: ".stopwatch ", category: .timers),
         DotCommand(name: ".remind", description: "set a natural-language reminder",
-                   snippet: ".remind <what> <when> "),
-        DotCommand(name: ".reminder", description: "cancel reminders (`.reminder cancel all`)"),
+                   snippet: ".remind <what> <when> ", category: .timers),
+        DotCommand(name: ".reminder", description: "cancel reminders — .reminder cancel all",
+                   snippet: ".reminder cancel all ", category: .timers),
+        DotCommand(name: ".reminder cancel all", description: "cancel every pending reminder",
+                   snippet: ".reminder cancel all ", category: .timers),
         DotCommand(name: ".pomodoro", description: "start a pomodoro cycle",
-                   snippet: ".pomodoro 25/5/4 "),
-        DotCommand(name: ".paste", description: "stream clipboard into the note"),
-        DotCommand(name: ".export notes", description: "send the note to Apple Notes"),
-        DotCommand(name: ".export obsidian", description: "save the note as markdown in a vault"),
-        DotCommand(name: ".sum", description: "sum the note's numbers (or `.sum 10 20 30`)",
-                   snippet: ".sum "),
-        DotCommand(name: ".avg", description: "average the note's numbers (or `.avg 10 20 30`)",
-                   snippet: ".avg "),
-        DotCommand(name: ".count", description: "count the note's numbers (or `.count 10 20 30`)",
-                   snippet: ".count "),
-        DotCommand(name: ".time", description: "stamp the current time"),
-        DotCommand(name: ".find", description: "open the find bar"),
+                   snippet: ".pomodoro 25/5/4 ", category: .timers),
+        DotCommand(name: ".paste", description: "stream clipboard into the note", category: .noteManagement),
+        DotCommand(name: ".export notes", description: "send the note to Apple Notes", category: .noteManagement),
+        DotCommand(name: ".export obsidian", description: "save the note as markdown in a vault", category: .noteManagement),
+        DotCommand(name: ".sum", description: "sum numbers — .sum [10 20 30]",
+                   snippet: ".sum ", category: .math),
+        DotCommand(name: ".avg", description: "average numbers — .avg [10 20 30]",
+                   snippet: ".avg ", category: .math),
+        DotCommand(name: ".count", description: "count numbers — .count [10 20 30]",
+                   snippet: ".count ", category: .math),
+        DotCommand(name: ".time", description: "stamp the current time", category: .utilities),
+        DotCommand(name: ".find", description: "open the find bar", category: .searchSystem),
         DotCommand(name: ".replace", description: "global replace (`.replace find → replace`)",
-                   snippet: ".replace <find> → <replace> "),
-        DotCommand(name: ".settings", description: "open the settings window"),
-        DotCommand(name: ".debug", description: "show diagnostics and the event log"),
-        DotCommand(name: ".stats", description: "show your usage statistics"),
-        DotCommand(name: ".exit", description: "quit Antimatter"),
-        DotCommand(name: ".quit", description: "quit Antimatter (same as .exit)"),
-        DotCommand(name: ".help", description: "show the command reference"),
+                   snippet: ".replace <find> → <replace> ", category: .searchSystem),
+        DotCommand(name: ".settings", description: "open the settings window", category: .searchSystem),
+        DotCommand(name: ".debug", description: "show diagnostics and the event log", category: .searchSystem),
+        DotCommand(name: ".stats", description: "show your usage statistics", category: .searchSystem),
+        DotCommand(name: ".exit", description: "quit Antimatter", category: .searchSystem),
+        DotCommand(name: ".quit", description: "quit Antimatter (same as .exit)", category: .searchSystem),
+        DotCommand(name: ".help", description: "show the command reference", category: .searchSystem),
     ]
 
     // MARK: Command completion
 
-    /// Completion candidates with rich metadata, used by the intellisense panel.
-    /// Returns all matching commands for the partial token after the `.` prefix,
-    /// or an empty list when the token is not a partial dot-command.
-    static func completionCandidates(for prefix: String) -> [DotCommand] {
+    /// Completion candidates with rich metadata, used by the AutoReact panel.
+    /// Matches in priority order: exact prefix on the command name, substring
+    /// on the name or description, then fuzzy (subsequence) matching.
+    /// Results are sorted by category so the panel renders grouped sections.
+    /// Pass `usageCount` from the UI to rank within a category; tests leave it
+    /// at zero so ordering stays deterministic.
+    static func completionCandidates(
+        for prefix: String,
+        usageCount: (String) -> Int = { _ in 0 }
+    ) -> [DotCommand] {
         guard prefix.hasPrefix(IntentParser.commandPrefix) else { return [] }
         let partial = String(prefix.dropFirst(IntentParser.commandPrefix.count)).lowercased()
-        return dotCommands.filter { $0.name.dropFirst(IntentParser.commandPrefix.count).hasPrefix(partial) }
+        let ranked = { categorySort($0, $1, usageCount: usageCount) }
+        guard !partial.isEmpty else { return dotCommands.sorted(by: ranked) }
+
+        let prefixMatches = dotCommands.filter { isPrefixMatch($0, partial: partial) }
+        if !prefixMatches.isEmpty { return prefixMatches.sorted(by: ranked) }
+
+        let substringMatches = dotCommands.filter {
+            $0.name.lowercased().contains(partial) ||
+            $0.description.lowercased().contains(partial)
+        }
+        if !substringMatches.isEmpty { return substringMatches.sorted(by: ranked) }
+
+        return dotCommands.filter {
+            fuzzyMatch(partial, against: $0.name.lowercased())
+        }.sorted(by: ranked)
+    }
+
+    private static func isPrefixMatch(_ command: DotCommand, partial: String) -> Bool {
+        let name = String(command.name.dropFirst(IntentParser.commandPrefix.count)).lowercased()
+        guard name.hasPrefix(partial) else { return false }
+        guard let space = name.firstIndex(of: " ") else { return true }
+        let firstWord = String(name[..<space])
+        let hasBareParent = dotCommands.contains {
+            String($0.name.dropFirst(IntentParser.commandPrefix.count)).lowercased() == firstWord
+        }
+        guard hasBareParent else { return true }
+        return partial == firstWord || partial.hasPrefix(firstWord + " ")
+    }
+
+    private static func categorySort(
+        _ lhs: DotCommand,
+        _ rhs: DotCommand,
+        usageCount: (String) -> Int
+    ) -> Bool {
+        let categoryOrder = Dictionary(uniqueKeysWithValues:
+            DotCommandCategory.allCases.enumerated().map { ($0.element, $0.offset) })
+        if lhs.category != rhs.category {
+            return (categoryOrder[lhs.category] ?? .max) < (categoryOrder[rhs.category] ?? .max)
+        }
+        let lhsUsage = usageCount(lhs.name)
+        let rhsUsage = usageCount(rhs.name)
+        if lhsUsage != rhsUsage { return lhsUsage > rhsUsage }
+        return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+    }
+
+    private static func fuzzyMatch(_ pattern: String, against text: String) -> Bool {
+        guard !pattern.isEmpty else { return true }
+        var textIndex = text.startIndex
+        for patternCharacter in pattern {
+            guard let next = text[textIndex...].firstIndex(of: patternCharacter) else {
+                return false
+            }
+            textIndex = text.index(after: next)
+        }
+        return true
     }
 
     /// Completion strings for text typed after a dot, or nil when the caret
     /// token is not a partial dot-command (`.ti`, `.su`). A bare `.` yields
-    /// nil here — the intellisense panel asks for everything via
+    /// nil here — the AutoReact panel asks for everything via
     /// `completionCandidates(for:)` instead.
-    static func completions(for prefix: String) -> [String]? {
+    static func completions(
+        for prefix: String,
+        usageCount: (String) -> Int = { _ in 0 }
+    ) -> [String]? {
         guard prefix.dropFirst(IntentParser.commandPrefix.count).count > 0 else { return nil }
-        let c = completionCandidates(for: prefix)
-        return c.isEmpty ? nil : c.map(\.snippet)
+        let candidates = completionCandidates(for: prefix, usageCount: usageCount)
+        return candidates.isEmpty ? nil : candidates.map(\.snippet)
     }
 
     /// The first `<placeholder>` inside a snippet and where it sits in the

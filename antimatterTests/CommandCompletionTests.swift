@@ -2,9 +2,9 @@ import Foundation
 import Testing
 @testable import antimatter
 
-/// Tests for the intellisense command-completion candidates and their
+/// Tests for the AutoReact command-completion candidates and their
 /// snippet scaffolding.
-struct IntellisenseCompletionTests {
+struct AutoReactCompletionTests {
 
     @Test func nonDotTokensYieldNothing() {
         #expect(IntentExecution.completionCandidates(for: "") == [])

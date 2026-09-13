@@ -43,6 +43,12 @@ struct VariableTests {
         #expect(ExpressionEvaluator.evaluate(":total", variables: ["total": 120]) == 120)
     }
 
+    @Test func aggregateAutoReactCommandsWorkInline() {
+        #expect(ExpressionEvaluator.evaluate("$(.sum)", buffer: "10\n20\n30") == 60)
+        #expect(ExpressionEvaluator.evaluate("$(.avg)", buffer: "10\n20\n30") == 20)
+        #expect(ExpressionEvaluator.evaluate("$(.count)", buffer: "10\n20\n30") == 3)
+    }
+
     @Test func functionsWork() {
         #expect(eval("sqrt(144)") == 12)
         #expect(eval("abs(0 - 7)") == 7)

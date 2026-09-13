@@ -158,6 +158,8 @@ struct PaneEditor: NSViewRepresentable {
         private var suppressedTokenStart: Int?
         private var completionTask: Task<Void, Never>?
         private let completionPanel = CommandCompletionPanel()
+        /// Dispatch source timer for minute-boundary .time updates
+        private var minuteBoundaryTimer: DispatchSourceTimer?
         lazy var referenceViewManager: ReferenceViewManager = ReferenceViewManager(
             highlighter: highlighter,
             status: status,
@@ -177,6 +179,7 @@ struct PaneEditor: NSViewRepresentable {
             if let clipBoundsObserver {
                 NotificationCenter.default.removeObserver(clipBoundsObserver)
             }
+            minuteBoundaryTimer?.cancel()
         }
 
         func textDidChange(_ notification: Notification) {
@@ -321,7 +324,71 @@ struct PaneEditor: NSViewRepresentable {
                     boundText: text.wrappedValue,
                     viewHasFocus: textView.window?.firstResponder == textView)
             else { return }
+
+            // Handle numeric recalculations
             applyCommits(IntentExecution.staleResultCommits(in: textView.string), to: textView)
+
+            // Handle .time live updates
+            updateTimeBoundaryTimer(textView)
+        }
+
+        /// Schedules or cancels the minute-boundary timer based on .time expression presence.
+        private func updateTimeBoundaryTimer(_ textView: NSTextView?) {
+            guard let textView else { return }
+
+            let hasTimeExpressions = IntentExecution.containsTimeExpressions(textView.string)
+
+            if hasTimeExpressions {
+                // Schedule timer for next minute boundary if not already running
+                if minuteBoundaryTimer == nil {
+                    scheduleNextMinuteBoundary(textView)
+                }
+            } else {
+                // Cancel timer if no .time expressions
+                minuteBoundaryTimer?.cancel()
+                minuteBoundaryTimer = nil
+            }
+        }
+
+        /// Fires at the next wall-clock minute, then every minute after, so
+        /// committed `.time` stamps stay current.
+        private func scheduleNextMinuteBoundary(_ textView: NSTextView) {
+            minuteBoundaryTimer?.cancel()
+
+            let now = Date()
+            let calendar = Calendar.current
+            let nextMinute = calendar.nextDate(
+                after: now,
+                matching: DateComponents(second: 0, nanosecond: 0),
+                matchingPolicy: .nextTime)
+                ?? now.addingTimeInterval(60)
+            let timeInterval = max(0.05, nextMinute.timeIntervalSince(now))
+
+            let timer = DispatchSource.makeTimerSource(queue: .main)
+            timer.schedule(deadline: .now() + timeInterval, repeating: .never)
+            timer.setEventHandler { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                self.runTimeReevaluation(textView)
+            }
+            timer.resume()
+            minuteBoundaryTimer = timer
+        }
+
+        /// Runs `.time` reevaluation and reschedules for the next minute.
+        private func runTimeReevaluation(_ textView: NSTextView) {
+            defer {
+                if IntentExecution.containsTimeExpressions(textView.string) {
+                    scheduleNextMinuteBoundary(textView)
+                } else {
+                    minuteBoundaryTimer?.cancel()
+                    minuteBoundaryTimer = nil
+                }
+            }
+            guard !autoRewritesSuppressed else { return }
+            let timeCommits = IntentExecution.staleTimeCommits(in: textView.string)
+            if !timeCommits.isEmpty {
+                applyCommits(timeCommits, to: textView)
+            }
         }
 
         /// Returns true when the intent consumed the return key.
@@ -510,7 +577,7 @@ struct PaneEditor: NSViewRepresentable {
                 if character == unichar(" ") || character == unichar("\t") || character == unichar("\n") { break }
                 start -= 1
             }
-            let isDotCommand = start < location && ns.character(at: start) == unichar(".")
+            let isDotCommand = isAutoReactCommandStart(in: ns, at: start, location: location)
             completionTask = Task { [weak self, weak textView] in
                 if !isDotCommand { try? await Task.sleep(for: .milliseconds(240)) }
                 guard !Task.isCancelled, let self, let textView else { return }
@@ -528,7 +595,7 @@ struct PaneEditor: NSViewRepresentable {
             guard !referenceViewManager.isInHelpView else { return false }
             completionTask?.cancel()
             if completionPanel.isShown {
-                completionPanel.acceptSelected()
+                completionPanel.tabComplete()
                 return true
             }
             guard let textView = ownedTextView,
@@ -536,12 +603,15 @@ struct PaneEditor: NSViewRepresentable {
                   tokenRange.length > 0
             else { return false }
             let token = (textView.string as NSString).substring(with: tokenRange)
-            let candidates = IntentExecution.completionCandidates(for: token)
+            let candidates = IntentExecution.completionCandidates(
+                for: token, usageCount: StatsCenter.shared.usageCount(for:))
             guard !candidates.isEmpty, suppressedTokenStart != tokenRange.location else { return false }
-            completionPanel.onAccept = { [weak self] entry, tokenStart in
-                self?.acceptCompletion(entry, tokenStart: tokenStart)
-            }
-            completionPanel.show(in: textView, candidates: candidates, tokenStart: tokenRange.location)
+            bindCompletionAccept()
+            completionPanel.show(
+                in: textView,
+                candidates: candidates,
+                tokenStart: tokenRange.location,
+                query: token)
             return true
         }
 
@@ -549,9 +619,7 @@ struct PaneEditor: NSViewRepresentable {
         /// it while it's open, or dismiss when the token stopped matching.
         private func syncCompletion(_ textView: NSTextView) {
             guard !referenceViewManager.isInHelpView else { return }
-            completionPanel.onAccept = { [weak self] entry, tokenStart in
-                self?.acceptCompletion(entry, tokenStart: tokenStart)
-            }
+            bindCompletionAccept()
             guard let tokenRange = completionTokenRange(in: textView), tokenRange.length > 1 else {
                 completionPanel.dismiss()
                 return
@@ -561,15 +629,20 @@ struct PaneEditor: NSViewRepresentable {
             }
             if suppressedTokenStart == tokenRange.location { return }
             let token = (textView.string as NSString).substring(with: tokenRange)
-            let candidates = IntentExecution.completionCandidates(for: token)
+            let candidates = IntentExecution.completionCandidates(
+                for: token, usageCount: StatsCenter.shared.usageCount(for:))
             guard !candidates.isEmpty else {
                 completionPanel.dismiss()
                 return
             }
             if completionPanel.isShown {
-                completionPanel.refilter(candidates: candidates)
+                completionPanel.refilter(candidates: candidates, query: token)
             } else {
-                completionPanel.show(in: textView, candidates: candidates, tokenStart: tokenRange.location)
+                completionPanel.show(
+                    in: textView,
+                    candidates: candidates,
+                    tokenStart: tokenRange.location,
+                    query: token)
             }
         }
 
@@ -586,20 +659,58 @@ struct PaneEditor: NSViewRepresentable {
                 }
                 start -= 1
             }
-            return NSRange(location: start, length: location - start)
+            guard isAutoReactCommandStart(in: ns, at: start, location: location) else { return nil }
+            let commandStart = ns.character(at: start) == unichar("$") ? start + 2 : start
+            return NSRange(location: commandStart, length: location - commandStart)
+        }
+
+        /// Finds a dot-command token either at the start of a normal token or
+        /// immediately inside an interpolation such as `$(.sum 10 20)`.
+        private func isAutoReactCommandStart(
+            in ns: NSString,
+            at start: Int,
+            location: Int
+        ) -> Bool {
+            if start < location, ns.character(at: start) == unichar(".") {
+                return true
+            }
+            return start + 2 < location
+                && ns.character(at: start) == unichar("$")
+                && ns.character(at: start + 1) == unichar("(")
+                && ns.character(at: start + 2) == unichar(".")
+        }
+
+        private func bindCompletionAccept() {
+            completionPanel.onAccept = { [weak self] entry, tokenStart, replacementLength, suppressFurther in
+                self?.acceptCompletion(
+                    entry,
+                    tokenStart: tokenStart,
+                    replacementLength: replacementLength,
+                    suppressFurther: suppressFurther)
+            }
         }
 
         /// Replace the typed partial with the chosen snippet, selecting its
         /// first placeholder. Counts toward `.stats` like real typing.
-        private func acceptCompletion(_ entry: IntentExecution.DotCommand, tokenStart: Int) {
+        private func acceptCompletion(
+            _ entry: IntentExecution.DotCommand,
+            tokenStart: Int,
+            replacementLength: Int? = nil,
+            suppressFurther: Bool = true
+        ) {
             guard let textView = ownedTextView else { return }
             let caret = textView.selectedRange().location
-            guard caret >= tokenStart, caret <= (textView.string as NSString).length else { return }
-            let tokenLength = caret - tokenStart
+            let textLength = (textView.string as NSString).length
+            let tokenLength = replacementLength ?? (caret - tokenStart)
+            guard tokenStart >= 0,
+                  tokenLength >= 0,
+                  tokenStart + tokenLength <= textLength
+            else { return }
             textView.breakUndoCoalescing()
             textView.insertText(entry.snippet, replacementRange: NSRange(location: tokenStart, length: tokenLength))
             StatsCenter.shared.record(typed: (entry.snippet as NSString).length, deleted: tokenLength)
-            suppressedTokenStart = tokenStart
+            StatsCenter.shared.record(command: entry.name)
+            if suppressFurther { suppressedTokenStart = tokenStart }
             if let (range, _) = IntentExecution.placeholderRange(in: entry.snippet) {
                 textView.setSelectedRange(NSRange(location: tokenStart + range.location, length: range.length))
             }
