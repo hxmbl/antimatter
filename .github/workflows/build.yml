@@ -1,9 +1,13 @@
-name: Build & Test
+name: Test, Build & Publish macOS Release
 
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   test-intel:
@@ -28,6 +32,42 @@ jobs:
             -destination 'platform=macOS' \
             -derivedDataPath .ci-build \
             CODE_SIGN_IDENTITY="-"
+
+  publish-macos-release:
+    name: Build and release app
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test-intel, test-arm]
+    runs-on: macos-26
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build app
+        run: |
+          xcodebuild build \
+            -project antimatter.xcodeproj \
+            -scheme antimatter \
+            -configuration Release \
+            -derivedDataPath .release-build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package app
+        run: |
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent \
+            .release-build/Build/Products/Release/antimatter.app \
+            "dist/Antimatter-${GITHUB_REF_NAME}.zip"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/Antimatter-${GITHUB_REF_NAME}.zip" \
+            --generate-notes
   test-arm:
     name: Build and run tests ARM
     runs-on: macos-26

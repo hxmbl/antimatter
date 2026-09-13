@@ -120,9 +120,9 @@ Open `antimatter.xcodeproj` in Xcode and press **⌘R**. No dependencies to fetc
 xcodebuild -project antimatter.xcodeproj -scheme antimatter build
 ```
 
-## Tests
+## Tests and releases
 
-Swift Testing, in `antimatterTests/`. Run locally with `tools/run-tests.sh`; a GitHub Actions check runs them on every push — report-only, so a broken commit never blocks you, it just tells you what to fix later.
+Swift Testing, in `antimatterTests/`. Run locally with `tools/run-tests.sh`; GitHub Actions runs the suite on pushes and pull requests. To publish a release, push a version tag such as `v1.0.0`; Actions builds an unsigned macOS app, packages it as a ZIP, and attaches it to a generated GitHub release.
 
 ## Project layout
 
