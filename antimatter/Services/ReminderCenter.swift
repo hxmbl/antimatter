@@ -165,11 +165,20 @@ final class ReminderCenter: ObservableObject {
     private func persist() {
         guard let data = try? JSONEncoder().encode(reminders) else { return }
         let url = fileURL
-        let validate: @Sendable (Data) -> Bool = { primary in
-            (try? JSONDecoder().decode([ActiveReminder].self, from: primary)) != nil
-        }
-        Task.detached {
+        if StorageLocation.isIsolatedRun {
+            // Tests reload immediately after a mutation; a background write
+            // would race ahead of the read and read stale data back.
+            let validate: (Data) -> Bool = { primary in
+                (try? JSONDecoder().decode([ActiveReminder].self, from: primary)) != nil
+            }
             Persistence.writeData(data, to: url, isValidPrimary: validate)
+        } else {
+            let validate: @Sendable (Data) -> Bool = { primary in
+                (try? JSONDecoder().decode([ActiveReminder].self, from: primary)) != nil
+            }
+            Task.detached {
+                Persistence.writeData(data, to: url, isValidPrimary: validate)
+            }
         }
     }
 

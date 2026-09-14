@@ -94,8 +94,14 @@ final class StatsCenter {
         if !FileManager.default.fileExists(atPath: directory.path) {
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
-        Task.detached {
-            _ = Persistence.writeData(data, to: url)
+        if StorageLocation.isIsolatedRun {
+            // Tests reload immediately after a mutation; a background write
+            // would race ahead of the read and read stale data back.
+            Persistence.writeData(data, to: url)
+        } else {
+            Task.detached {
+                Persistence.writeData(data, to: url)
+            }
         }
     }
 
