@@ -89,11 +89,14 @@ final class StatsCenter {
         saveTask?.cancel()
         saveTask = nil
         guard let data = try? JSONEncoder().encode(payload) else { return }
-        let directory = fileURL.deletingLastPathComponent()
+        let url = fileURL
+        let directory = url.deletingLastPathComponent()
         if !FileManager.default.fileExists(atPath: directory.path) {
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
-        _ = Persistence.writeData(data, to: fileURL)
+        Task.detached {
+            _ = Persistence.writeData(data, to: url)
+        }
     }
 
     // MARK: .stats report

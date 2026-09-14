@@ -14,7 +14,9 @@ final class DebugLog {
 
     static func log(_ message: String) {
         let stamped = "[\(formatter.string(from: Date()))] \(message)"
+        #if DEBUG
         NSLog("Antimatter %@", message)
+        #endif
         Self.shared.record(stamped)
     }
 
@@ -25,5 +27,13 @@ final class DebugLog {
             lines.removeFirst(lines.count - 100)
         }
         lock.unlock()
+    }
+
+    /// Thread-safe snapshot of the log lines for reading.
+    func snapshot() -> [String] {
+        lock.lock()
+        let copy = lines
+        lock.unlock()
+        return copy
     }
 }

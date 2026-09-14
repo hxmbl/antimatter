@@ -2,6 +2,13 @@ import Combine
 import Foundation
 import SwiftUI
 
+/// Serializes disk writes so they never overlap or block the main thread.
+private actor DiskWriter {
+    func write(_ data: Data, to url: URL) -> Error? {
+        Persistence.writeData(data, to: url)
+    }
+}
+
 @MainActor
 final class NoteStore: ObservableObject {
     static let shared = NoteStore()
@@ -16,6 +23,7 @@ final class NoteStore: ObservableObject {
     private let syncEnabled: Bool
     private var saveTask: Task<Void, Never>?
     private var voidTask: Task<Void, Never>?
+    private let diskWriter = DiskWriter()
 
     var activeNote: Note {
         get { notes.first { $0.id == activeNoteID } ?? Note() }
@@ -85,6 +93,10 @@ final class NoteStore: ObservableObject {
         var deleted = removed
         deleted.modifiedAt = Date()
         trash.append(deleted)
+        // Cap trash at 200 entries to prevent unbounded memory growth.
+        if trash.count > 200 {
+            trash.removeFirst(trash.count - 200)
+        }
         scheduleVoidPrune()
         if activeNoteID == note.id {
             activeNoteID = notes.first?.id ?? create().id
@@ -96,6 +108,7 @@ final class NoteStore: ObservableObject {
         guard let idx = trash.firstIndex(where: { $0.id == note.id }) else { return }
         let restored = trash.remove(at: idx)
         notes.insert(restored, at: 0)
+        activeNoteID = restored.id
         scheduleSave()
     }
 
@@ -163,16 +176,34 @@ final class NoteStore: ObservableObject {
     func flush() {
         saveTask?.cancel()
         saveTask = nil
-        do {
-            let snapshot = Snapshot(notes: notes, trash: trash, activeNoteID: activeNoteID)
-            let data = try JSONEncoder().encode(snapshot)
-            let err = Persistence.writeData(data, to: fileURL)
-            if let err { throw err }
-            saveError = nil
-            syncIfNeeded()
-        } catch {
-            saveError = error
-            saveErrorToken += 1
+        let snapshot = Snapshot(notes: notes, trash: trash, activeNoteID: activeNoteID)
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        let url = fileURL
+        if StorageLocation.isIsolatedRun {
+            // Tests need synchronous writes to verify state immediately.
+            let err = Persistence.writeData(data, to: url)
+            if let err {
+                saveError = err
+                saveErrorToken += 1
+            } else {
+                saveError = nil
+            }
+            if syncEnabled { syncIfNeeded() }
+        } else {
+            let writer = diskWriter
+            let syncEnabled = self.syncEnabled
+            Task { [weak self] in
+                let err = await writer.write(data, to: url)
+                await MainActor.run {
+                    if let err {
+                        self?.saveError = err
+                        self?.saveErrorToken += 1
+                    } else {
+                        self?.saveError = nil
+                    }
+                    if syncEnabled { self?.syncIfNeeded() }
+                }
+            }
         }
     }
 

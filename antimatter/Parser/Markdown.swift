@@ -713,7 +713,7 @@ enum Markdown {
             let contentStart = text.index(start, offsetBy: open.count)
             guard let closeStart = text.range(of: close, range: contentStart..<limit)?.lowerBound,
                   closeStart > contentStart else { continue }
-            let end = text.index(closeStart, offsetBy: close.count)
+            guard let end = text.index(closeStart, offsetBy: close.count, limitedBy: limit) else { continue }
             out.append(Element(kind: kind, range: NSRange(contentStart..<closeStart, in: text)))
             appendHidden(start..<contentStart, text: text, into: &out)
             appendHidden(closeStart..<end, text: text, into: &out)
@@ -747,7 +747,7 @@ enum Markdown {
     ) -> String.Index? {
         guard let openEnd = text.index(start, offsetBy: required, limitedBy: limit) else { return nil }
         guard let close = findDelimiter(delimiter, count: required, from: openEnd, limit: limit, in: text), close > openEnd else { return nil }
-        let closeEnd = text.index(close, offsetBy: required)
+        guard let closeEnd = text.index(close, offsetBy: required, limitedBy: limit) else { return nil }
         if inclusive {
             out.append(Element(kind: kind, range: NSRange(start..<closeEnd, in: text)))
         } else {

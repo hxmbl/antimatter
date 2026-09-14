@@ -171,6 +171,11 @@ final class TimerCenter: ObservableObject {
             if existing.firedAt != nil, let next = nextPhase(after: running) {
                 running = next
                 beginPhase(next)
+            } else if existing.firedAt != nil {
+                // The last phase already finished — no next phase. Clear the
+                // session instead of replaying a completed cycle.
+                clearPomodoroSession()
+                return
             }
         } else {
             beginPhase(running)
@@ -342,11 +347,12 @@ final class TimerCenter: ObservableObject {
 
     private func persist() {
         guard let data = try? JSONEncoder().encode(timers) else { return }
-        // Backup rotation skips an undecodable primary: after a recovery
-        // from timers.json.bak, the corrupt file must not bury the last
-        // good generation.
-        Persistence.writeData(data, to: fileURL) { primary in
+        let url = fileURL
+        let validate: @Sendable (Data) -> Bool = { primary in
             (try? JSONDecoder().decode([ActiveTimer].self, from: primary)) != nil
+        }
+        Task.detached {
+            Persistence.writeData(data, to: url, isValidPrimary: validate)
         }
     }
 }

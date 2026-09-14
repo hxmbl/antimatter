@@ -121,11 +121,12 @@ final class StopwatchCenter: ObservableObject {
 
     private func persist() {
         guard let data = try? JSONEncoder().encode(stopwatches) else { return }
-        // Backup rotation skips an undecodable primary: after a recovery
-        // from stopwatches.json.bak, the corrupt file must not bury the last
-        // good generation.
-        Persistence.writeData(data, to: fileURL) { primary in
+        let url = fileURL
+        let validate: @Sendable (Data) -> Bool = { primary in
             (try? JSONDecoder().decode([ActiveStopwatch].self, from: primary)) != nil
+        }
+        Task.detached {
+            Persistence.writeData(data, to: url, isValidPrimary: validate)
         }
     }
 }

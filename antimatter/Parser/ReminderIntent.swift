@@ -118,6 +118,7 @@ nonisolated enum ReminderIntent {
     ]
 
     private static func regex(_ pattern: String) -> NSRegularExpression {
-        (try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]))!
+        (try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]))
+            ?? (try! NSRegularExpression(pattern: "a^", options: []))
     }
 }

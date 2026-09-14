@@ -38,7 +38,7 @@ enum DebugReport {
         }
         out.append("paste:   \(PasteStream.shared.isStreaming ? "streaming" : "idle")")
         out.append("")
-        let logLines = DebugLog.shared.lines
+        let logLines = DebugLog.shared.snapshot()
         out.append("log (\(logLines.count)):")
         if logLines.isEmpty {
             out.append("         (nothing captured yet)")

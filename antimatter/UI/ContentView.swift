@@ -342,7 +342,7 @@ private struct ReminderChip: View {
             Text(reminder.message)
                 .lineLimit(1)
                 .truncationMode(.tail)
-            Text(ReminderCenter.format(reminder.date.timeIntervalSinceNow))
+            Text(reminder.firedAt != nil ? "fired" : ReminderCenter.format(reminder.date.timeIntervalSinceNow))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
             Button(action: onDismiss) {

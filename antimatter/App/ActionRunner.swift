@@ -145,17 +145,22 @@ enum ActionRunner {
 
     // MARK: Creating and appending notes
 
+    /// Maximum characters accepted from external callers (deep links, bridge).
+    nonisolated static let externalTextLimit = 100_000
+
     /// Creates a fresh note carrying `text`.
     static func create(text: String) -> ActionOutcome {
-        let note = NoteStore.shared.create(text: text)
-        return outcome(true, text.isEmpty ? "New note" : "New note — \(note.title)")
+        let truncated = text.count > externalTextLimit ? String(text.prefix(externalTextLimit)) : text
+        let note = NoteStore.shared.create(text: truncated)
+        return outcome(true, truncated.isEmpty ? "New note" : "New note — \(note.title)")
     }
 
     /// Appends `text` to the active note.
     static func append(text: String) -> ActionOutcome {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return outcome(false, "Nothing to append") }
-        appendLine(trimmed)
+        let truncated = trimmed.count > externalTextLimit ? String(trimmed.prefix(externalTextLimit)) : trimmed
+        appendLine(truncated)
         return outcome(true, "Appended")
     }
 

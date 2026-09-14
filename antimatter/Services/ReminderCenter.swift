@@ -164,8 +164,12 @@ final class ReminderCenter: ObservableObject {
 
     private func persist() {
         guard let data = try? JSONEncoder().encode(reminders) else { return }
-        Persistence.writeData(data, to: fileURL) { primary in
+        let url = fileURL
+        let validate: @Sendable (Data) -> Bool = { primary in
             (try? JSONDecoder().decode([ActiveReminder].self, from: primary)) != nil
+        }
+        Task.detached {
+            Persistence.writeData(data, to: url, isValidPrimary: validate)
         }
     }
 

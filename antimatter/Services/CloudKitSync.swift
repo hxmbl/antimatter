@@ -14,14 +14,16 @@ struct SyncNote: Identifiable, Equatable {
     var createdAt: Date
     var modifiedAt: Date
     var isSlot: Bool
+    var slotIndex: Int
 
-    init(id: UUID = UUID(), text: String = "", title: String = "", createdAt: Date = Date(), modifiedAt: Date = Date(), isSlot: Bool = false) {
+    init(id: UUID = UUID(), text: String = "", title: String = "", createdAt: Date = Date(), modifiedAt: Date = Date(), isSlot: Bool = false, slotIndex: Int = -1) {
         self.id = id
         self.text = text
         self.title = title
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
         self.isSlot = isSlot
+        self.slotIndex = slotIndex
     }
 }
 
@@ -182,6 +184,7 @@ final class CloudKitSync: ObservableObject {
             record["createdAt"] = note.createdAt as CKRecordValue
             record["modifiedAt"] = note.modifiedAt as CKRecordValue
             record["isSlot"] = note.isSlot as CKRecordValue
+            record["slotIndex"] = note.slotIndex as CKRecordValue
             record["title"] = note.title as CKRecordValue
 
             if let encryptedData = try encrypt(note.text) {
@@ -206,45 +209,52 @@ final class CloudKitSync: ObservableObject {
         syncStatus = .syncing
 
         do {
-            var encryptedNotes: [(id: UUID, createdAt: Date, modifiedAt: Date, isSlot: Bool, title: String, encryptedText: Data?)] = []
-            for note in notes {
-                let encrypted = try encrypt(note.text)
-                encryptedNotes.append((
-                    id: note.id,
-                    createdAt: note.createdAt,
-                    modifiedAt: note.modifiedAt,
-                    isSlot: note.isSlot,
-                    title: note.title,
-                    encryptedText: encrypted
-                ))
+            let encryptedNotes: [(id: UUID, createdAt: Date, modifiedAt: Date, isSlot: Bool, slotIndex: Int, title: String, encryptedText: Data?)] = try notes.map { note in
+                (note.id, note.createdAt, note.modifiedAt, note.isSlot, note.slotIndex, note.title, try encrypt(note.text))
             }
-            try await withThrowingTaskGroup(of: Void.self) { group in
-                for note in encryptedNotes {
-                    group.addTask {
-                        let recordID = CKRecord.ID(recordName: note.id.uuidString)
-                        let record = CKRecord(recordType: "Note", recordID: recordID)
-                        record["noteID"] = note.id.uuidString as CKRecordValue
-                        record["createdAt"] = note.createdAt as CKRecordValue
-                        record["modifiedAt"] = note.modifiedAt as CKRecordValue
-                        record["isSlot"] = note.isSlot as CKRecordValue
-                        record["title"] = note.title as CKRecordValue
-                        if let encryptedData = note.encryptedText {
-                            record["encryptedText"] = encryptedData as CKRecordValue
-                        }
-                        try await database.save(record)
-                    }
-                }
-                for voided in trash {
-                    let noteID = voided.id
-                    group.addTask {
-                        try await CloudKitSync.shared.deleteNote(noteID)
-                    }
-                }
-            }
+            let noteIDsToDelete = trash.map(\.id)
+            try await Self.pushNotes(encryptedNotes, deleting: noteIDsToDelete, database: database)
             lastSyncDate = Date()
             syncStatus = .idle
         } catch {
             syncStatus = .error(error.localizedDescription)
+        }
+    }
+
+    /// Performs the actual CloudKit I/O off the main thread.
+    private nonisolated static func pushNotes(
+        _ notes: [(id: UUID, createdAt: Date, modifiedAt: Date, isSlot: Bool, slotIndex: Int, title: String, encryptedText: Data?)],
+        deleting trashIDs: [UUID],
+        database: CKDatabase
+    ) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for note in notes {
+                group.addTask {
+                    let recordID = CKRecord.ID(recordName: note.id.uuidString)
+                    let record = CKRecord(recordType: "Note", recordID: recordID)
+                    record["noteID"] = note.id.uuidString as CKRecordValue
+                    record["createdAt"] = note.createdAt as CKRecordValue
+                    record["modifiedAt"] = note.modifiedAt as CKRecordValue
+                    record["isSlot"] = note.isSlot as CKRecordValue
+                    record["slotIndex"] = note.slotIndex as CKRecordValue
+                    record["title"] = note.title as CKRecordValue
+                    if let encryptedData = note.encryptedText {
+                        record["encryptedText"] = encryptedData as CKRecordValue
+                    }
+                    try await database.save(record)
+                }
+            }
+            for noteID in trashIDs {
+                group.addTask {
+                    let predicate = NSPredicate(format: "noteID == %@", noteID.uuidString)
+                    let query = CKQuery(recordType: "Note", predicate: predicate)
+                    let (matchResults, _) = try await database.records(matching: query)
+                    for (_, result) in matchResults {
+                        guard case .success(let record) = result else { continue }
+                        try await database.deleteRecord(withID: record.recordID)
+                    }
+                }
+            }
         }
     }
 
@@ -270,6 +280,7 @@ final class CloudKitSync: ObservableObject {
                       let modifiedAt = record["modifiedAt"] as? Date,
                       let isSlot = record["isSlot"] as? Bool
                 else { continue }
+                let slotIndex = (record["slotIndex"] as? Int) ?? -1
                 // A record that fails to decrypt means this device's sync key
                 // differs from the one that wrote it (iCloud Keychain sync not
                 // yet converged, or a true key divergence). Retry once under a
@@ -280,7 +291,7 @@ final class CloudKitSync: ObservableObject {
                     continue
                 }
                 let note = SyncNote(id: noteID, text: text, title: record["title"] as? String ?? "",
-                                    createdAt: createdAt, modifiedAt: modifiedAt, isSlot: isSlot)
+                                    createdAt: createdAt, modifiedAt: modifiedAt, isSlot: isSlot, slotIndex: slotIndex)
                 notes.append(note)
             }
 
@@ -299,23 +310,25 @@ final class CloudKitSync: ObservableObject {
 
     /// The pull half of sync: fetches iCloud notes and merges them into the
     /// store. Local wins on tie, newer `modifiedAt` wins on conflict;
-    /// anything iCloud has that we don't is added.
+    /// anything iCloud has that we don't is added — unless the note is in
+    /// the local trash, in which case the local deletion wins.
     func pull() async {
         guard isEnabled else { return }
         let remote = await fetchNotes()
         guard !remote.isEmpty else { return }
         let store = NoteStore.shared
+        let trashedIDs = Set(store.trash.map(\.id))
         var merged = store.notes
         for incoming in remote {
             let note = Note(
                 id: incoming.id, text: incoming.text,
                 createdAt: incoming.createdAt, modifiedAt: incoming.modifiedAt,
-                isSlot: incoming.isSlot)
+                isSlot: incoming.isSlot, slotIndex: incoming.slotIndex)
             if let idx = merged.firstIndex(where: { $0.id == incoming.id }) {
                 if incoming.modifiedAt > merged[idx].modifiedAt {
                     merged[idx] = note
                 }
-            } else {
+            } else if !trashedIDs.contains(incoming.id) {
                 merged.insert(note, at: 0)
             }
         }

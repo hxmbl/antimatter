@@ -4,6 +4,7 @@ import Foundation
 /// Live currency and cryptocurrency conversions, opt-in.
 /// Rates come from Coinbase, cached to disk, refreshed at most once an hour.
 /// `rates[symbol]` is the amount of `symbol` you get for 1 USD.
+@MainActor
 final class CurrencyCenter: ObservableObject {
     static let shared = CurrencyCenter()
 
@@ -36,7 +37,8 @@ final class CurrencyCenter: ObservableObject {
         let fromSymbol = from.uppercased()
         let toSymbol = to.uppercased()
         guard let fromRate = RateCache.shared.rate(for: fromSymbol),
-              let toRate = RateCache.shared.rate(for: toSymbol)
+              let toRate = RateCache.shared.rate(for: toSymbol),
+              fromRate != 0
         else { return nil }
         return value * toRate / fromRate
     }

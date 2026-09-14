@@ -102,12 +102,24 @@ final class LocalBridge {
             outcome = ActionOutcome(ok: true, message: "")
         case "/command":
             let line = query?.queryItems?.first { $0.name == "line" }?.value ?? ""
+            guard DeepLinkRouter.isSafeCommand(line) else {
+                return httpResponse(status: "403 Forbidden",
+                                    body: Data("{\"ok\":false,\"message\":\"Command not allowed via bridge\"}".utf8))
+            }
             outcome = ActionRunner.run(line)
         case "/note":
             let text = query?.queryItems?.first { $0.name == "text" }?.value ?? ""
+            guard DeepLinkRouter.isSafeCommand(text) else {
+                return httpResponse(status: "403 Forbidden",
+                                    body: Data("{\"ok\":false,\"message\":\"Command not allowed via bridge\"}".utf8))
+            }
             outcome = ActionRunner.create(text: text)
         case "/append":
             let text = query?.queryItems?.first { $0.name == "text" }?.value ?? ""
+            guard DeepLinkRouter.isSafeCommand(text) else {
+                return httpResponse(status: "403 Forbidden",
+                                    body: Data("{\"ok\":false,\"message\":\"Command not allowed via bridge\"}".utf8))
+            }
             outcome = ActionRunner.append(text: text)
         default:
             outcome = ActionOutcome(ok: false, message: "Unknown endpoint \(path)")

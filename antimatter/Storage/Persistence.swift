@@ -14,27 +14,20 @@ enum StorageLocation {
             let dir = FileManager.default.temporaryDirectory
                 .appendingPathComponent("antimatter-isolated", isDirectory: true)
                 .appendingPathComponent(name, isDirectory: true)
-            do {
-                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            } catch {
-                fatalError("Failed to create isolated storage directory: \(error)")
-            }
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             return dir
         }
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Antimatter", isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        } catch {
-            fatalError("Failed to create Application Support directory: \(error)")
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return FileManager.default.temporaryDirectory.appendingPathComponent(name, isDirectory: true)
         }
-        return base
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base.appendingPathComponent("Antimatter", isDirectory: true)
     }
 }
 
 /// Atomic text persistence with a one-generation `.bak` backup.
 enum Persistence {
-    static func backupURL(for url: URL) -> URL {
+    nonisolated static func backupURL(for url: URL) -> URL {
         url.appendingPathExtension("bak")
     }
 
@@ -73,7 +66,7 @@ enum Persistence {
 
     /// The binary form of `write`. `isValidPrimary` controls backup rotation.
     @discardableResult
-    static func writeData(
+    nonisolated static func writeData(
         _ data: Data,
         to url: URL,
         isValidPrimary: ((Data) -> Bool)? = nil
