@@ -17,7 +17,7 @@ jobs:
       cancel-in-progress: true
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Ad-hoc signing (CODE_SIGN_IDENTITY=-) is enough for a macOS hosted
       # test run; it embeds entitlements without needing a developer account.
@@ -41,7 +41,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build app
         run: |
@@ -82,7 +82,7 @@ jobs:
       cancel-in-progress: true
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Ad-hoc signing (CODE_SIGN_IDENTITY=-) is enough for a macOS hosted
       # test run; it embeds entitlements without needing a developer account.
