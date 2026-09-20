@@ -67,6 +67,16 @@ jobs:
             .release-build/Build/Products/Release/antimatter.app \
             "dist/Antimatter-${GITHUB_REF_NAME}.zip"
 
+      - name: Ensure GitHub release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --verify-tag \
+              --generate-notes
+          fi
+
       - name: Upload app to GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
