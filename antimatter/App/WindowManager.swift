@@ -69,8 +69,11 @@ final class WindowManager {
     }
 
     func closeKeyWindow() {
-        guard PaneStyle.displayMode == .dock, let window = keyPane else { return }
-        window.close()
+        guard PaneStyle.displayMode == .dock else { return }
+        // Only close non-panel windows in dock mode
+        if let window = keyPane, !(window is NSPanel) {
+            window.close()
+        }
     }
 
     // MARK: Per-window stores

@@ -109,8 +109,14 @@ final class PaneHotKey {
         let mode = PaneStyle.displayMode
         switch mode {
         case .dock:
+            // In dock mode, only non-panel windows are considered valid panes.
+            // Hide any stale menu-bar/dropdown panels first.
+            for window in NSApplication.shared.windows where WindowManager.isPane(window) && window is NSPanel {
+                window.orderOut(nil)
+            }
             let manager = WindowManager.shared
-            let candidate = manager.keyPane ?? manager.frontmostPane
+            let dockPanes = manager.panes.filter { !($0 is NSPanel) }
+            let candidate = dockPanes.last
             if let candidate, candidate.isVisible {
                 candidate.orderOut(nil)
             } else if candidate != nil {
@@ -119,6 +125,10 @@ final class PaneHotKey {
                 openWindow?()
             }
         case .menuBar, .dropdown:
+            // Hide any stale dock windows before toggling the menu-bar/dropdown panel.
+            for window in NSApplication.shared.windows where WindowManager.isPane(window) && !(window is NSPanel) {
+                window.orderOut(nil)
+            }
             MenuBarController.shared.togglePanel()
         }
     }
@@ -129,13 +139,23 @@ final class PaneHotKey {
         switch mode {
         case .dock:
             NSApplication.shared.activate()
+            // In dock mode, hide any stale menu-bar/dropdown panels before showing the dock window.
+            for window in NSApplication.shared.windows where WindowManager.isPane(window) && window is NSPanel {
+                window.orderOut(nil)
+            }
             let manager = WindowManager.shared
-            if let window = manager.keyPane ?? manager.frontmostPane {
+            // Only consider non-panel windows for dock mode.
+            let dockPanes = manager.panes.filter { !($0 is NSPanel) }
+            if let window = dockPanes.last {
                 window.makeKeyAndOrderFront(nil)
             } else {
                 openWindow?()
             }
         case .menuBar, .dropdown:
+            // Hide any stale dock windows before showing the menu-bar/dropdown panel.
+            for window in NSApplication.shared.windows where WindowManager.isPane(window) && !(window is NSPanel) {
+                window.orderOut(nil)
+            }
             MenuBarController.shared.showPanel()
         }
     }
