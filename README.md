@@ -9,7 +9,8 @@ A tiny, local, command-aware notes app for macOS. Not a filing system — a plac
 ```text
 .timer 5 soup          → 5-minute countdown chip, ding when done
 384 * 27 =              → instant answer: 384 * 27 = 10368
-price = 4 * 12          → define a variable, later lines use it
+:price = 4 * 12        → define a variable, later lines use it
+:total = $(.sum 10 20 30) → embed dot-commands with $()
 days until 2026-09-01   → 8
 12 kg -> lb             → 26.46
 2026-08-22              → Saturday
@@ -33,7 +34,7 @@ No setup, no account, no data leaves your Mac until you ask it to.
 ## What it does
 
 - **Instant math** — type `384 * 27 =` for the answer as you type, or press return on a pure-arithmetic line to rewrite it to `384 * 27 = 10368`. Operators: `+ - * / % ^`, parens, `sqrt abs round min max`, and the typographic `× ÷ −`.
-- **Reactive variables** — `price = 4 * 12` defines a variable; later lines use `price / 2`. Edit a definition and every committed dependent recomputes live.
+- **Reactive variables** — `:price = 4 * 12` defines a variable; later lines use `price / 2`. Edit a definition and every committed dependent recomputes live. Variable names must start with a letter or underscore and can contain letters, numbers, and underscores. Note: bare `price = 4 * 12` (without the colon) is just text with math calculation, not a stored variable. Embed dot-commands in expressions using `$()`: `:total = $(.sum 10 20 30)` or `:total = $(.sum)` for whole-note aggregates.
 - **Aggregates** — `.sum`, `.avg`, `.count` scan the note's numbers (prose ignored) and rewrite to `.sum = 46`. Recompute as the note changes. Type numbers after the command to sum a list instead: `.sum 10 20 30` → `.sum 10 20 30 = 60`.
 - **Dates & units, offline** — return on `2026-08-22` appends its weekday; `days until …` counts down; `12 kg -> lb` converts. Built-in table, no network.
 - **Currency & crypto, opt-in** — flip *Settings → Notes → Live currency & crypto conversion* and `100 USD → EUR` converts with live rates; `1 BTC → USD` works too. Off by default so the note never touches the network until you ask. Rates refresh at most once an hour (Coinbase, fiat + crypto).
