@@ -20,10 +20,51 @@ final class MenuBarController: NSObject {
             button.image = NSImage(named: "MenuBarIcon")
             button.image?.isTemplate = true
             button.toolTip = "Antimatter"
-            button.action = #selector(togglePanel)
+            button.action = #selector(handleStatusButton)
             button.target = self
-            button.sendAction(on: [.leftMouseUp])
+            // Left click toggles the pane; right click pops the context menu
+            // below, so the status bar alone stays fully usable.
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
+    }
+
+    @objc private func handleStatusButton() {
+        guard let event = NSApp.currentEvent else {
+            togglePanel()
+            return
+        }
+        if event.type == .rightMouseUp || event.type == .rightMouseDown {
+            showStatusMenu()
+            return
+        }
+        togglePanel()
+    }
+
+    /// The right-click menu: reveal the pane or quit without the Dock.
+    private func showStatusMenu() {
+        let menu = NSMenu(title: "Antimatter")
+
+        let open = NSMenuItem(title: "Open Pane", action: #selector(openPane), keyEquivalent: "")
+        open.target = self
+        menu.addItem(open)
+
+        menu.addItem(.separator())
+
+        let quit = NSMenuItem(title: "Quit Antimatter", action: #selector(quitApp), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
+
+        if let button = statusItem?.button {
+            menu.popUp(positioning: nil, at: NSPoint(x: 6, y: button.frame.height + 6), in: button)
+        }
+    }
+
+    @objc private func openPane() {
+        showPanel()
+    }
+
+    @objc private func quitApp() {
+        NSApplication.shared.terminate(nil)
     }
 
     func teardown() {

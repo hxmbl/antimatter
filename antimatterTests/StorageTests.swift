@@ -24,7 +24,7 @@ struct NoteStoreTests {
         let store = NoteStore(fileURL: tempURL())
         let first = store.create(text: "alpha")
         let second = store.create(text: "beta")
-        #expect(store.notes.count == 3)
+        #expect(store.notes.count == 2)
         #expect(store.notes[0].id == second.id)
         #expect(store.activeNoteID == second.id)
         store.cycleNote(direction: 1)

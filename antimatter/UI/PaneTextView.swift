@@ -37,7 +37,12 @@ final class PaneTextView: NSTextView {
             clearCaretGlide()
             return
         }
-        let oldRect = oldRect ?? caretRect(for: oldLocation)
+        // Chain onto any glide still in flight: starting a new glide from a
+        // stale snapshot while the ghost is mid-flight snaps the caret
+        // backward, which reads as stutter under rapid typing or arrow keys.
+        // The new glide picks up from where the caret already appears.
+        let inFlight = caretGlide.map(interpolatedCaretRect)
+        let oldRect = inFlight ?? oldRect ?? caretRect(for: oldLocation)
         let newRect = caretRect(for: newLocation)
         guard !oldRect.isEmpty, !newRect.isEmpty else { return }
         let distance = hypot(newRect.midX - oldRect.midX, newRect.midY - oldRect.midY)
@@ -72,6 +77,19 @@ final class PaneTextView: NSTextView {
     private var caretGlideDirtyRect: NSRect {
         guard let glide = caretGlide else { return .zero }
         return glide.from.union(glide.to).insetBy(dx: -5, dy: -5)
+    }
+
+    /// The ghost caret's position right now, or nil when no glide is running.
+    private func interpolatedCaretRect(_ glide: CaretGlide) -> NSRect {
+        let elapsed = CACurrentMediaTime() - glide.start
+        let progress = min(max(elapsed / glide.duration, 0), 1)
+        let eased = 1 - pow(1 - progress, 3)
+        return NSRect(
+            x: glide.from.minX + (glide.to.minX - glide.from.minX) * eased,
+            y: glide.from.minY + (glide.to.minY - glide.from.minY) * eased,
+            width: glide.to.width,
+            height: glide.to.height
+        )
     }
 
     private func clearCaretGlide() {
@@ -140,14 +158,8 @@ final class PaneTextView: NSTextView {
         drawVariableGhosts(in: dirtyRect)
         guard hasActiveCaret, let glide = caretGlide else { return }
         let elapsed = CACurrentMediaTime() - glide.start
-        let progress = min(max(elapsed / glide.duration, 0), 1)
-        let eased = 1 - pow(1 - progress, 3)
-        let rect = NSRect(
-            x: glide.from.minX + (glide.to.minX - glide.from.minX) * eased,
-            y: glide.from.minY + (glide.to.minY - glide.from.minY) * eased,
-            width: glide.to.width,
-            height: glide.to.height
-        )
+        let eased = 1 - pow(1 - min(max(elapsed / glide.duration, 0), 1), 3)
+        let rect = interpolatedCaretRect(glide)
         let color = insertionPointColor ?? .labelColor
 
         // Keep a small, bounded remnant at the source position so the glide
@@ -172,8 +184,8 @@ final class PaneTextView: NSTextView {
             let lineRange = ns.lineRange(for: span.range)
             let line = ns.substring(with: lineRange).trimmingCharacters(in: .whitespacesAndNewlines)
             guard line.hasPrefix(":"), line.contains(" = "),
-                  let value = ExpressionEvaluator.evaluate(span.inner, variables: variables, buffer: source)
-                    ?? IntentExecution.commandDryRun(span.inner, buffer: source),
+                  let value = ExpressionEvaluator.evaluateValue(span.inner, variables: variables, buffer: source)
+                    ?? IntentExecution.commandDryRun(span.inner, buffer: source).map(SparkValue.number),
                   value.isFinite else { continue }
 
             var contentEnd = NSMaxRange(lineRange)

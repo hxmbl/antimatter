@@ -31,7 +31,7 @@ nonisolated enum IntentExecution {
 
     /// Everything needed to rewrite a segment into `expression = result`,
     /// or nil when nothing should happen.
-    static func calculationCommit(in text: String, at contentRange: NSRange?) -> Commit? {
+    static func calculationCommit(in text: String, at contentRange: NSRange?, buffer: String? = nil) -> Commit? {
         guard let contentRange, contentRange.length > 0,
               NSMaxRange(contentRange) <= (text as NSString).length
         else { return nil }
@@ -39,8 +39,8 @@ nonisolated enum IntentExecution {
         let line = ns.substring(with: contentRange)
         let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let calculation = IntentParser.pendingCalculation(trimmedLine)
-            ?? IntentParser.parseCalculation(trimmedLine)
+        let calculation = IntentParser.pendingCalculation(trimmedLine, buffer: buffer)
+            ?? IntentParser.parseCalculation(trimmedLine, buffer: buffer)
         guard let calculation else { return nil }
         let indent = String(line.prefix(while: { $0 == " " || $0 == "\t" }))
         let replacement = indent + calculation.expression + " = " + IntentParser.format(calculation.result)
@@ -108,14 +108,62 @@ nonisolated enum IntentExecution {
         }
     }
 
-    /// Numbers an aggregate command should operate on: explicit arguments
-    /// (`.sum 10 20 30`) win, otherwise the whole note's numbers.
+    /// Numbers an aggregate command should operate on. Explicit arguments win
+    /// — `.sum 10 20 30`, a range (`.sum 1..10`), a list literal (`.sum [1,2,3]`)
+    /// or a whole expression (`.sum 2 * 3`) — otherwise the note's numbers.
+    /// A trailing `where <predicate>` / `if <predicate>` filters the numbers,
+    /// binding `it` to each one: `.sum where it > 10`.
     static func aggregateNumbers(forLine line: String, in text: String) -> [Double] {
-        if let (_, _, args) = AggregateKind.split(line),
-           !args.trimmingCharacters(in: .whitespaces).isEmpty {
-            return ExpressionEvaluator.listLiterals(args)
+        guard let (_, _, args) = AggregateKind.split(line) else {
+            return Aggregates.numbers(in: text)
         }
-        return Aggregates.numbers(in: text)
+        let (payload, predicate) = splitAggregateFilter(args)
+        let candidates: [Double]
+        if payload.isEmpty {
+            candidates = Aggregates.numbers(in: text)
+        } else {
+            candidates = aggregateArgumentNumbers(payload, in: text)
+        }
+        guard let predicate, !predicate.isEmpty else { return candidates }
+        return filter(candidates, by: predicate, in: text)
+    }
+
+    /// Splits `.sum ... where <expr>` (or `if <expr>`) after the first
+    /// whitespace-delimited keyword. Returns the numbers part and predicate.
+    private static func splitAggregateFilter(_ args: String) -> (payload: String, predicate: String?) {
+        let words = args.split(separator: " ", omittingEmptySubsequences: false)
+        for (index, word) in words.enumerated() where word == "where" || word == "if" {
+            let payload = words[..<index].joined(separator: " ").trimmingCharacters(in: .whitespaces)
+            let predicate = words[(index + 1)...].joined(separator: " ").trimmingCharacters(in: .whitespaces)
+            return (payload, predicate.isEmpty ? nil : predicate)
+        }
+        return (args.trimmingCharacters(in: .whitespaces), nil)
+    }
+
+    /// Explicit aggregate arguments: a single Spark expression that evaluates
+    /// (`.sum 1..10`, `.sum :items`, `.sum [1,2,3]`, `.sum 2 * 3` → 6), falling
+    /// back to an unparsed number list (`.sum 10 20 30`).
+    private static func aggregateArgumentNumbers(_ args: String, in text: String) -> [Double] {
+        if let value = ExpressionEvaluator.evaluateValue(args, variables: [:]),
+           !ExpressionEvaluator.numbers(from: value).isEmpty {
+            return ExpressionEvaluator.numbers(from: value)!
+        }
+        return ExpressionEvaluator.listLiterals(args)
+    }
+
+    /// Keeps the numbers a `where` / `if` predicate accepts. `it` is bound to
+    /// each number, so `where it > 10` filters; a predicate ignoring `it` acts
+    /// as a constant gate. A predicate that can't be evaluated is ignored and
+    /// the numbers are kept, matching Spark's quiet-failure posture.
+    private static func filter(_ numbers: [Double], by predicate: String, in text: String) -> [Double] {
+        var variables = VariableTable.scan(text)
+        var accepts: [Bool] = []
+        for number in numbers {
+            variables["it"] = .number(number)
+            guard let result = ExpressionEvaluator.evaluateValue(predicate, variables: variables)?.boolean else { return numbers }
+            accepts.append(result)
+        }
+        return zip(numbers, accepts).compactMap { $1 ? $0 : nil }
     }
 
     /// Evaluates a numeric command inside `$()` without committing anything.
@@ -161,7 +209,7 @@ nonisolated enum IntentExecution {
                   !trimmed.hasPrefix(":"),
                   let value = Double(expression.trimmingCharacters(in: .whitespaces))
             else { continue }
-            variables[name.lowercased()] = value
+            variables[name.lowercased()] = .number(value)
         }
         var commits: [Commit] = []
         for fullRange in VariableTable.lineRanges(ns) {
@@ -186,12 +234,17 @@ nonisolated enum IntentExecution {
             }
 
             let value: Double?
-            if let kind = AggregateKind(keyword: expression.trimmingCharacters(in: .whitespaces)) {
-                value = kind.value(of: Aggregates.numbers(in: text))
+            if let kind = AggregateKind.split(expression) {
+                // Argument- and filter-bearing aggregates recompute reactively
+                // too: `.sum 1..10`, `.sum :items`, `.sum where it > 10`.
+                value = kind.kind.value(of: aggregateNumbers(forLine: expression, in: text))
             } else {
-                value = ExpressionEvaluator.evaluate(expression, variables: variables)
+                value = ExpressionEvaluator.evaluateValue(expression, variables: variables)
+                    .flatMap(\.number)
             }
-            guard let value, IntentParser.format(value) != storedText else { continue }
+            guard let value, value.isFinite,
+                  IntentParser.format(value) != storedText
+            else { continue }
 
             let indent = String(line.prefix(while: { $0 == " " || $0 == "\t" }))
             let replacement = indent
@@ -256,6 +309,64 @@ nonisolated enum IntentExecution {
     }
 
 
+    // MARK: Variables report
+
+    /// The reference block `.vars` expands into: every `:name = expression`
+    /// definition and the value it evaluates to, resolved in document order
+    /// (forward references included). Definitions that can't resolve stay text
+    /// and are explained, rather than vanishing silently.
+    static func variablesReport(in text: String) -> String {
+        let table = VariableTable.scan(text)
+        let unresolved = VariableTable.unresolvedDefinitions(in: text)
+        let ns = text as NSString
+        var rows: [(line: String, value: String)] = []
+        for fullRange in VariableTable.lineRanges(ns) {
+            let trimmed = ns.substring(with: fullRange)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let (name, _) = VariableTable.splitDefinition(trimmed),
+                  let value = table[name]
+            else { continue }
+            rows.append((trimmed, IntentParser.format(value)))
+        }
+        var out: [String] = []
+        out.append("\(IntentParser.languageName) variables — \(rows.count) \(rows.count == 1 ? "definition" : "definitions")")
+        if rows.isEmpty {
+            out.append("")
+            out.append("  Define one with a `:name = expression` line.")
+            out.append("  `:name` then resolves in later expressions, or does a")
+            out.append("  live value swap anywhere via $(:name).")
+        } else {
+            out.append("")
+            let width = rows.map(\.line.count).max() ?? 0
+            for row in rows {
+                out.append("  \(row.line.padding(toLength: width + 2, withPad: " ", startingAt: 0))= \(row.value)")
+            }
+            out.append("")
+            out.append("Use :name in any later expression, or $() to swap it into running text.")
+        }
+        if !unresolved.isEmpty {
+            let circular = Set(VariableTable.circularDependencies(in: text))
+            out.append("")
+            out.append("\(unresolved.count) \(unresolved.count == 1 ? "definition stays" : "definitions stay") as text:")
+            for definition in unresolved {
+                let deps = ExpressionEvaluator.dependencies(in: definition.rhs)
+                let reason: String
+                if deps.contains(definition.name) {
+                    reason = "self-reference"
+                } else if circular.contains(definition.name) {
+                    reason = "circular"
+                } else if let missing = deps.first(where: { table[$0] == nil }) {
+                    reason = "':\(missing)' not defined"
+                } else {
+                    reason = "can't be computed"
+                }
+                out.append("  :\(definition.name) = \(definition.rhs)   ·   \(reason)")
+            }
+        }
+        return out.joined(separator: "\n")
+    }
+
+
     // MARK: Action model
 
     enum LineAction: Equatable {
@@ -298,8 +409,22 @@ nonisolated enum IntentExecution {
         case showDebug
         /// Expand `.stats` into the usage report.
         case showStats
+        /// Expand `.vars` into the note's variable definitions.
+        case showVariables
         /// Quit Antimatter cleanly (`.exit` / `.quit`).
         case quit
+        /// Minimize the pane out of the way (`.hide`).
+        case hide
+        /// Undo the last edit (`.undo`).
+        case undo
+        /// Redo the last undone edit (`.redo`).
+        case redo
+        /// Expand `.timer list` into the running-timers report.
+        case listTimers
+        /// Expand `.reminder list` into the pending-reminders report.
+        case listReminders
+        /// Expand `.stopwatch list` into the stopwatches report.
+        case listStopwatches
         /// Trigger the text view's native find panel.
         case showFindPanel
         /// Global replace in the current note.
@@ -320,6 +445,8 @@ nonisolated enum IntentExecution {
     static func action(forLine line: String, in buffer: String? = nil) -> LineAction {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.hasSuffix("=") else { return .nothing }
+        // A leading backslash marks the line as literal text: no command, no rewrite.
+        guard !IntentParser.isEscaped(trimmed) else { return .nothing }
 
         if let pomodoro = IntentParser.parsePomodoro(trimmed) {
             return .startPomodoro(workDuration: pomodoro.workDuration, breakDuration: pomodoro.breakDuration, cycles: pomodoro.cycles)
@@ -327,6 +454,9 @@ nonisolated enum IntentExecution {
         if trimmed.lowercased().hasPrefix(IntentParser.commandPrefix + "timer") {
             if IntentParser.isTimerCancel(trimmed) {
                 return .cancelAllTimers
+            }
+            if trimmed.lowercased() == IntentParser.commandPrefix + "timer list" {
+                return .listTimers
             }
             if let timer = IntentParser.parseTimer(trimmed) {
                 return .startTimer(timer)
@@ -337,6 +467,9 @@ nonisolated enum IntentExecution {
             if IntentParser.isStopwatchCancel(trimmed) {
                 return .cancelStopwatches
             }
+            if trimmed.lowercased() == IntentParser.commandPrefix + "stopwatch list" {
+                return .listStopwatches
+            }
             if IntentParser.stopwatchLabel(trimmed).lowercased().hasPrefix("cancel") {
                 return .hint(".stopwatch cancel takes no further arguments")
             }
@@ -345,6 +478,11 @@ nonisolated enum IntentExecution {
         if trimmed.lowercased().hasPrefix(ReminderIntent.command) {
             if ReminderIntent.isCancelAll(trimmed) {
                 return .cancelAllReminders
+            }
+            if trimmed.lowercased() == IntentParser.commandPrefix + "reminder list"
+                || trimmed.lowercased() == IntentParser.commandPrefix + "remind list"
+            {
+                return .listReminders
             }
             if let reminder = ReminderIntent.parse(trimmed) {
                 return .startReminder(reminder)
@@ -366,7 +504,7 @@ nonisolated enum IntentExecution {
             return .rewriteLine(TimeIntent.commit(trimmed))
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "export" {
-            return .hint("Export where? — `.export notes` or `.export obsidian`")
+            return .hint("Export where? — `.export notes`, `.export obsidian`, `.export json`, or `.export csv`")
         }
         if let destination = exportDestination(from: trimmed) {
             return .export(destination)
@@ -398,10 +536,22 @@ nonisolated enum IntentExecution {
         if trimmed.lowercased() == IntentParser.commandPrefix + "stats" {
             return .showStats
         }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "vars" {
+            return .showVariables
+        }
         if trimmed.lowercased() == IntentParser.commandPrefix + "exit"
             || trimmed.lowercased() == IntentParser.commandPrefix + "quit"
         {
             return .quit
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "hide" {
+            return .hide
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "undo" {
+            return .undo
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "redo" {
+            return .redo
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "find" {
             return .showFindPanel
@@ -426,8 +576,26 @@ nonisolated enum IntentExecution {
         if let replacement = assignmentCommit(line: line, buffer: buffer ?? line) {
             return .rewriteLine(replacement)
         }
-        if calculationCommit(in: line, at: NSRange(location: 0, length: (line as NSString).length)) != nil {
+        if calculationCommit(in: line, at: NSRange(location: 0, length: (line as NSString).length), buffer: buffer ?? trimmed) != nil {
             return .rewriteCalculation
+        }
+        // A definition that can't resolve should say why instead of quietly
+        // doing nothing.
+        if let definition = VariableTable.splitDefinition(trimmed) {
+            if let diagnostic = definitionDiagnostic(for: definition, in: buffer ?? trimmed) {
+                return .hint(diagnostic)
+            }
+            return .nothing
+        }
+        // A math-shaped line that fails to evaluate gets feedback rather than
+        // silence.
+        if ExpressionEvaluator.looksArithmetic(trimmed),
+           let message = ExpressionEvaluator.error(
+               in: trimmed,
+               variables: VariableTable.scan(buffer ?? ""),
+               buffer: buffer ?? trimmed)
+        {
+            return .hint(message)
         }
         // A line that still starts with a dot after every parser said no is a
         // command attempt gone quiet; the pane should say so rather than
@@ -438,18 +606,117 @@ nonisolated enum IntentExecution {
         return .nothing
     }
 
+    /// Why a `:name = expression` definition stays text, or nil when it's fine.
+    /// Surfaces the previously-silent variable failures as a return-key hint.
+    static func definitionDiagnostic(for definition: (name: String, expression: String), in buffer: String) -> String? {
+        let name = definition.name
+        let rhs = definition.expression
+        let table = VariableTable.scan(buffer)
+        let deps = ExpressionEvaluator.dependencies(in: rhs)
+        if deps.contains(name) {
+            return ":\(name) can't be defined from itself"
+        }
+        if VariableTable.circularDependencies(in: buffer).contains(name) {
+            return ":\(name) is caught in a circular definition"
+        }
+        for dep in deps where table[dep] == nil {
+            return "':\(dep)' isn't defined yet"
+        }
+        // Dependencies met but the line still can't resolve: the expression
+        // itself is bad (division by zero, a malformed `if`, an unknown
+        // function), so say so instead of silently staying text.
+        guard ExpressionEvaluator.evaluateValue(rhs, variables: table, buffer: buffer) != nil else {
+            return ExpressionEvaluator.error(in: rhs, variables: table, buffer: buffer)
+                ?? ":\(name) can't be computed"
+        }
+        return nil
+    }
+
     /// Preserve established bare `name = expression` behavior. Explicit
     /// `:name = expression` definitions stay literal.
     private static func assignmentCommit(line: String, buffer: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.hasPrefix(":"),
               let (_, rhs) = VariableTable.splitDefinition(trimmed),
-              let value = ExpressionEvaluator.evaluate(rhs, variables: VariableTable.scan(buffer)),
+              let value = ExpressionEvaluator.evaluate(rhs, variables: VariableTable.scan(buffer).compactMapValues(\.number)),
               IntentParser.format(value) != rhs
         else { return nil }
         let indent = String(line.prefix(while: { $0 == " " || $0 == "\t" }))
         return indent + trimmed + " = " + IntentParser.format(value)
     }
+
+    // MARK: List continuation
+
+    /// What pressing return should do inside a list item, Notion-style:
+    /// reopen the item with the same marker, or end the list when the item
+    /// is empty (just the marker). nil when the line is not a list item.
+    enum ListContinuation: Equatable {
+        /// Reopen the list with this marker (includes a trailing space).
+        case `continue`(marker: String)
+        /// The item is empty; pressing return removes the marker.
+        case endList
+    }
+
+    /// Continuation for `- foo` → `- `, `1. a` → `2. `, `- [x] done` →
+    /// `- [x] `; `- ` alone ends the list. Numbered markers increment from
+    /// the line's leading number (`.`, and only the renderer's own markers —
+    /// `-+*` and `1.` — continue). nil for non-list lines.
+    static func listContinuation(forLine line: String) -> ListContinuation? {
+        var markerIndex = line.startIndex
+        while markerIndex < line.endIndex, line[markerIndex] == " " || line[markerIndex] == "\t" {
+            markerIndex = line.index(after: markerIndex)
+        }
+        guard markerIndex < line.endIndex else { return nil }
+        let indent = String(line[..<markerIndex])
+        let rest = line[markerIndex...]
+
+        var markerText = ""
+        guard let first = rest.first else { return nil }
+        if first == "-" || first == "*" || first == "+" {
+            var cursor = rest.index(after: rest.startIndex)
+            // `- [ ]`, `- [x]`, `- [X]` (and the * / + twins) repeat their
+            // whole box — the item type survives the newline.
+            var boxed = false
+            if let next = rest.index(cursor, offsetBy: 3, limitedBy: rest.endIndex) {
+                let inner = rest[rest.index(after: cursor)]
+                if rest[cursor] == " ",
+                   rest[rest.index(after: cursor)] == "[",
+                   inner == " " || inner == "x" || inner == "X",
+                   rest[next] == "]" {
+                    markerText = String(first) + " [" + String(inner) + "]"
+                    cursor = rest.index(after: next)
+                    boxed = true
+                }
+            }
+            if !boxed {
+                markerText = String(first)
+                cursor = rest.index(after: rest.startIndex)
+            }
+            guard cursor == rest.endIndex || rest[cursor] == " " || rest[cursor] == "\t" else { return nil }
+            let content = cursor < rest.endIndex ? rest[rest.index(after: cursor)...] : rest[cursor...]
+            if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return .endList
+            }
+            return .continue(marker: indent + markerText + " ")
+        }
+        if first.isNumber {
+            var digitsEnd = rest.startIndex
+            while digitsEnd < rest.endIndex, rest[digitsEnd].isNumber {
+                digitsEnd = rest.index(after: digitsEnd)
+            }
+            guard digitsEnd < rest.endIndex, rest[digitsEnd] == "." else { return nil }
+            guard let number = Int(String(rest[rest.startIndex..<digitsEnd])) else { return nil }
+            let markerEnd = rest.index(after: digitsEnd)
+            guard markerEnd == rest.endIndex || rest[markerEnd] == " " || rest[markerEnd] == "\t" else { return nil }
+            let content = markerEnd < rest.endIndex ? rest[rest.index(after: markerEnd)...] : rest[markerEnd...]
+            if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return .endList
+            }
+            return .continue(marker: indent + "\(number + 1). ")
+        }
+        return nil
+    }
+
 
     // MARK: Command parsing helpers
 
@@ -475,6 +742,8 @@ nonisolated enum IntentExecution {
         switch destination {
         case .appleNotes: "Apple Notes"
         case .obsidian: "Obsidian"
+        case .json: "JSON"
+        case .csv: "CSV"
         }
     }
 
@@ -483,8 +752,11 @@ nonisolated enum IntentExecution {
 
     /// The reference block `.help` expands into on return: every dot-command
     /// plus the automatic line replies. Kept in the parser layer so it can be
-    /// tested and translated without touching an `NSTextView`.
-    static let helpText = """
+    /// tested and translated without touching an `NSTextView`. The command
+    /// sections are generated from `dotCommands` so a new command can't be
+    /// added without appearing here too.
+    static var helpText: String {
+        let referenceKeys = """
         Reference view keys:
             j/k  lines  ·  h/l  horizontal
             space/f  page ↓  ·  b  page ↑
@@ -496,52 +768,34 @@ nonisolated enum IntentExecution {
             type a number first to repeat ·
             q/Esc  close
 
-        Commands — type one and press return:
-
-        Timers & Reminders
-          .timer 5                5-minute countdown (bare number = minutes; also 90s, 1h 20m, 5 mins)
-          .timer 1h 20m stand up  labelled countdown; max 30 days
-          .timer cancel [all]     cancel all running timers
-          .stopwatch [label]      stopwatch counting up (chip in the corner)
-          .stopwatch cancel       cancel running stopwatches
-          .pomodoro 25/5/4        work/break in minutes, 4 cycles (max 12)
-          .remind in 10 mins …    natural-language reminder ("call mom", "tomorrow at 3pm …")
-          .remind tomorrow 3pm …  absolute times work too
-          .reminder cancel [all]  cancel all pending reminders
-
-        Note Management
-          .new                    create a new, empty note (swipe left/right to switch)
-          .clear                  clear the current note
-          .switch                 switch to another note (menu)
-          .delete                 delete the current note
-          .export notes           send the note to Apple Notes
-          .export obsidian        save the note as a markdown file in your vault
-          .paste                  stream clipboard copies into the note until dismissed
-
-        Math & Aggregates
-          .sum  .total            sum the note's numbers (`.sum 10 20 30` = 60)
-          .avg  .average          average the note's numbers (`.avg 10 20 30`)
-          .count                  count the note's numbers (`.count 10 20 30`)
-
-        Utilities
-          .time                   stamp the current time (`.time = 2:31 PM`)
-
-        Search & System
-          .find                   open the find bar (also ⌘F)
-          .replace find → replace global replace in the note
-          .settings               open the settings window
-          .debug                  show diagnostics and the event log
-          .stats                  show your usage statistics
-          .exit  .quit            quit Antimatter
-          .help                   open this reference full-screen (press q to close)
-
-        Automatic — press return on a line:
+        \(IntentParser.languageName) commands — type one and press return:
+        """
+        let automatic = """
+        \(IntentParser.languageName) automatic — press return on a line:
           384 * 27            →  384 * 27 = 10368
+          2 > 1               →  2 > 1 = true
+          "a" + "b"           →  "a" + "b" = "ab"
           price = 4 * 12      →  price = 4 * 12 = 48
           2026-08-22          →  weekday appended
           days until 2026-09-01  →  countdown appended
           12 kg -> lb         →  12 kg -> lb = 26.46
         """
+        let categories: [DotCommandCategory] = [
+            .timers, .noteManagement, .math, .utilities, .searchSystem
+        ]
+        var sections: [String] = []
+        for category in categories {
+            let commands = dotCommands.filter { $0.category == category }
+            let width = (commands.map { $0.name.count }.max() ?? 0) + 3
+            var lines = [category.rawValue]
+            for command in commands {
+                let padded = command.name.padding(toLength: width, withPad: " ", startingAt: 0)
+                lines.append("  \(padded)\(command.description)")
+            }
+            sections.append(lines.joined(separator: "\n"))
+        }
+        return referenceKeys + "\n\n" + sections.joined(separator: "\n\n") + "\n\n" + automatic
+    }
 
 
     // MARK: Live preview
@@ -553,8 +807,19 @@ nonisolated enum IntentExecution {
     /// descriptions.
     static func preview(forLine line: String, in buffer: String? = nil) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !trimmed.hasSuffix("=") else { return nil }
+        guard !trimmed.isEmpty, !trimmed.hasSuffix("="), !IntentParser.isEscaped(trimmed) else { return nil }
 
+        if trimmed.lowercased() == IntentParser.commandPrefix + "timer list" {
+            return "⏎ lists running timers"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "stopwatch list" {
+            return "⏎ lists stopwatches"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "reminder list"
+            || trimmed.lowercased() == IntentParser.commandPrefix + "remind list"
+        {
+            return "⏎ lists upcoming reminders"
+        }
         if IntentParser.isTimerCancel(trimmed) {
             return "⏎ cancels all running timers"
         }
@@ -615,10 +880,22 @@ nonisolated enum IntentExecution {
         if trimmed.lowercased() == IntentParser.commandPrefix + "stats" {
             return "⏎ shows your usage statistics"
         }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "vars" {
+            return "⏎ lists this note's variable definitions"
+        }
         if trimmed.lowercased() == IntentParser.commandPrefix + "exit"
             || trimmed.lowercased() == IntentParser.commandPrefix + "quit"
         {
             return "⏎ quits Antimatter"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "hide" {
+            return "⏎ hides the pane"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "undo" {
+            return "⏎ undoes the last edit"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "redo" {
+            return "⏎ redoes the last undone edit"
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "find" {
             return "⏎ opens the find bar"
@@ -643,8 +920,22 @@ nonisolated enum IntentExecution {
         if let replacement = assignmentCommit(line: line, buffer: buffer ?? line) {
             return "⏎ " + replacement.trimmingCharacters(in: .whitespaces)
         }
-        if let commit = calculationCommit(in: line, at: NSRange(location: 0, length: (line as NSString).length)) {
+        if let commit = calculationCommit(in: line, at: NSRange(location: 0, length: (line as NSString).length), buffer: buffer ?? line) {
             return "⏎ " + commit.replacement.trimmingCharacters(in: .whitespaces)
+        }
+        if let definition = VariableTable.splitDefinition(trimmed) {
+            if let diagnostic = definitionDiagnostic(for: definition, in: buffer ?? trimmed) {
+                return "⏎ " + diagnostic
+            }
+            return nil
+        }
+        if ExpressionEvaluator.looksArithmetic(trimmed),
+           let message = ExpressionEvaluator.error(
+               in: trimmed,
+               variables: VariableTable.scan(buffer ?? ""),
+               buffer: buffer ?? trimmed)
+        {
+            return "⏎ " + message
         }
         return nil
     }
@@ -658,8 +949,13 @@ nonisolated enum IntentExecution {
     static func answer(fromLine line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         let parts = trimmed.components(separatedBy: " = ")
-        if let last = parts.last, parts.count >= 2, Double(last.trimmingCharacters(in: .whitespaces)) != nil {
-            return last.trimmingCharacters(in: .whitespaces)
+        if let last = parts.last, parts.count >= 2 {
+            let token = last.trimmingCharacters(in: .whitespaces)
+            if Double(token) != nil { return token }
+            if token == "true" || token == "false" { return token }
+            if token.hasPrefix("\""), token.hasSuffix("\""), token.count >= 2 {
+                return String(token.dropFirst().dropLast())
+            }
         }
         if parts.count == 2,
            IntentParser.looksLikeDate(parts[0]),
@@ -699,16 +995,24 @@ nonisolated enum IntentExecution {
         DotCommand(name: ".clear", description: "clear the current note", category: .noteManagement),
         DotCommand(name: ".switch", description: "switch to another note", category: .noteManagement),
         DotCommand(name: ".delete", description: "delete the current note", category: .noteManagement),
+        DotCommand(name: ".undo", description: "undo the last edit", category: .noteManagement),
+        DotCommand(name: ".redo", description: "redo the last undone edit", category: .noteManagement),
         DotCommand(name: ".timer", description: "start a countdown — .timer <duration> [label]",
                    snippet: ".timer <duration> ", category: .timers),
         DotCommand(name: ".timer cancel all", description: "cancel every running timer",
                    snippet: ".timer cancel all ", category: .timers),
+        DotCommand(name: ".timer list", description: "show running timers and leftovers",
+                   snippet: ".timer list ", category: .timers),
         DotCommand(name: ".stopwatch", description: "start a stopwatch — .stopwatch [label]",
                    snippet: ".stopwatch ", category: .timers),
+        DotCommand(name: ".stopwatch list", description: "show stopwatch readings",
+                   snippet: ".stopwatch list ", category: .timers),
         DotCommand(name: ".remind", description: "set a natural-language reminder",
                    snippet: ".remind <what> <when> ", category: .timers),
         DotCommand(name: ".reminder", description: "cancel reminders — .reminder cancel all",
                    snippet: ".reminder cancel all ", category: .timers),
+        DotCommand(name: ".reminder list", description: "show pending reminders",
+                   snippet: ".reminder list ", category: .timers),
         DotCommand(name: ".reminder cancel all", description: "cancel every pending reminder",
                    snippet: ".reminder cancel all ", category: .timers),
         DotCommand(name: ".pomodoro", description: "start a pomodoro cycle",
@@ -716,6 +1020,8 @@ nonisolated enum IntentExecution {
         DotCommand(name: ".paste", description: "stream clipboard into the note", category: .noteManagement),
         DotCommand(name: ".export notes", description: "send the note to Apple Notes", category: .noteManagement),
         DotCommand(name: ".export obsidian", description: "save the note as markdown in a vault", category: .noteManagement),
+        DotCommand(name: ".export json", description: "save note + variable values as JSON", category: .noteManagement),
+        DotCommand(name: ".export csv", description: "save variable values as a CSV table", category: .noteManagement),
         DotCommand(name: ".sum", description: "sum numbers — .sum [10 20 30]",
                    snippet: ".sum ", category: .math),
         DotCommand(name: ".avg", description: "average numbers — .avg [10 20 30]",
@@ -729,6 +1035,8 @@ nonisolated enum IntentExecution {
         DotCommand(name: ".settings", description: "open the settings window", category: .searchSystem),
         DotCommand(name: ".debug", description: "show diagnostics and the event log", category: .searchSystem),
         DotCommand(name: ".stats", description: "show your usage statistics", category: .searchSystem),
+        DotCommand(name: ".hide", description: "minimize the pane out of the way", category: .searchSystem),
+        DotCommand(name: ".vars", description: "list this note's :name = expression definitions", category: .utilities),
         DotCommand(name: ".exit", description: "quit Antimatter", category: .searchSystem),
         DotCommand(name: ".quit", description: "quit Antimatter (same as .exit)", category: .searchSystem),
         DotCommand(name: ".help", description: "show the command reference", category: .searchSystem),
@@ -744,8 +1052,15 @@ nonisolated enum IntentExecution {
     /// at zero so ordering stays deterministic.
     static func completionCandidates(
         for prefix: String,
+        buffer: String? = nil,
         usageCount: (String) -> Int = { _ in 0 }
     ) -> [DotCommand] {
+        // `:name` completions come from the note's variables, so typing `:pi`
+        // (or `$(:p`, which hands over a `:`-prefixed token) suggests the
+        // live `:price` etc. without leaving the keyboard.
+        if prefix.hasPrefix(":") {
+            return variableCompletionCandidates(partial: String(prefix.dropFirst()), in: buffer ?? "")
+        }
         guard prefix.hasPrefix(IntentParser.commandPrefix) else { return [] }
         let partial = String(prefix.dropFirst(IntentParser.commandPrefix.count)).lowercased()
         let ranked = { categorySort($0, $1, usageCount: usageCount) }
@@ -763,6 +1078,26 @@ nonisolated enum IntentExecution {
         return dotCommands.filter {
             fuzzyMatch(partial, against: $0.name.lowercased())
         }.sorted(by: ranked)
+    }
+
+    /// `:name` completion candidates from the note's variable table, rendered
+    /// as `.math` dot-commands so the panel groups them with the aggregates.
+    /// Inert notes (no definitions) offer nothing.
+    private static func variableCompletionCandidates(partial: String, in buffer: String) -> [DotCommand] {
+        let table = VariableTable.scan(buffer)
+        guard !table.isEmpty else { return [] }
+        let partial = partial.lowercased()
+        return table.keys.sorted().compactMap { name in
+            guard partial.isEmpty || name.lowercased().hasPrefix(partial),
+                  let value = table[name]
+            else { return nil }
+            return DotCommand(
+                name: ":" + name,
+                description: "= " + IntentParser.format(value),
+                snippet: ":" + name + " ",
+                category: .math
+            )
+        }
     }
 
     private static func isPrefixMatch(_ command: DotCommand, partial: String) -> Bool {

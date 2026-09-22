@@ -237,14 +237,24 @@ struct ReturnKeyActionTests {
         if case .export(.obsidian) = IntentExecution.action(forLine: ".export obsidian", in: "") {} else {
             Issue.record(".export obsidian should export to Obsidian")
         }
+        if case .export(.json) = IntentExecution.action(forLine: ".export json", in: "") {} else {
+            Issue.record(".export json should export to JSON")
+        }
+        if case .export(.csv) = IntentExecution.action(forLine: ".export csv", in: "") {} else {
+            Issue.record(".export csv should export to CSV")
+        }
         if case .export = IntentExecution.action(forLine: ".export null", in: "") {
             Issue.record(".export null should not resolve to a destination")
         }
-        #expect(IntentExecution.action(forLine: ".export", in: "") == .hint("Export where? — `.export notes` or `.export obsidian`"))
+        #expect(IntentExecution.action(forLine: ".export", in: "") == .hint("Export where? — `.export notes`, `.export obsidian`, `.export json`, or `.export csv`"))
         #expect(IntentExecution.preview(forLine: ".export notes") == "⏎ exports the note to Apple Notes")
         #expect(IntentExecution.preview(forLine: ".export obsidian") == "⏎ exports the note to Obsidian")
+        #expect(IntentExecution.preview(forLine: ".export json") == "⏎ exports the note to JSON")
+        #expect(IntentExecution.preview(forLine: ".export csv") == "⏎ exports the note to CSV")
         #expect(IntentExecution.helpText.contains(".export notes"))
         #expect(IntentExecution.helpText.contains(".export obsidian"))
+        #expect(IntentExecution.helpText.contains(".export json"))
+        #expect(IntentExecution.helpText.contains(".export csv"))
         #expect(IntentExecution.dotCommands.contains { $0.name == ".export notes" })
         #expect(IntentExecution.dotCommands.contains { $0.name == ".export obsidian" })
     }

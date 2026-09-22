@@ -14,7 +14,12 @@ final class NoteStore: ObservableObject {
     static let shared = NoteStore()
 
     @Published var notes: [Note] = []
-    @Published var activeNoteID: UUID = UUID()
+    @Published var activeNoteID: UUID = UUID() {
+        didSet {
+            guard isInitialized else { return }
+            pruneEmptyNotes()
+        }
+    }
     @Published var trash: [Note] = []
     @Published var saveError: Error?
     @Published var saveErrorToken: Int = 0
@@ -24,6 +29,7 @@ final class NoteStore: ObservableObject {
     private var saveTask: Task<Void, Never>?
     private var voidTask: Task<Void, Never>?
     private let diskWriter = DiskWriter()
+    private var isInitialized = false
 
     var activeNote: Note {
         get { notes.first { $0.id == activeNoteID } ?? Note() }
@@ -73,6 +79,7 @@ final class NoteStore: ObservableObject {
                 activeNoteID = notes[0].id
             }
         }
+        isInitialized = true
     }
 
     nonisolated static func defaultFileURL() -> URL {
@@ -85,6 +92,24 @@ final class NoteStore: ObservableObject {
         activeNoteID = note.id
         scheduleSave()
         return note
+    }
+
+    /// STRM-106: `.new`-created empties and cleared documents would otherwise
+    /// pile up in the switcher as "Untitled" entries. Sweep them whenever the
+    /// active note changes, the pane window closes, or the app quits. The
+    /// current note survives while it is active (keepActive) so a mid-type
+    /// swipe never loses the user's scratch area; slot notes are always kept.
+    func pruneEmptyNotes(keepActive: Bool = true) {
+        let activeID = activeNoteID
+        let prune = { (note: Note) -> Bool in
+            note.text.isEmpty && !note.isSlot && (note.id != activeID || !keepActive)
+        }
+        guard notes.contains(where: prune) else { return }
+        notes.removeAll(where: prune)
+        if !notes.contains(where: { $0.id == activeNoteID }) {
+            activeNoteID = notes.first?.id ?? create().id
+        }
+        scheduleSave()
     }
 
     func delete(_ note: Note) {

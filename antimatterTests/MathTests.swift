@@ -9,23 +9,47 @@ struct VariableTests {
         ExpressionEvaluator.evaluate(input, variables: vars)
     }
 
-    @Test func definitionsScanAndLaterOnesWin() {
-        let table = VariableTable.scan(":price = 4 * 12\n:total = :price * 2\n:price = 10")
-        #expect(table["price"] == 10)
-        #expect(table["total"] == 96) // evaluated before the redefinition landed
+    private func num(_ name: String, _ table: [String: SparkValue]) -> Double? {
+        table[name]?.number
     }
 
-    @Test func forwardAndSelfReferencesStayText() {
+    @Test func definitionsScanAndLaterOnesWin() {
+        let table = VariableTable.scan(":price = 4 * 12\n:total = :price * 2\n:price = 10")
+        #expect(num("price", table) == 10)
+        #expect(num("total", table) == 96) // evaluated before the redefinition landed
+    }
+
+    @Test func forwardReferencesResolveByAGraphPass() {
         let table = VariableTable.scan(":a = :b + 1\n:b = 2")
-        #expect(table["a"] == nil)
-        #expect(table["b"] == 2)
-        #expect(VariableTable.scan(":x = :x + 1")["x"] == nil)
+        #expect(num("a", table) == 3) // forward reference resolves
+        #expect(num("b", table) == 2)
+        // A genuinely unresolvable reference stays text, and says so.
+        #expect(num("x", VariableTable.scan(":x = :x + 1")) == nil)
+        // One pass isn't always enough: :c depends on :z, defined later than
+        // :m. The multi-pass resolver keeps going until the graph settles.
+        #expect(num("a", VariableTable.scan(":a = :b + 1\n:b = :c + 1\n:c = 1")) == 3)
+    }
+
+    @Test func unresolvedDefinitionsReportTheirReason() {
+        #expect(VariableTable.unresolvedDefinitions(in: ":a = :b + 1\n:b = 2").isEmpty)
+        #expect(VariableTable.unresolvedDefinitions(in: ":x = :x + 1").count == 1)
+        #expect(VariableTable.circularDependencies(in: ":a = :b\n:b = :c\n:c = :a").sorted() == ["a", "b", "c"])
+        // A pure self-reference is a self-reference, not a cycle.
+        #expect(VariableTable.circularDependencies(in: ":x = :x + 1").isEmpty)
+    }
+
+    @Test func emptyDefinitionUnsets() {
+        let table = VariableTable.scan(":price = 4 * 5\n:price = \n:total = :price + 1")
+        #expect(num("price", table) == nil)
+        // :total could never resolve (price is gone), so it stays text too.
+        #expect(num("total", table) == nil)
+        #expect(IntentExecution.definitionDiagnostic(for: ("price", "4 * 5"), in: "") == nil)
     }
 
     @Test func nonDefinitionsAreIgnored() {
         let table = VariableTable.scan("hello world\n2026-08-22 = 3\ntimer 5\n:_x9 = 4")
         #expect(table.count == 1)
-        #expect(table["_x9"] == 4)
+        #expect(num("_x9", table) == 4)
     }
 
     @Test func expressionsResolveVariables() {
@@ -38,9 +62,9 @@ struct VariableTests {
 
     @Test func explicitVariablesAndCommandSubstitutionAreNumeric() {
         let text = ":total = $(.sum 10 20 50 40)"
-        #expect(VariableTable.scan(text)["total"] == 120)
-        #expect(VariableTable.scan("total = 100")["total"] == nil)
-        #expect(ExpressionEvaluator.evaluate(":total", variables: ["total": 120]) == 120)
+        #expect(num("total", VariableTable.scan(text)) == 120)
+        #expect(num("total", VariableTable.scan("total = 100")) == nil)
+        #expect(ExpressionEvaluator.evaluate("total", variables: ["total": 120]) == 120)
     }
 
     @Test func aggregateAutoReactCommandsWorkInline() {
@@ -63,6 +87,120 @@ struct VariableTests {
     @Test func mixedFunctionVariableExpression() {
         #expect(eval("round(price / 7)", ["price": 100.0]) == 14)
         #expect(eval("(min(4, 6) + max(4, 6)) * 2") == 20)
+    }
+}
+
+/// Spark: scientific notation, implicit multiplication, comparisons, boolean
+/// logic, strings, escapes, and parse diagnostics.
+struct SparkSyntaxTests {
+
+    private func value(_ input: String, _ vars: [String: SparkValue] = [:]) -> SparkValue? {
+        ExpressionEvaluator.evaluateValue(input, variables: vars)
+    }
+
+    private func num(_ input: String, _ vars: [String: SparkValue] = [:]) -> Double? {
+        value(input, vars)?.number
+    }
+
+    @Test func scientificNotation() {
+        #expect(num("1e3") == 1000)
+        #expect(num("1.5e2") == 150)
+        #expect(num("2E-3") == 0.002)
+        #expect(num("1e0") == 1)
+        #expect(num("1e3 + 1") == 1001)
+        #expect(num("1e") == nil) // no exponent digits — stays text
+        #expect(num("1e+2") == 100)
+        #expect(num("1e-2") == 0.01)
+    }
+
+    @Test func implicitMultiplicationByJuxtaposition() {
+        #expect(num("2(3 + 4)") == 14)
+        #expect(num("(2)(3)") == 6)
+        #expect(num("2(3)(4)") == 24)
+        #expect(num("sqrt(9)2") == nil) // juxtaposition is lparen-only:
+                                        // a literal right after `)` stays text
+        #expect(num("(2)") == 2) // bare paren group is untouched
+    }
+
+    @Test func comparisonsAndBooleanLogic() {
+        #expect(value("2 > 1") == .boolean(true))
+        #expect(value("1 < 2") == .boolean(true))
+        #expect(value("3 <= 3") == .boolean(true))
+        #expect(value("3 >= 4") == .boolean(false))
+        #expect(value("2 == 2") == .boolean(true))
+        #expect(value("2 != 2") == .boolean(false))
+        #expect(value("true && false") == .boolean(false))
+        #expect(value("true || false") == .boolean(true))
+        #expect(value("!true") == .boolean(false))
+        #expect(value("!false") == .boolean(true))
+        // Precedence: ! binds tightest, then <... == ... && ... || ...
+        #expect(value("!true || false") == .boolean(false))
+        #expect(value("1 < 2 && 2 < 3") == .boolean(true))
+        #expect(value("1 + 1 == 2") == .boolean(true))
+        #expect(num("2 > 1") == nil) // numeric evaluate() rejects booleans
+    }
+
+    @Test func stringsConcatAndFunctions() {
+        #expect(value("\"a\" + \"b\"") == .string("ab"))
+        #expect(value("upper(\"abc\")") == .string("ABC"))
+        #expect(value("lower(\"ABC\")") == .string("abc"))
+        #expect(num("len(\"hello\")") == 5)
+        #expect(value("len(\"a + b\")") == .number(5))
+        #expect(value("upper(123)") == nil) // wrong argument type stays text
+    }
+
+    @Test func pendingAndParsedCalculationsCarrySparkValues() {
+        #expect(IntentParser.pendingCalculation("2 > 1 =") ==
+            IntentParser.Calculation(expression: "2 > 1", result: .boolean(true)))
+        #expect(IntentParser.pendingCalculation("\"a\" + \"b\" =") ==
+            IntentParser.Calculation(expression: "\"a\" + \"b\"", result: .string("ab")))
+        #expect(IntentParser.parseCalculation("2 + 2")?.result == .number(4))
+        #expect(IntentParser.parseCalculation("2 > 5")?.result == .boolean(false))
+        #expect(IntentParser.parseCalculation("2 > 5").map { IntentParser.format($0.result) } == "false")
+        #expect(IntentParser.format(SparkValue.boolean(true)) == "true")
+        #expect(IntentParser.format(SparkValue.string("ab")) == "\"ab\"")
+    }
+
+    @Test func escapedLinesDoNothing() {
+        #expect(IntentParser.isEscaped("\\ .timer"))
+        #expect(!IntentParser.isEscaped(".timer"))
+        #expect(IntentExecution.action(forLine: "\\ .timer") == .nothing)
+        #expect(IntentExecution.preview(forLine: "\\ .timer") == nil)
+        #expect(IntentExecution.action(forLine: "\\:x = 2 + 2") == .nothing)
+    }
+
+    @Test func mathLinesKeepQuiet() {
+        // The syntax gate keeps prose from ever surfacing a hint: without a
+        // number beside an operator, looksArithmetic says no and action() is
+        // silent on return.
+        #expect(!ExpressionEvaluator.looksArithmetic("hello world"))
+        #expect(!ExpressionEvaluator.looksArithmetic("Hey!"))
+        #expect(ExpressionEvaluator.looksArithmetic("2 +"))
+        #expect(IntentExecution.action(forLine: "hello world") == .nothing)
+        #expect(IntentExecution.action(forLine: "Hey!") == .nothing)
+        #expect(ExpressionEvaluator.error(in: "2026-08-22", buffer: "2026-08-22") == nil)
+    }
+
+    @Test func diagnosticsExplainBrokenArithmetic() {
+        #expect(ExpressionEvaluator.error(in: "2 +", buffer: "2 +") == "Expected a value after '+'")
+        #expect(ExpressionEvaluator.error(in: "(2 + 3", buffer: "(2 + 3") == "Expected ')'")
+        #expect(ExpressionEvaluator.error(in: "2 & 3", buffer: "2 & 3") != nil)
+        #expect(ExpressionEvaluator.error(in: "price + 1", buffer: "price + 1") != nil)
+    }
+
+    @Test func answersExtractBooleansAndStrings() {
+        #expect(IntentExecution.answer(fromLine: "2 > 1 = true") == "true")
+        #expect(IntentExecution.answer(fromLine: "\"a\" + \"b\" = \"ab\"") == "ab")
+        #expect(IntentExecution.answer(fromLine: "384 * 27 = 10368") == "10368")
+        #expect(IntentExecution.answer(fromLine: "2026-08-22 = Saturday") == "Saturday")
+        #expect(IntentExecution.answer(fromLine: "plain prose") == nil)
+    }
+
+    @Test func definitionDiagnosticsFlagProblems() {
+        #expect(IntentExecution.definitionDiagnostic(for: ("a", "b + 1"), in: "") == "':b' isn't defined yet")
+        #expect(IntentExecution.definitionDiagnostic(for: ("a", ":a"), in: ":a = :a") == ":a can't be defined from itself")
+        #expect(IntentExecution.definitionDiagnostic(for: ("a", "2 + 2"), in: ":b = 2") == nil)
+        #expect(IntentExecution.definitionDiagnostic(for: ("a", "\"hi\""), in: "") == nil) // strings store now
     }
 }
 

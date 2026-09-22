@@ -75,6 +75,23 @@ final class StopwatchCenter: ObservableObject {
         DebugLog.log("stopwatches cancelled — \(count)")
     }
 
+    /// `.stopwatch list` reference block: each stopwatch's live elapsed
+    /// reading, marked when it has been stopped.
+    var report: String {
+        if stopwatches.isEmpty {
+            return "No stopwatches running.\nType `.stopwatch` to start one."
+        }
+        var out = ["Stopwatches (\(stopwatches.count))", ""]
+        for stopwatch in stopwatches {
+            let label = stopwatch.label.isEmpty ? "Stopwatch" : stopwatch.label
+            let state = stopwatch.stoppedAt == nil ? "" : " (stopped)"
+            out.append("  \(Self.format(elapsed(stopwatch)))   \(label)\(state)")
+        }
+        out.append("")
+        out.append("`.stopwatch cancel` clears them.")
+        return out.joined(separator: "\n")
+    }
+
     /// The current elapsed reading, or the frozen final one when stopped.
     func elapsed(_ stopwatch: ActiveStopwatch) -> TimeInterval {
         if let stoppedAt = stopwatch.stoppedAt {

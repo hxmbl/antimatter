@@ -149,12 +149,12 @@ struct IntentCalculationTests {
     @Test func trailingEqualsCommits() {
         let pending = IntentParser.pendingCalculation("384 * 27 =")
         #expect(pending?.expression == "384 * 27")
-        #expect(pending?.result == 10_368)
+        #expect(pending?.result == .number(10_368))
     }
 
     @Test func explicitEqualsOverridesTheDateHeuristic() {
         // The user asked for the answer, so give it.
-        #expect(IntentParser.pendingCalculation("2026-08-22 =")?.result == 1_996)
+        #expect(IntentParser.pendingCalculation("2026-08-22 =")?.result == .number(1_996))
     }
 
     @Test func identityRewritesAreSkipped() {
@@ -165,13 +165,14 @@ struct IntentCalculationTests {
 
 
     @Test func plainArithmeticParses() {
-        #expect(IntentParser.parseCalculation("(2+3)*4")?.result == 20)
-        #expect(IntentParser.parseCalculation("384 * 27")?.result == 10_368)
-        #expect(IntentParser.parseCalculation("10 / 4")?.result == 2.5)
-        #expect(IntentParser.parseCalculation("2^3^2")?.result == 512)
-        #expect(IntentParser.parseCalculation("7 % 3")?.result == 1)
-        #expect(IntentParser.parseCalculation("5 − 3")?.result == 2)
-        #expect(IntentParser.parseCalculation("3 × 4 ÷ 2")?.result == 6)
+        #expect(IntentParser.parseCalculation("(2+3)*4")?.result == .number(20))
+        #expect(IntentParser.parseCalculation("384 * 27")?.result == .number(10_368))
+        #expect(IntentParser.parseCalculation("10 / 4")?.result == .number(2.5))
+        #expect(IntentParser.parseCalculation("2^3^2")?.result == .number(512))
+        #expect(IntentParser.parseCalculation("7 % 3")?.result == .number(1))
+        #expect(IntentParser.parseCalculation("5 − 3")?.result == .number(2))
+        #expect(IntentParser.parseCalculation("3 × 4 ÷ 2")?.result == .number(6))
+        #expect(IntentParser.parseCalculation("2(3+4)")?.result == .number(14)) // implicit multiplication
     }
 
     @Test func datesAndProseNeverCalculate() {
@@ -187,7 +188,6 @@ struct IntentCalculationTests {
         #expect(IntentParser.parseCalculation("1 / 0") == nil)       // not finite
         #expect(IntentParser.parseCalculation("") == nil)
         #expect(IntentParser.parseCalculation("(2+3") == nil)        // unbalanced
-        #expect(IntentParser.parseCalculation("2(3+4)") == nil)      // no implicit multiplication
         #expect(IntentParser.parseCalculation("1.2.3 + 1") == nil)
     }
 

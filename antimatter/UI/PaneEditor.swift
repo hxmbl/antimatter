@@ -149,6 +149,7 @@ struct PaneEditor: NSViewRepresentable {
         let highlighter = MarkdownHighlighter()
         var clipBoundsObserver: NSObjectProtocol?
         private var deferredPassTask: Task<Void, Never>?
+        private var deferredCalculationTask: Task<Void, Never>?
         private var pendingRender: DispatchWorkItem?
         private var pendingStatusUpdate: DispatchWorkItem?
         private var appliedFontSize: CGFloat = PaneStyle.fontSize
@@ -203,6 +204,8 @@ struct PaneEditor: NSViewRepresentable {
 
         /// Defer Markdown rendering until AppKit finishes the current edit
         /// transaction; rendering synchronously can corrupt newly typed Unicode.
+        /// A short coalescing window also folds a burst of keystrokes into a
+        /// single full-document attribute pass instead of one per character.
         private func scheduleRender(_ textView: NSTextView) {
             pendingRender?.cancel()
             let render = DispatchWorkItem { [weak self, weak textView] in
@@ -210,7 +213,7 @@ struct PaneEditor: NSViewRepresentable {
                 self.highlighter.refresh(textView)
             }
             pendingRender = render
-            DispatchQueue.main.async(execute: render)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02, execute: render)
         }
 
         /// Footer state is SwiftUI state; defer until AppKit finishes delivering
@@ -230,6 +233,12 @@ struct PaneEditor: NSViewRepresentable {
             guard let textView = notification.object as? NSTextView else { return }
             guard !referenceViewManager.isInHelpView else { return }
             scheduleStatusUpdate(textView)
+            // A caret move (or a note switch delivered through the selection
+            // notification) can repoint the token the panel is completing;
+            // re-derive it while the panel stays open.
+            if completionPanel.isShown {
+                syncCompletion(textView)
+            }
         }
 
         /// Automatic punctuation substitutions are deliberately disabled so
@@ -242,13 +251,25 @@ struct PaneEditor: NSViewRepresentable {
                 var lineStart = 0, lineEnd = 0, contentsEnd = 0
                 ns.getLineStart(&lineStart, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: affectedCharRange.location, length: 0))
                 let line = ns.substring(with: NSRange(location: lineStart, length: contentsEnd - lineStart))
-                let patterns = ["- [ ] ", "- [x] ", "- [X] ", "* [ ] ", "* [x] ", "* [X] ",
-                                "+ [ ] ", "+ [x] ", "+ [X] "]
-                for pattern in patterns {
-                    if line.hasPrefix(pattern) {
-                        textView.insertText("\n\(pattern)", replacementRange: affectedCharRange)
-                        return false
+                // Only drive list continuation when the caret sits at the end
+                // of the item's content; a mid-line return is a plain split.
+                let caretInLine = affectedCharRange.location - lineStart
+                guard caretInLine >= 0, caretInLine >= (line as NSString).length else { return true }
+                switch IntentExecution.listContinuation(forLine: line) {
+                case .continue(let marker):
+                    textView.insertText("\n\(marker)", replacementRange: affectedCharRange)
+                    return false
+                case .endList:
+                    // An empty item (`- `, `1. `) opening a list: return
+                    // removes the marker so the next line is plain text.
+                    let itemRange = NSRange(location: lineStart, length: (line as NSString).length)
+                    if textView.shouldChangeText(in: itemRange, replacementString: "") {
+                        textView.textStorage?.replaceCharacters(in: itemRange, with: "")
+                        textView.didChangeText()
                     }
+                    return false
+                case nil:
+                    return true
                 }
             }
             return true
@@ -291,10 +312,14 @@ struct PaneEditor: NSViewRepresentable {
 
 
         /// Typing `=` after a full expression asks for the answer inline.
-        /// Deferred so text storage is never mutated re-entrantly.
+        /// Deferred and debounced so the rewrite never interrupts an ongoing
+        /// statement: it only lands after typing quiets down on a complete
+        /// expression, and appending more text cancels it.
         private func schedulePendingCalculation(_ textView: NSTextView) {
-            DispatchQueue.main.async { [weak self, weak textView] in
-                guard let self, let textView,
+            deferredCalculationTask?.cancel()
+            deferredCalculationTask = Task { [weak self, weak textView] in
+                try? await Task.sleep(for: .milliseconds(400))
+                guard !Task.isCancelled, let self, let textView,
                       !autoRewritesSuppressed,
                       !IntentExecution.isDeferredCommitStale(
                         viewText: textView.string,
@@ -419,6 +444,15 @@ struct PaneEditor: NSViewRepresentable {
                 } else {
                     NoticeCenter.shared.show("Reminder needs a future time.")
                 }
+            case .listTimers:
+                referenceViewManager.enter(textView, content: TimerCenter.shared.report)
+                return true
+            case .listReminders:
+                referenceViewManager.enter(textView, content: ReminderCenter.shared.report)
+                return true
+            case .listStopwatches:
+                referenceViewManager.enter(textView, content: StopwatchCenter.shared.report)
+                return true
             case .cancelAllTimers:
                 let count = TimerCenter.shared.timers.count
                 TimerCenter.shared.cancelAll()
@@ -430,6 +464,12 @@ struct PaneEditor: NSViewRepresentable {
             case .startPasteStream:
                 PasteStream.shared.startStreaming()
             case .newNote:
+                // Pull the `.new` command line out of the old note before the
+                // active-note switch so the empties it leaves behind are clean.
+                if let commandLineRange = caretLineRange(in: textView) {
+                    textView.breakUndoCoalescing()
+                    textView.insertText("", replacementRange: commandLineRange)
+                }
                 noteStore.create()
                 return true
             case .clearNote:
@@ -460,8 +500,20 @@ struct PaneEditor: NSViewRepresentable {
             case .showStats:
                 referenceViewManager.enter(textView, content: StatsCenter.shared.report)
                 return true
+            case .showVariables:
+                referenceViewManager.enter(textView, content: IntentExecution.variablesReport(in: textView.string))
+                return true
             case .quit:
                 NSApplication.shared.terminate(nil)
+                return true
+            case .hide:
+                textView.window?.miniaturize(nil)
+                return true
+            case .undo:
+                textView.undoManager?.undo()
+                return true
+            case .redo:
+                textView.undoManager?.redo()
                 return true
             case .showFindPanel:
                 let item = NSMenuItem()
@@ -503,22 +555,33 @@ struct PaneEditor: NSViewRepresentable {
         }
 
         private func showNoteSwitcher(_ textView: NSTextView) {
-            guard !referenceViewManager.isInHelpView else { return }
+            guard !referenceViewManager.isInHelpView, let window = textView.window else { return }
             let menu = NSMenu(title: "Note Switcher")
-            for note in noteStore.notes {
-                let item = NSMenuItem(title: note.title, action: #selector(selectNoteItem(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = note.id
-                if note.id == noteStore.activeNoteID { item.state = .on }
-                menu.addItem(item)
+            let notes = noteStore.notes
+            let header = NSMenuItem(title: "Notes (\(notes.count))", action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            header.attributedTitle = NSAttributedString(string: header.title, attributes: [
+                .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+                .foregroundColor: PaneStyle.secondaryTextNSColor
+            ])
+            menu.addItem(header)
+            menu.addItem(.separator())
+            if notes.isEmpty {
+                let empty = NSMenuItem(title: "No notes yet", action: nil, keyEquivalent: "")
+                empty.isEnabled = false
+                menu.addItem(empty)
+            } else {
+                for note in notes {
+                    let item = NSMenuItem(title: note.title, action: #selector(selectNoteItem(_:)), keyEquivalent: "")
+                    item.target = self
+                    item.representedObject = note.id
+                    if note.id == noteStore.activeNoteID { item.state = .on }
+                    menu.addItem(item)
+                }
             }
-            if menu.items.isEmpty {
-                menu.addItem(NSMenuItem(title: "No notes", action: nil, keyEquivalent: ""))
-            }
-            if let window = textView.window {
-                let point = window.mouseLocationOutsideOfEventStream
-                menu.popUp(positioning: nil, at: point, in: window.contentView)
-            }
+            guard let contentView = window.contentView else { return }
+            let anchor = NSPoint(x: contentView.bounds.midX, y: contentView.bounds.maxY - min(contentView.bounds.height * 0.35, 220))
+            menu.popUp(positioning: header, at: anchor, in: contentView)
         }
 
         @objc private func selectNoteItem(_ sender: NSMenuItem) {
@@ -587,6 +650,7 @@ struct PaneEditor: NSViewRepresentable {
                 start -= 1
             }
             let isDotCommand = isAutoReactCommandStart(in: ns, at: start, location: location)
+                && !isEscapedDotCommand(in: ns, at: start)
             completionTask = Task { [weak self, weak textView] in
                 if !isDotCommand { try? await Task.sleep(for: .milliseconds(240)) }
                 guard !Task.isCancelled, let self, let textView else { return }
@@ -613,7 +677,7 @@ struct PaneEditor: NSViewRepresentable {
             else { return false }
             let token = (textView.string as NSString).substring(with: tokenRange)
             let candidates = IntentExecution.completionCandidates(
-                for: token, usageCount: StatsCenter.shared.usageCount(for:))
+                for: token, buffer: textView.string, usageCount: StatsCenter.shared.usageCount(for:))
             guard !candidates.isEmpty, suppressedTokenStart != tokenRange.location else { return false }
             bindCompletionAccept()
             completionPanel.show(
@@ -639,7 +703,7 @@ struct PaneEditor: NSViewRepresentable {
             if suppressedTokenStart == tokenRange.location { return }
             let token = (textView.string as NSString).substring(with: tokenRange)
             let candidates = IntentExecution.completionCandidates(
-                for: token, usageCount: StatsCenter.shared.usageCount(for:))
+                for: token, buffer: textView.string, usageCount: StatsCenter.shared.usageCount(for:))
             guard !candidates.isEmpty else {
                 completionPanel.dismiss()
                 return
@@ -668,13 +732,22 @@ struct PaneEditor: NSViewRepresentable {
                 }
                 start -= 1
             }
-            guard isAutoReactCommandStart(in: ns, at: start, location: location) else { return nil }
-            let commandStart = ns.character(at: start) == unichar("$") ? start + 2 : start
+            guard !isEscapedDotCommand(in: ns, at: start),
+                  isAutoReactCommandStart(in: ns, at: start, location: location) else { return nil }
+            // Commands after `$(` start two characters in (the `$` and `(`);
+            // `:name` references and dot-commands start at the token itself.
+            let commandStart: Int
+            if ns.character(at: start) == unichar("$") {
+                commandStart = start + 2
+            } else {
+                commandStart = start
+            }
             return NSRange(location: commandStart, length: location - commandStart)
         }
 
-        /// Finds a dot-command token either at the start of a normal token or
-        /// immediately inside an interpolation such as `$(.sum 10 20)`.
+        /// Finds a dot-command (or `:name` variable reference) token either
+        /// at the start of a normal token or immediately inside an
+        /// interpolation such as `$(.sum 10 20)` or `$(:price)`.
         private func isAutoReactCommandStart(
             in ns: NSString,
             at start: Int,
@@ -683,10 +756,25 @@ struct PaneEditor: NSViewRepresentable {
             if start < location, ns.character(at: start) == unichar(".") {
                 return true
             }
+            if start < location, ns.character(at: start) == unichar(":") {
+                return true
+            }
             return start + 2 < location
                 && ns.character(at: start) == unichar("$")
                 && ns.character(at: start + 1) == unichar("(")
-                && ns.character(at: start + 2) == unichar(".")
+                && (ns.character(at: start + 2) == unichar(".") || ns.character(at: start + 2) == unichar(":"))
+        }
+
+        /// True when the dot-command at `start` sits on an escaped line
+        /// (`\ .timer`), so typing it never auto-opens the completion panel.
+        private func isEscapedDotCommand(in ns: NSString, at start: Int) -> Bool {
+            var lineStart = start
+            while lineStart > 0, ns.character(at: lineStart - 1) != unichar("\n") {
+                lineStart -= 1
+            }
+            let prefix = ns.substring(with: NSRange(location: lineStart, length: start - lineStart))
+            let trimmed = prefix.trimmingCharacters(in: .whitespaces)
+            return !trimmed.isEmpty && trimmed.hasPrefix("\\")
         }
 
         private func bindCompletionAccept() {
@@ -750,7 +838,7 @@ struct PaneEditor: NSViewRepresentable {
         }
 
         private func commitCalculation(_ textView: NSTextView, in contentRange: NSRange?) {
-            guard let commit = IntentExecution.calculationCommit(in: textView.string, at: contentRange) else { return }
+            guard let commit = IntentExecution.calculationCommit(in: textView.string, at: contentRange, buffer: textView.string) else { return }
             applyCommit(commit, to: textView)
         }
 

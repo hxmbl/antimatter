@@ -13,9 +13,18 @@ nonisolated enum IntentParser {
 
     static let commandPrefix = "."
 
+    /// The name of the expression/command language Antimatter runs inline.
+    static let languageName = "Spark"
+
+    /// A leading backslash on a line marks it as literal text: no command,
+    /// no rewrite. `\ .timer` types a real `.timer` instead of firing it.
+    static func isEscaped(_ line: String) -> Bool {
+        line.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("\\")
+    }
+
     struct Calculation: Equatable {
         let expression: String
-        let result: Double
+        let result: SparkValue
     }
 
 
@@ -167,10 +176,14 @@ nonisolated enum IntentParser {
     }
 
 
-     static func pendingCalculation(_ line: String) -> Calculation? {
+     static func pendingCalculation(_ line: String, buffer: String? = nil) -> Calculation? {
         guard line.hasSuffix("=") else { return nil }
         let expression = line.dropLast().trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !expression.isEmpty, let result = ExpressionEvaluator.evaluate(expression) else { return nil }
+        guard !expression.isEmpty,
+              let result = ExpressionEvaluator.evaluateValue(expression, buffer: buffer),
+              result.isFinite,
+              !result.isList
+        else { return nil }
         // Skip pointless identity rewrites like `-5 =`.
         guard format(result) != expression else { return nil }
         // Bare numbers never rewrite: `1.` is a list marker, not a calculation.
@@ -178,11 +191,13 @@ nonisolated enum IntentParser {
         return Calculation(expression: expression, result: result)
     }
 
-     static func parseCalculation(_ line: String) -> Calculation? {
+     static func parseCalculation(_ line: String, buffer: String? = nil) -> Calculation? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               !looksLikeDate(trimmed),
-              let result = ExpressionEvaluator.evaluate(trimmed),
+              let result = ExpressionEvaluator.evaluateValue(trimmed, buffer: buffer),
+              result.isFinite,
+              !result.isList,
               format(result) != trimmed
         else { return nil }
         // Bare numbers (e.g. `1.`, `42`) never auto-rewrite on return.
@@ -202,5 +217,17 @@ nonisolated enum IntentParser {
             return String(Int64(value))
         }
         return String(format: "%.12g", locale: Locale(identifier: "en_US_POSIX"), value)
+    }
+
+    /// Formats any Spark value for a committed answer. Strings are wrapped in
+    /// quotes so `"a" + "b" = "ab"` reads unambiguously as text; lists render
+    /// as `[1, 2, 3]` matching their literal form.
+    static func format(_ value: SparkValue) -> String {
+        switch value {
+        case .number(let number): format(number)
+        case .boolean(let boolean): boolean ? "true" : "false"
+        case .string(let string): "\"" + string + "\""
+        case .list(let items): "[" + items.map { format($0) }.joined(separator: ", ") + "]"
+        }
     }
 }

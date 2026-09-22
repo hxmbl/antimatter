@@ -86,10 +86,11 @@ struct ContentView: View {
              // Debounced saves leave a small window where quitting would lose
              // the last keystrokes; flushing here closes it.
              .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
-                 let identifier = (note.object as? NSWindow)?.identifier?.rawValue
-                 guard identifier?.hasPrefix(PaneStyle.windowIdentifier) == true else { return }
-                 noteStore.flush()
-             }
+                  let identifier = (note.object as? NSWindow)?.identifier?.rawValue
+                  guard identifier?.hasPrefix(PaneStyle.windowIdentifier) == true else { return }
+                  noteStore.pruneEmptyNotes(keepActive: false)
+                  noteStore.flush()
+              }
             // Settings that live on the NSWindow itself (level, fade, corner,
             // size clamp) are re-applied here; the rest take effect through
             // SwiftUI re-rendering.
