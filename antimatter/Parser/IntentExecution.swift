@@ -144,9 +144,11 @@ nonisolated enum IntentExecution {
     /// (`.sum 1..10`, `.sum :items`, `.sum [1,2,3]`, `.sum 2 * 3` → 6), falling
     /// back to an unparsed number list (`.sum 10 20 30`).
     private static func aggregateArgumentNumbers(_ args: String, in text: String) -> [Double] {
-        if let value = ExpressionEvaluator.evaluateValue(args, variables: [:]),
-           !ExpressionEvaluator.numbers(from: value).isEmpty {
-            return ExpressionEvaluator.numbers(from: value)!
+        if let value = ExpressionEvaluator.evaluateValue(args, variables: [:]) {
+            let numbers = ExpressionEvaluator.numbers(from: value)
+            if !numbers.isEmpty {
+                return numbers
+            }
         }
         return ExpressionEvaluator.listLiterals(args)
     }
