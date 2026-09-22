@@ -45,10 +45,10 @@ No setup, no account, no data leaves your Mac until you ask it to.
 
 ### Time
 
-- `.timer 5`, `.timer 90s`, `.timer 1h 20m stand up` — countdown chips float in the corner, a sound plays on completion, a notification carries the label (click it to reopen the pane). Unfinished timers survive relaunches. Max 30 days. `.timer cancel all` clears.
+- `.timer 5`, `.timer 90s`, `.timer 1h 20m stand up` — countdown chips float in the corner, a sound plays on completion, a notification carries the label (click it to reopen the pane). Unfinished timers survive relaunches. Max 30 days. `.timer cancel all` clears. `.timer list` shows running timers.
 - `.pomodoro 25/5/4` — work/break in minutes, up to 12 cycles.
-- `.stopwatch soup` — counts up in the corner; `⏹` freezes the reading, `.stopwatch cancel` clears. Keeps counting across relaunches.
-- `.remind in 10 minutes` or `.remind tomorrow at 3pm` — one-shot system notifications, persisted. `.reminder cancel all` clears.
+- `.stopwatch soup` — counts up in the corner; `⏹` freezes the reading, `.stopwatch cancel` clears. Keeps counting across relaunches. `.stopwatch list` shows stopwatch readings.
+- `.remind in 10 minutes` or `.remind tomorrow at 3pm` — one-shot system notifications, persisted. `.reminder cancel all` clears. `.reminder list` shows upcoming reminders.
 
 ### Everything else
 
@@ -65,23 +65,30 @@ No setup, no account, no data leaves your Mac until you ask it to.
 |---------|--------------|
 | `.timer 5 soup` | Countdown timer with a label (bare number = minutes; also `90s`, `1h 20m`) |
 | `.timer cancel all` | Clear running timers |
+| `.timer list` | Show running timers and remaining time |
 | `.pomodoro 25/5/4` | Work/break cycle timer (minutes, up to 12 cycles) |
 | `.stopwatch soup` | Stopwatch that counts up |
 | `.stopwatch cancel all` | Clear stopwatches |
+| `.stopwatch list` | Show stopwatch readings |
 | `.remind in 10 minutes` | One-shot reminder (natural language: "tomorrow at 3pm", "in 10 mins") |
 | `.reminder cancel all` | Clear reminders |
+| `.reminder list` | Show upcoming reminders |
 | `.paste` | Stream clipboard copies into the note |
 | `.new` | Create a new, empty note (swipe left/right to switch) |
 | `.clear` | Clear the current note |
 | `.switch` | Switch to another note (quick switcher menu) |
+| `.undo` | Undo the last edit |
+| `.redo` | Redo the last undone edit |
 | `.sum` / `.total` | Sum the note's numbers, or the numbers you type: `.sum 10 20 30` → 60 |
 | `.avg` / `.average` | Average the note's numbers (or `.avg 10 20 30`) |
 | `.count` | Count the note's numbers (or `.count 10 20 30`) |
 | `.time` | Stamp the current time: `.time` → `.time = 2:31 PM` |
+| `.vars` | List this note's `:name = expression` variable definitions |
 | `.export notes` | Send the note to Apple Notes |
 | `.export obsidian` | Save the note as markdown in your vault |
 | `.find` | Open the find bar (also `⌘F`) |
 | `.replace find → replace` | Global replace in the note |
+| `.hide` | Minimize the pane out of the way |
 | `.settings` | Open settings |
 | `.debug` | Show diagnostics + event log |
 | `.stats` | Show your usage statistics (typed, deleted, notes, version, time with Antimatter) |
