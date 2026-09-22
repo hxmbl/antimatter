@@ -131,7 +131,8 @@ enum ActionRunner {
             NSApplication.shared.terminate(nil)
             return outcome(true, "Goodbye")
 
-        case .showHelp, .showDebug, .showFindPanel, .replaceAll, .showNoteSwitcher:
+        case .showHelp, .showDebug, .showFindPanel, .replaceAll, .showNoteSwitcher, .showVariables, .hide, .undo, .redo,
+             .listTimers, .listReminders, .listStopwatches:
             return outcome(false, "This needs the pane — open it and press return on the line")
 
         case .hint(let message):

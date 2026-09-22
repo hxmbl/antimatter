@@ -49,10 +49,26 @@ final class MarkdownHighlighter {
                 }
                 storage.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: baseSize - 1, weight: .regular), range: range)
                 storage.addAttribute(.backgroundColor, value: NSColor.quaternarySystemFill, range: range)
-            case .language, .marker, .hr, .tablePipe, .taskMarker:
+            case .marker:
+                // A lone `-`/`*`/`+` at content start is a Notion-style
+                // bullet: lean on it in the accent color so list items read
+                // as bullets rather than dim syntax. Divider rows (which
+                // cover a whole `|---|` line) and numbered markers keep the
+                // quiet secondary tint.
+                if isListBulletMarker(at: element.range.location, in: text) {
+                    storage.addAttribute(.foregroundColor, value: PaneStyle.accentNSColor.withAlphaComponent(0.85), range: element.range)
+                    storage.addAttribute(.font, value: NSFont.systemFont(ofSize: baseSize, weight: .semibold), range: element.range)
+                } else {
+                    storage.addAttribute(.foregroundColor, value: PaneStyle.secondaryTextNSColor, range: element.range)
+                }
+            case .language, .hr, .tablePipe, .taskMarker:
                 storage.addAttribute(.foregroundColor, value: PaneStyle.secondaryTextNSColor, range: element.range)
             case .tableRow:
                 storage.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: baseSize, weight: .regular), range: element.range)
+                // A full-row band behind every cell (and the pipes between)
+                // makes the table read as a contiguous grid rather than
+                // disconnected per-cell islands.
+                storage.addAttribute(.backgroundColor, value: NSColor.quaternarySystemFill, range: element.range)
             case .tableCell:
                 storage.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: baseSize, weight: .regular), range: element.range)
                 storage.addAttribute(.backgroundColor, value: NSColor.quaternarySystemFill, range: element.range)
@@ -219,6 +235,27 @@ final class MarkdownHighlighter {
         return NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
     }
 
+
+    /// Is this element range a list bullet marker (`-`/`*`/`+` prefixed only
+    /// by indentation on its line)? Pipes and numbered markers return false.
+    private func isListBulletMarker(at location: Int, in text: String) -> Bool {
+        let ns = text as NSString
+        guard location < ns.length else { return false }
+        let character = ns.character(at: location)
+        guard character == unichar("-") || character == unichar("*") || character == unichar("+") else { return false }
+        var index = location
+        while index > 0 {
+            switch ns.character(at: index - 1) {
+            case unichar("\n"):
+                return true
+            case unichar(" "), unichar("\t"):
+                index -= 1
+            default:
+                return false
+            }
+        }
+        return true
+    }
 
     private func paragraphStyle(
         spacingBefore: CGFloat = 0,

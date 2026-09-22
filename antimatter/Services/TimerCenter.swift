@@ -147,6 +147,28 @@ final class TimerCenter: ObservableObject {
     }
 
 
+    /// `.timer list` reference block: every running countdown (remaining
+    /// time), plus any pomodoro session already surfaced as a chip.
+    var report: String {
+        if timers.isEmpty {
+            return "No timers running.\nType `.timer 5` — or `.timer 25 name stand up` — to start one."
+        }
+        var out = ["Running Timers (\(timers.count))", ""]
+        for timer in timers {
+            let title = timer.name ?? (timer.label.isEmpty ? "Timer" : timer.label)
+            if timer.firedAt != nil {
+                out.append("  ✓  \(title) — done")
+            } else {
+                let remaining = max(0, timer.endDate.timeIntervalSince(Date()))
+                out.append("  \(Self.format(remaining))   \(title)\(timer.fullScreen ? " · full-screen" : "")")
+            }
+        }
+        out.append("")
+        out.append("`.timer cancel all` stops everything.")
+        return out.joined(separator: "\n")
+    }
+
+
     /// `.pomodoro 25/5/4` — work/break lengths in minutes and cycles.
     func startPomodoro(work: TimeInterval, rest: TimeInterval, cycles: Int) {
         let session = PomodoroSession(

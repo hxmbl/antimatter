@@ -466,17 +466,25 @@ enum Markdown {
                 i = text.index(after: i)
             }
             guard let found = pipe else { break }
-            cells.append(trimmed(cursor..<found, in: text))
-            cursor = text.index(after: found)
+            let segment = trimmed(cursor..<found, in: text)
+            let next = text.index(after: found)
+            cursor = next
+            // A pipe closing the line is the row's right frame, not a column
+            // placeholder; an empty segment against it must not add a phantom
+            // column. Interior empty cells (`| a | | c |`) stay — dropping
+            // them shifts every later cell onto the wrong alignment.
+            if next >= line.upperBound, segment.isEmpty { break }
+            cells.append(segment)
         }
         var end = line.upperBound
         if end > cursor, text[text.index(before: end)] == "|" {
             end = text.index(before: end)
         }
         if cursor <= end {
-            cells.append(trimmed(cursor..<end, in: text))
+            let trailing = trimmed(cursor..<end, in: text)
+            if !trailing.isEmpty { cells.append(trailing) }
         }
-        return cells.filter { !$0.isEmpty }
+        return cells
     }
 
     private nonisolated static func tableAlignments(_ line: Range<String.Index>, in text: String) -> [Element.TableAlignment] {

@@ -170,6 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        NoteStore.shared.pruneEmptyNotes(keepActive: false)
         NoteStore.shared.flush()
         StatsCenter.shared.flush()
     }

@@ -256,6 +256,44 @@ nonisolated enum IntentExecution {
     }
 
 
+    // MARK: Variables report
+
+    /// The reference block `.vars` expands into: every `:name = expression`
+    /// definition and the value it evaluates to, resolved in document order
+    /// so later definitions see earlier ones.
+    static func variablesReport(in text: String) -> String {
+        let ns = text as NSString
+        var rows: [(line: String, value: String)] = []
+        var table: [String: Double] = [:]
+        for fullRange in VariableTable.lineRanges(ns) {
+            let trimmed = ns.substring(with: fullRange)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let (name, expression) = VariableTable.splitDefinition(trimmed),
+                  let value = ExpressionEvaluator.evaluate(expression, variables: table, buffer: text)
+            else { continue }
+            table[name] = value
+            rows.append((trimmed, IntentParser.format(value)))
+        }
+        var out: [String] = []
+        out.append("Variables — \(rows.count) \(rows.count == 1 ? "definition" : "definitions")")
+        if rows.isEmpty {
+            out.append("")
+            out.append("  Define one with a `:name = expression` line.")
+            out.append("  `:name` then resolves in later expressions, or does a")
+            out.append("  live value swap anywhere via $(:name).")
+            return out.joined(separator: "\n")
+        }
+        out.append("")
+        let width = rows.map(\.line.count).max() ?? 0
+        for row in rows {
+            out.append("  \(row.line.padding(toLength: width + 2, withPad: " ", startingAt: 0))= \(row.value)")
+        }
+        out.append("")
+        out.append("Use :name in any later expression, or $() to swap it into running text.")
+        return out.joined(separator: "\n")
+    }
+
+
     // MARK: Action model
 
     enum LineAction: Equatable {
@@ -298,8 +336,22 @@ nonisolated enum IntentExecution {
         case showDebug
         /// Expand `.stats` into the usage report.
         case showStats
+        /// Expand `.vars` into the note's variable definitions.
+        case showVariables
         /// Quit Antimatter cleanly (`.exit` / `.quit`).
         case quit
+        /// Minimize the pane out of the way (`.hide`).
+        case hide
+        /// Undo the last edit (`.undo`).
+        case undo
+        /// Redo the last undone edit (`.redo`).
+        case redo
+        /// Expand `.timer list` into the running-timers report.
+        case listTimers
+        /// Expand `.reminder list` into the pending-reminders report.
+        case listReminders
+        /// Expand `.stopwatch list` into the stopwatches report.
+        case listStopwatches
         /// Trigger the text view's native find panel.
         case showFindPanel
         /// Global replace in the current note.
@@ -328,6 +380,9 @@ nonisolated enum IntentExecution {
             if IntentParser.isTimerCancel(trimmed) {
                 return .cancelAllTimers
             }
+            if trimmed.lowercased() == IntentParser.commandPrefix + "timer list" {
+                return .listTimers
+            }
             if let timer = IntentParser.parseTimer(trimmed) {
                 return .startTimer(timer)
             }
@@ -337,6 +392,9 @@ nonisolated enum IntentExecution {
             if IntentParser.isStopwatchCancel(trimmed) {
                 return .cancelStopwatches
             }
+            if trimmed.lowercased() == IntentParser.commandPrefix + "stopwatch list" {
+                return .listStopwatches
+            }
             if IntentParser.stopwatchLabel(trimmed).lowercased().hasPrefix("cancel") {
                 return .hint(".stopwatch cancel takes no further arguments")
             }
@@ -345,6 +403,11 @@ nonisolated enum IntentExecution {
         if trimmed.lowercased().hasPrefix(ReminderIntent.command) {
             if ReminderIntent.isCancelAll(trimmed) {
                 return .cancelAllReminders
+            }
+            if trimmed.lowercased() == IntentParser.commandPrefix + "reminder list"
+                || trimmed.lowercased() == IntentParser.commandPrefix + "remind list"
+            {
+                return .listReminders
             }
             if let reminder = ReminderIntent.parse(trimmed) {
                 return .startReminder(reminder)
@@ -398,10 +461,22 @@ nonisolated enum IntentExecution {
         if trimmed.lowercased() == IntentParser.commandPrefix + "stats" {
             return .showStats
         }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "vars" {
+            return .showVariables
+        }
         if trimmed.lowercased() == IntentParser.commandPrefix + "exit"
             || trimmed.lowercased() == IntentParser.commandPrefix + "quit"
         {
             return .quit
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "hide" {
+            return .hide
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "undo" {
+            return .undo
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "redo" {
+            return .redo
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "find" {
             return .showFindPanel
@@ -451,6 +526,79 @@ nonisolated enum IntentExecution {
         return indent + trimmed + " = " + IntentParser.format(value)
     }
 
+    // MARK: List continuation
+
+    /// What pressing return should do inside a list item, Notion-style:
+    /// reopen the item with the same marker, or end the list when the item
+    /// is empty (just the marker). nil when the line is not a list item.
+    enum ListContinuation: Equatable {
+        /// Reopen the list with this marker (includes a trailing space).
+        case `continue`(marker: String)
+        /// The item is empty; pressing return removes the marker.
+        case endList
+    }
+
+    /// Continuation for `- foo` → `- `, `1. a` → `2. `, `- [x] done` →
+    /// `- [x] `; `- ` alone ends the list. Numbered markers increment from
+    /// the line's leading number (`.`, and only the renderer's own markers —
+    /// `-+*` and `1.` — continue). nil for non-list lines.
+    static func listContinuation(forLine line: String) -> ListContinuation? {
+        var markerIndex = line.startIndex
+        while markerIndex < line.endIndex, line[markerIndex] == " " || line[markerIndex] == "\t" {
+            markerIndex = line.index(after: markerIndex)
+        }
+        guard markerIndex < line.endIndex else { return nil }
+        let indent = String(line[..<markerIndex])
+        let rest = line[markerIndex...]
+
+        var markerText = ""
+        guard let first = rest.first else { return nil }
+        if first == "-" || first == "*" || first == "+" {
+            var cursor = rest.index(after: rest.startIndex)
+            // `- [ ]`, `- [x]`, `- [X]` (and the * / + twins) repeat their
+            // whole box — the item type survives the newline.
+            var boxed = false
+            if let next = rest.index(cursor, offsetBy: 3, limitedBy: rest.endIndex) {
+                let inner = rest[rest.index(after: cursor)]
+                if rest[cursor] == " ",
+                   rest[rest.index(after: cursor)] == "[",
+                   inner == " " || inner == "x" || inner == "X",
+                   rest[next] == "]" {
+                    markerText = String(first) + " [" + String(inner) + "]"
+                    cursor = rest.index(after: next)
+                    boxed = true
+                }
+            }
+            if !boxed {
+                markerText = String(first)
+                cursor = rest.index(after: rest.startIndex)
+            }
+            guard cursor == rest.endIndex || rest[cursor] == " " || rest[cursor] == "\t" else { return nil }
+            let content = cursor < rest.endIndex ? rest[rest.index(after: cursor)...] : rest[cursor...]
+            if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return .endList
+            }
+            return .continue(marker: indent + markerText + " ")
+        }
+        if first.isNumber {
+            var digitsEnd = rest.startIndex
+            while digitsEnd < rest.endIndex, rest[digitsEnd].isNumber {
+                digitsEnd = rest.index(after: digitsEnd)
+            }
+            guard digitsEnd < rest.endIndex, rest[digitsEnd] == "." else { return nil }
+            guard let number = Int(String(rest[rest.startIndex..<digitsEnd])) else { return nil }
+            let markerEnd = rest.index(after: digitsEnd)
+            guard markerEnd == rest.endIndex || rest[markerEnd] == " " || rest[markerEnd] == "\t" else { return nil }
+            let content = markerEnd < rest.endIndex ? rest[rest.index(after: markerEnd)...] : rest[markerEnd...]
+            if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return .endList
+            }
+            return .continue(marker: indent + "\(number + 1). ")
+        }
+        return nil
+    }
+
+
     // MARK: Command parsing helpers
 
     nonisolated /// The arrow that splits a `.replace find → replace` line into its two
@@ -483,8 +631,11 @@ nonisolated enum IntentExecution {
 
     /// The reference block `.help` expands into on return: every dot-command
     /// plus the automatic line replies. Kept in the parser layer so it can be
-    /// tested and translated without touching an `NSTextView`.
-    static let helpText = """
+    /// tested and translated without touching an `NSTextView`. The command
+    /// sections are generated from `dotCommands` so a new command can't be
+    /// added without appearing here too.
+    static var helpText: String {
+        let referenceKeys = """
         Reference view keys:
             j/k  lines  ·  h/l  horizontal
             space/f  page ↓  ·  b  page ↑
@@ -497,44 +648,8 @@ nonisolated enum IntentExecution {
             q/Esc  close
 
         Commands — type one and press return:
-
-        Timers & Reminders
-          .timer 5                5-minute countdown (bare number = minutes; also 90s, 1h 20m, 5 mins)
-          .timer 1h 20m stand up  labelled countdown; max 30 days
-          .timer cancel [all]     cancel all running timers
-          .stopwatch [label]      stopwatch counting up (chip in the corner)
-          .stopwatch cancel       cancel running stopwatches
-          .pomodoro 25/5/4        work/break in minutes, 4 cycles (max 12)
-          .remind in 10 mins …    natural-language reminder ("call mom", "tomorrow at 3pm …")
-          .remind tomorrow 3pm …  absolute times work too
-          .reminder cancel [all]  cancel all pending reminders
-
-        Note Management
-          .new                    create a new, empty note (swipe left/right to switch)
-          .clear                  clear the current note
-          .switch                 switch to another note (menu)
-          .delete                 delete the current note
-          .export notes           send the note to Apple Notes
-          .export obsidian        save the note as a markdown file in your vault
-          .paste                  stream clipboard copies into the note until dismissed
-
-        Math & Aggregates
-          .sum  .total            sum the note's numbers (`.sum 10 20 30` = 60)
-          .avg  .average          average the note's numbers (`.avg 10 20 30`)
-          .count                  count the note's numbers (`.count 10 20 30`)
-
-        Utilities
-          .time                   stamp the current time (`.time = 2:31 PM`)
-
-        Search & System
-          .find                   open the find bar (also ⌘F)
-          .replace find → replace global replace in the note
-          .settings               open the settings window
-          .debug                  show diagnostics and the event log
-          .stats                  show your usage statistics
-          .exit  .quit            quit Antimatter
-          .help                   open this reference full-screen (press q to close)
-
+        """
+        let automatic = """
         Automatic — press return on a line:
           384 * 27            →  384 * 27 = 10368
           price = 4 * 12      →  price = 4 * 12 = 48
@@ -542,6 +657,22 @@ nonisolated enum IntentExecution {
           days until 2026-09-01  →  countdown appended
           12 kg -> lb         →  12 kg -> lb = 26.46
         """
+        let categories: [DotCommandCategory] = [
+            .timers, .noteManagement, .math, .utilities, .searchSystem
+        ]
+        var sections: [String] = []
+        for category in categories {
+            let commands = dotCommands.filter { $0.category == category }
+            let width = (commands.map { $0.name.count }.max() ?? 0) + 3
+            var lines = [category.rawValue]
+            for command in commands {
+                let padded = command.name.padding(toLength: width, withPad: " ", startingAt: 0)
+                lines.append("  \(padded)\(command.description)")
+            }
+            sections.append(lines.joined(separator: "\n"))
+        }
+        return referenceKeys + "\n\n" + sections.joined(separator: "\n\n") + "\n\n" + automatic
+    }
 
 
     // MARK: Live preview
@@ -555,6 +686,17 @@ nonisolated enum IntentExecution {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.hasSuffix("=") else { return nil }
 
+        if trimmed.lowercased() == IntentParser.commandPrefix + "timer list" {
+            return "⏎ lists running timers"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "stopwatch list" {
+            return "⏎ lists stopwatches"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "reminder list"
+            || trimmed.lowercased() == IntentParser.commandPrefix + "remind list"
+        {
+            return "⏎ lists upcoming reminders"
+        }
         if IntentParser.isTimerCancel(trimmed) {
             return "⏎ cancels all running timers"
         }
@@ -615,10 +757,22 @@ nonisolated enum IntentExecution {
         if trimmed.lowercased() == IntentParser.commandPrefix + "stats" {
             return "⏎ shows your usage statistics"
         }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "vars" {
+            return "⏎ lists this note's variable definitions"
+        }
         if trimmed.lowercased() == IntentParser.commandPrefix + "exit"
             || trimmed.lowercased() == IntentParser.commandPrefix + "quit"
         {
             return "⏎ quits Antimatter"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "hide" {
+            return "⏎ hides the pane"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "undo" {
+            return "⏎ undoes the last edit"
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "redo" {
+            return "⏎ redoes the last undone edit"
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "find" {
             return "⏎ opens the find bar"
@@ -699,16 +853,24 @@ nonisolated enum IntentExecution {
         DotCommand(name: ".clear", description: "clear the current note", category: .noteManagement),
         DotCommand(name: ".switch", description: "switch to another note", category: .noteManagement),
         DotCommand(name: ".delete", description: "delete the current note", category: .noteManagement),
+        DotCommand(name: ".undo", description: "undo the last edit", category: .noteManagement),
+        DotCommand(name: ".redo", description: "redo the last undone edit", category: .noteManagement),
         DotCommand(name: ".timer", description: "start a countdown — .timer <duration> [label]",
                    snippet: ".timer <duration> ", category: .timers),
         DotCommand(name: ".timer cancel all", description: "cancel every running timer",
                    snippet: ".timer cancel all ", category: .timers),
+        DotCommand(name: ".timer list", description: "show running timers and leftovers",
+                   snippet: ".timer list ", category: .timers),
         DotCommand(name: ".stopwatch", description: "start a stopwatch — .stopwatch [label]",
                    snippet: ".stopwatch ", category: .timers),
+        DotCommand(name: ".stopwatch list", description: "show stopwatch readings",
+                   snippet: ".stopwatch list ", category: .timers),
         DotCommand(name: ".remind", description: "set a natural-language reminder",
                    snippet: ".remind <what> <when> ", category: .timers),
         DotCommand(name: ".reminder", description: "cancel reminders — .reminder cancel all",
                    snippet: ".reminder cancel all ", category: .timers),
+        DotCommand(name: ".reminder list", description: "show pending reminders",
+                   snippet: ".reminder list ", category: .timers),
         DotCommand(name: ".reminder cancel all", description: "cancel every pending reminder",
                    snippet: ".reminder cancel all ", category: .timers),
         DotCommand(name: ".pomodoro", description: "start a pomodoro cycle",
@@ -729,6 +891,8 @@ nonisolated enum IntentExecution {
         DotCommand(name: ".settings", description: "open the settings window", category: .searchSystem),
         DotCommand(name: ".debug", description: "show diagnostics and the event log", category: .searchSystem),
         DotCommand(name: ".stats", description: "show your usage statistics", category: .searchSystem),
+        DotCommand(name: ".hide", description: "minimize the pane out of the way", category: .searchSystem),
+        DotCommand(name: ".vars", description: "list this note's :name = expression definitions", category: .utilities),
         DotCommand(name: ".exit", description: "quit Antimatter", category: .searchSystem),
         DotCommand(name: ".quit", description: "quit Antimatter (same as .exit)", category: .searchSystem),
         DotCommand(name: ".help", description: "show the command reference", category: .searchSystem),

@@ -93,6 +93,22 @@ final class ReminderCenter: ObservableObject {
         DebugLog.log("reminders cancelled — \(identifiers.count)")
     }
 
+    /// `.reminder list` reference block: pending reminders with how soon
+    /// each fires. Fired prompts are left out — they already rang.
+    var report: String {
+        let pending = reminders.filter { $0.firedAt == nil }
+        if pending.isEmpty {
+            return "No reminders scheduled.\nType `.remind in 10 mins stand up` to set one."
+        }
+        var out = ["Upcoming Reminders (\(pending.count))", ""]
+        for reminder in pending {
+            let when = Self.format(reminder.date.timeIntervalSinceNow)
+            out.append("  in \(when)   \(reminder.message)")
+        }
+        out.append("")
+        out.append("`.reminder cancel all` clears them.")
+        return out.joined(separator: "\n")
+    }
 
     private func scheduleFire(_ reminder: ActiveReminder, announce: Bool) {
         guard reminder.firedAt == nil else { return }
