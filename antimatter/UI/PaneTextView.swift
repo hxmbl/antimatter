@@ -116,7 +116,8 @@ final class PaneTextView: NSTextView {
     private static let caretBlinkInterval: CFTimeInterval = 0.53
 
     /// A blocked main thread must not be integrated in one lump, or the spring
-    /// would visibly jump instead of easing.
+    /// would visibly jump instead of easing. The step is exact, so clamping
+    /// only costs the tail of a very long frame.
     private static let caretMaxStep: CFTimeInterval = 0.05
 
     private var hasActiveCaret: Bool {
@@ -148,7 +149,9 @@ final class PaneTextView: NSTextView {
         let w = Double(frequency)
         let decay = exp(-w * dt)
         let c = Double(v0) + w * Double(d0)
-        return (CGFloat(Double(d0) + c * dt), CGFloat(Double(v0) - w * c * dt))
+        let offset = (Double(d0) + c * dt) * decay
+        let velocity = (Double(v0) - w * c * dt) * decay
+        return (CGFloat(offset), CGFloat(velocity))
     }
 
     /// Points the caret at wherever the text system actually put the
@@ -176,13 +179,22 @@ final class PaneTextView: NSTextView {
             return
         }
 
+        retargetCaret(to: target, index: index, motion: motion)
+        setNeedsDisplay(Self.caretDirty(previous, drawnCaretRect))
+    }
+
+    /// Points the spring at `target`, starting one from the caret's resting
+    /// position if none is running.
+    private func retargetCaret(to target: NSRect, index: Int, motion: CaretMotion) {
         if var spring = caretSpring {
+            // Retarget in place. Keeping offset and velocity is what makes
+            // consecutive hops flow instead of restarting from rest.
             spring.target = target
             spring.targetIndex = index
             spring.frequency = motion.frequency
             caretSpring = spring
         } else {
-            let from = caretRestRect ?? previous
+            let from = caretRestRect ?? drawnCaretRect
             caretSpring = CaretSpring(
                 offset: CGPoint(x: from.minX - target.minX, y: from.minY - target.minY),
                 velocity: .zero,
@@ -195,7 +207,6 @@ final class PaneTextView: NSTextView {
             )
         }
         keepCaretPolling()
-        setNeedsDisplay(Self.caretDirty(previous, drawnCaretRect))
     }
 
     private func keepCaretPolling() {
@@ -255,7 +266,9 @@ final class PaneTextView: NSTextView {
         setNeedsDisplay(Self.caretDirty(previous, current))
 
         // Stay subscribed a little past rest: an edit's re-render can still
-        // move the caret, and stopping here would make that jump instead.
+        // move the caret, and stopping here would make that jump instead. A
+        // settled poll that only reads the same rectangle is free, so this
+        // only ever costs a few idle frames after the caret stops.
         if settled, now >= caretQuiesceDeadline { stopCaretLink() }
     }
 
