@@ -877,10 +877,24 @@ enum Markdown {
         return !text[afterIndex].isWhitespace
     }
 
-    /// ASCII punctuation is the escapable set in CommonMark. Anything else —
-    /// a letter, a digit, a space, a newline — leaves the backslash literal.
-    private nonisolated static func isEscapablePunctuation(_ character: Character) -> Bool {
-        character.isASCII && character.isPunctuation
+    /// True for the ASCII punctuation CommonMark allows a backslash to escape.
+///
+/// Deliberately *not* `Character.isPunctuation`: that is Unicode general
+/// categories Pc/Pd/Ps/Pe/Pi/Pf/Po, and the most useful escapes are category
+/// **Sm** (math symbols) — `\|`, `\*`, `\+`, `\<`, `\=`, `\~`, `\$`, `\^`,
+/// ``\` `` all report `isPunctuation == false`. Using it silently dropped the
+/// escape for a `\|` inside a table cell, which is exactly what stopped that
+/// cell splitting. The spec means "ASCII graphic, excluding letters, digits and
+/// space", so that is what this tests.
+private nonisolated static func isEscapablePunctuation(_ character: Character) -> Bool {
+        // Printable ASCII (0x21...0x7E), minus letters and digits. The spec's
+        // "ASCII punctuation" is `!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~` — every
+        // printable ASCII character that is not alphanumeric — so bounding the
+        // range is not enough on its own: without the alphanumeric guard, `\U`
+        // in a Windows path counted as an escape and `C:\Users\me` was mangled
+        // all over again.
+        guard let ascii = character.asciiValue, ascii > 0x20, ascii < 0x7F else { return false }
+        return !character.isLetter && !character.isNumber
     }
 
     private nonisolated static func advanceEscaped(_ backslash: String.Index, limit: String.Index, in text: String) -> String.Index {

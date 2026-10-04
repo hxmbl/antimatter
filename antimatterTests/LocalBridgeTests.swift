@@ -111,27 +111,19 @@ struct LocalBridgeTests {
     /// app, or a squatter), every request in these tests was executed by that
     /// other process, and this one appeared to fail while doing nothing wrong.
     private func startBridge() async throws {
-        // A port the machine is not already using. The fixed 41367 was the whole
-        // problem: if a real Antimatter is running, the test host could not bind
-        // it, `start()` still handed the port back, and every request here was
-        // executed by that other process while this one looked broken.
-        let port = Self.freePort()
-        LocalBridge.shared.start(ports: [port])
+        // Port 0 = "any free port", and `LocalBridge` reports the one the kernel
+        // hands back once it is genuinely ready. The suite used to bind the fixed
+        // 41367, which a real running copy of the app already owns: the test host
+        // could not bind it, `start()` handed the port back anyway, and every
+        // request was executed by that *other* process while this one looked
+        // broken. Guessing a free port and racing for it is strictly worse than
+        // letting the kernel choose.
+        LocalBridge.shared.start(ports: [0])
         for _ in 0..<200 {
             if LocalBridge.shared.isReady { return }
             try await Task.sleep(for: .milliseconds(25))
         }
-        Issue.record("bridge never reported ready on port \(port)")
-    }
-
-    /// Asks the OS for an ephemeral port, then releases it. Inherently a small
-    /// race, but a vanishingly unlikely one for a test suite and far better than
-    /// colliding with the app under test.
-    private static func freePort() -> UInt16 {
-        let listener = try? NWListener(using: .tcp, on: 0)
-        let port = listener?.port?.rawValue ?? 41_400
-        listener?.cancel()
-        return port
+        Issue.record("bridge never reported ready")
     }
 
     private func resetActiveNote() {

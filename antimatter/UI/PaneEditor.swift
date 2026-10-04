@@ -151,6 +151,10 @@ struct PaneEditor: NSViewRepresentable {
         private var deferredPassTask: Task<Void, Never>?
         private var deferredCalculationTask: Task<Void, Never>?
         private var pendingRender: DispatchWorkItem?
+
+        /// How long typing must pause before the full-document Markdown pass
+        /// runs. Long enough to swallow a burst of keystrokes.
+        private static let renderIdleDelay: TimeInterval = 0.12
         private var pendingStatusUpdate: DispatchWorkItem?
         private var appliedFontSize: CGFloat = PaneStyle.fontSize
         private var appliedThemeID = PaneTheme.current.id
@@ -204,8 +208,19 @@ struct PaneEditor: NSViewRepresentable {
 
         /// Defer Markdown rendering until AppKit finishes the current edit
         /// transaction; rendering synchronously can corrupt newly typed Unicode.
-        /// A short coalescing window also folds a burst of keystrokes into a
-        /// single full-document attribute pass instead of one per character.
+        ///
+        /// The wait is keyed to typing going quiet rather than being a fixed
+        /// 20ms. At 20ms the delay fell inside the gap between ordinary
+        /// keystrokes, so a full-document parse plus attribute pass ran after
+        /// nearly every character and blocked the main thread while the next
+        /// keystroke was already waiting on it. Idling first means the pass
+        /// runs once per burst instead of once per character.
+        ///
+        /// `textDidChange` still returns immediately, so the character itself
+        /// appears on the same frame as the keypress and only its styling
+        /// catches up. Text appended while the pass is pending is picked up by
+        /// `refresh`, which re-renders whenever `textView.string` has drifted
+        /// from the last render's source.
         private func scheduleRender(_ textView: NSTextView) {
             pendingRender?.cancel()
             let render = DispatchWorkItem { [weak self, weak textView] in
@@ -213,7 +228,7 @@ struct PaneEditor: NSViewRepresentable {
                 self.highlighter.refresh(textView)
             }
             pendingRender = render
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02, execute: render)
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.renderIdleDelay, execute: render)
         }
 
         /// Footer state is SwiftUI state; defer until AppKit finishes delivering

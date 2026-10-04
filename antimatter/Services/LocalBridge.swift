@@ -80,11 +80,17 @@ final class LocalBridge {
         listener.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
+                // Report the port the kernel actually gave us. That matters when
+                // the requested port was 0 ("any free port"), which is how a
+                // caller that must not collide with another instance — the test
+                // suite — asks for a listener without having to guess a free port
+                // and then race another process for it.
+                let bound = listener.port?.rawValue ?? chosen.port
                 Task { @MainActor in
                     guard let self, self.listener === listener else { return }
-                    self.activePort = chosen.port
+                    self.activePort = bound
                     self.isReady = true
-                    DebugLog.log("bridge listening on 127.0.0.1:\(chosen.port)")
+                    DebugLog.log("bridge listening on 127.0.0.1:\(bound)")
                 }
             case .failed(let error):
                 Task { @MainActor in

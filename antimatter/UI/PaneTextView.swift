@@ -27,91 +27,278 @@ final class PaneTextView: NSTextView {
     private var windowMoveDrag: (windowOrigin: NSPoint, mouseScreenOrigin: NSPoint)?
     private var lastReportedTopLevel: CGFloat = -1
 
-    // The native selection remains authoritative. This overlay only smooths
-    // explicit caret jumps and verified one-character edits; IME composition,
-    // paste, selections, and formatting commands use AppKit directly.
-    private struct CaretGlide {
-        let from: NSRect
-        var to: NSRect
-        let start: CFTimeInterval
-        let duration: CFTimeInterval
+    // MARK: Caret
+    //
+    // The native selection stays authoritative; this only smooths where the
+    // caret is *drawn*. One critically damped spring chases the real caret
+    // rectangle every frame. The state is a displacement from the current
+    // target rather than an absolute position or a fixed-duration tween, and
+    // that is what makes consecutive hops flow: moving the target leaves
+    // position and velocity untouched, so a keystroke arriving mid-flight
+    // continues the motion instead of restarting it from rest. A tween
+    // restarts velocity on every hop, which reads as a stutter, and a spring
+    // that cannot overshoot cannot bounce.
+
+    /// How the caret should reach a new position.
+    private enum CaretMotion {
+        /// Snap into place. Teleports and anything not driven by caret
+        /// movement; gliding there just looks like a swoop.
+        case snap
+        /// Stiff spring. The glyph is already on screen, so the caret stays on
+        /// it rather than trailing behind what you just typed.
+        case typing
+        /// Soft spring. Nothing is waiting on the caret, so the extra
+        /// smoothness is free.
+        case hop
+
+        /// A critically damped spring closes its last pixel in roughly
+        /// `4 / frequency`, and that settling time is independent of how far
+        /// it has to travel.
+        var frequency: CGFloat {
+            switch self {
+            case .snap: return 0
+            case .typing: return 60 // ~65ms
+            case .hop: return 30 // ~130ms
+            }
+        }
     }
 
-    private var caretGlide: CaretGlide?
+    private struct CaretSpring {
+        /// Displacement from `target`, in points.
+        var offset: CGPoint
+        var velocity: CGPoint
+        var heightOffset: CGFloat
+        var heightVelocity: CGFloat
+        var target: NSRect
+        /// The character index `target` was measured at. Layout can move the
+        /// caret rectangle without the caret moving (scrolling, a reflow), and
+        /// that must not be smoothed — only an actual index change is a hop.
+        var targetIndex: Int
+        var lastTick: CFTimeInterval
+        var frequency: CGFloat
+
+        /// A quarter point is under one device pixel on a Retina display, so
+        /// snapping here is invisible; stopping any sooner would leave the
+        /// caret visibly short of the text.
+        static let restOffset: CGFloat = 0.25
+        static let restVelocity: CGFloat = 1
+
+        var isSettled: Bool {
+            abs(offset.x) < Self.restOffset && abs(offset.y) < Self.restOffset
+                && abs(heightOffset) < Self.restOffset
+                && abs(velocity.x) < Self.restVelocity && abs(velocity.y) < Self.restVelocity
+                && abs(heightVelocity) < Self.restVelocity
+        }
+    }
+
+    private var caretSpring: CaretSpring?
     private var caretDisplayLink: CADisplayLink?
-    private var editAnimationGeneration = 0
+    /// Where the caret sits once it has come to rest, so the next hop leaves
+    /// from where the caret actually appears instead of snapping first.
+    private var caretRestRect: NSRect?
+    private var caretRestIndex: Int?
+
+    private var caretBlinkTimer: Timer?
+    private var caretBlinkOn = true
+
+    /// Past this the caret has teleported — a paste, or a click across the
+    /// note — rather than stepped.
+    private static let maxSmoothedDistance: CGFloat = 400
+
+    /// The editor re-renders Markdown shortly after an edit and the caret can
+    /// move again when it lands. Hold the poll open across that window rather
+    /// than guessing the final position when the keystroke arrives.
+    private static let caretQuiesceInterval: CFTimeInterval = 0.12
+    private var caretQuiesceDeadline: CFTimeInterval = 0
+
+    /// Rounded corners and antialiasing spill just outside the rectangle.
+    private static let caretDirtyPadding: CGFloat = 3
+    private static let caretBlinkInterval: CFTimeInterval = 0.53
+
+    /// A blocked main thread must not be integrated in one lump, or the spring
+    /// would visibly jump instead of easing.
+    private static let caretMaxStep: CFTimeInterval = 0.05
 
     private var hasActiveCaret: Bool {
         window?.isKeyWindow == true && window?.firstResponder === self &&
         selectedRange().length == 0 && !hasMarkedText()
     }
 
-    private func startCaretGlide(from oldLocation: Int, to newLocation: Int, from oldRect: NSRect? = nil) {
-        guard hasActiveCaret, oldLocation != newLocation else {
-            clearCaretGlide()
+    /// The rectangle the caret is painted in right now.
+    private var drawnCaretRect: NSRect {
+        guard let spring = caretSpring else { return caretRestRect ?? .zero }
+        return NSRect(
+            x: spring.target.minX + spring.offset.x,
+            y: spring.target.minY + spring.offset.y,
+            width: spring.target.width,
+            height: max(1, spring.target.height + spring.heightOffset)
+        )
+    }
+
+    /// One analytic step of a critically damped spring. Solving it exactly
+    /// instead of integrating numerically keeps the motion identical at any
+    /// frame rate, and critical damping means it cannot overshoot — the caret
+    /// settles rather than rings.
+    private static func stepSpring(
+        offset d0: CGFloat,
+        velocity v0: CGFloat,
+        dt: CFTimeInterval,
+        frequency: CGFloat
+    ) -> (offset: CGFloat, velocity: CGFloat) {
+        let w = Double(frequency)
+        let decay = exp(-w * dt)
+        let c = Double(v0) + w * Double(d0)
+        return (CGFloat(Double(d0) + c * dt), CGFloat(Double(v0) - w * c * dt))
+    }
+
+    /// Points the caret at wherever the text system actually put the
+    /// selection. `hasActiveCaret` being false means there is no caret to show
+    /// (inactive window, a selection, IME composition), so stop rather than
+    /// leave a spring running against nothing.
+    private func updateCaret(_ motion: CaretMotion) {
+        guard hasActiveCaret else {
+            stopCaretAnimation()
             return
         }
-        // Chain onto any glide still in flight: starting a new glide from a
-        // stale snapshot while the ghost is mid-flight snaps the caret
-        // backward, which reads as stutter under rapid typing or arrow keys.
-        // The new glide picks up from where the caret already appears.
-        let inFlight = caretGlide.map(interpolatedCaretRect)
-        let oldRect = inFlight ?? oldRect ?? caretRect(for: oldLocation)
-        let newRect = caretRect(for: newLocation)
-        guard !oldRect.isEmpty, !newRect.isEmpty else { return }
-        let distance = hypot(newRect.midX - oldRect.midX, newRect.midY - oldRect.midY)
-        caretGlide = CaretGlide(
-            from: oldRect,
-            to: newRect,
-            start: CACurrentMediaTime(),
-            duration: min(0.16, max(0.08, 0.08 + distance / 5000))
-        )
-        caretDisplayLink?.invalidate()
-        let link = displayLink(target: self, selector: #selector(advanceCaretGlide(_:)))
+        noteCaretActivity()
+
+        let index = selectedRange().location
+        let target = caretRect(for: index)
+        guard !target.isEmpty else { return }
+        let previous = drawnCaretRect
+        let travelled = hypot(target.minX - previous.minX, target.minY - previous.minY)
+
+        guard motion.frequency > 0, travelled <= Self.maxSmoothedDistance else {
+            stopCaretAnimation()
+            caretRestRect = target
+            caretRestIndex = index
+            setNeedsDisplay(Self.caretDirty(previous, target))
+            return
+        }
+
+        if var spring = caretSpring {
+            spring.target = target
+            spring.targetIndex = index
+            spring.frequency = motion.frequency
+            caretSpring = spring
+        } else {
+            let from = caretRestRect ?? previous
+            caretSpring = CaretSpring(
+                offset: CGPoint(x: from.minX - target.minX, y: from.minY - target.minY),
+                velocity: .zero,
+                heightOffset: from.height - target.height,
+                heightVelocity: 0,
+                target: target,
+                targetIndex: index,
+                lastTick: CACurrentMediaTime(),
+                frequency: motion.frequency
+            )
+        }
+        keepCaretPolling()
+        setNeedsDisplay(Self.caretDirty(previous, drawnCaretRect))
+    }
+
+    private func keepCaretPolling() {
+        caretQuiesceDeadline = CACurrentMediaTime() + Self.caretQuiesceInterval
+        guard caretDisplayLink == nil, window != nil else { return }
+        let link = displayLink(target: self, selector: #selector(advanceCaret(_:)))
         link.add(to: .main, forMode: .common)
         caretDisplayLink = link
-        // Invalidate both endpoints immediately. The destination caret may
-        // already have been drawn before the glide was scheduled, so marking
-        // only the source rectangle can leave the ghost outside the redraw.
-        setNeedsDisplay(oldRect.union(newRect).insetBy(dx: -5, dy: -5))
     }
 
-    @objc private func advanceCaretGlide(_ link: CADisplayLink) {
-        guard hasActiveCaret, caretGlide != nil else {
-            clearCaretGlide()
+    @objc private func advanceCaret(_ link: CADisplayLink) {
+        let now = CACurrentMediaTime()
+        guard hasActiveCaret, var spring = caretSpring else {
+            stopCaretAnimation()
             return
         }
-        if CACurrentMediaTime() - (caretGlide?.start ?? 0) >= (caretGlide?.duration ?? 0) {
-            clearCaretGlide()
-        } else {
-            setNeedsDisplay(caretGlideDirtyRect)
+        let previous = drawnCaretRect
+
+        // The text system is the source of truth. Re-reading it every frame is
+        // what lets a hop that begins before the editor's deferred Markdown
+        // render simply follow the text instead of fighting it — and it is why
+        // the old generation-tracking and edit-prediction bookkeeping is gone.
+        let index = selectedRange().location
+        if index != spring.targetIndex {
+            spring.targetIndex = index
+            let target = caretRect(for: index)
+            if !target.isEmpty { spring.target = target }
         }
+
+        let dt = min(max(now - spring.lastTick, 0), Self.caretMaxStep)
+        spring.lastTick = now
+        if dt > 0 {
+            let frequency = spring.frequency
+            let x = Self.stepSpring(offset: spring.offset.x, velocity: spring.velocity.x, dt: dt, frequency: frequency)
+            let y = Self.stepSpring(offset: spring.offset.y, velocity: spring.velocity.y, dt: dt, frequency: frequency)
+            let height = Self.stepSpring(offset: spring.heightOffset, velocity: spring.heightVelocity, dt: dt, frequency: frequency)
+            spring.offset = CGPoint(x: x.offset, y: y.offset)
+            spring.velocity = CGPoint(x: x.velocity, y: y.velocity)
+            spring.heightOffset = height.offset
+            spring.heightVelocity = height.velocity
+        }
+
+        let settled = spring.isSettled
+        if settled {
+            spring.offset = .zero
+            spring.velocity = .zero
+            spring.heightOffset = 0
+            spring.heightVelocity = 0
+        }
+        caretSpring = settled ? nil : spring
+        if settled {
+            caretRestRect = spring.target
+            caretRestIndex = spring.targetIndex
+        }
+
+        let current = settled ? spring.target : drawnCaretRect
+        setNeedsDisplay(Self.caretDirty(previous, current))
+
+        // Stay subscribed a little past rest: an edit's re-render can still
+        // move the caret, and stopping here would make that jump instead.
+        if settled, now >= caretQuiesceDeadline { stopCaretLink() }
     }
 
-    private var caretGlideDirtyRect: NSRect {
-        guard let glide = caretGlide else { return .zero }
-        return glide.from.union(glide.to).insetBy(dx: -5, dy: -5)
+    private func stopCaretAnimation() {
+        let previous = drawnCaretRect
+        stopCaretLink()
+        caretSpring = nil
+        caretRestRect = hasActiveCaret ? caretRect(for: selectedRange().location) : nil
+        caretRestIndex = hasActiveCaret ? selectedRange().location : nil
+        guard let rest = caretRestRect else { return }
+        setNeedsDisplay(Self.caretDirty(previous, rest))
     }
 
-    /// The ghost caret's position right now, or nil when no glide is running.
-    private func interpolatedCaretRect(_ glide: CaretGlide) -> NSRect {
-        let elapsed = CACurrentMediaTime() - glide.start
-        let progress = min(max(elapsed / glide.duration, 0), 1)
-        let eased = 1 - pow(1 - progress, 3)
-        return NSRect(
-            x: glide.from.minX + (glide.to.minX - glide.from.minX) * eased,
-            y: glide.from.minY + (glide.to.minY - glide.from.minY) * eased,
-            width: glide.to.width,
-            height: glide.to.height
-        )
-    }
-
-    private func clearCaretGlide() {
-        let dirty = caretGlideDirtyRect
-        caretGlide = nil
+    private func stopCaretLink() {
         caretDisplayLink?.invalidate()
         caretDisplayLink = nil
-        if !dirty.isEmpty { setNeedsDisplay(dirty) }
+    }
+
+    private static func caretDirty(_ first: NSRect, _ second: NSRect) -> NSRect {
+        let rect = first.isEmpty ? second : (second.isEmpty ? first : first.union(second))
+        return rect.isEmpty ? .zero : rect.insetBy(dx: -caretDirtyPadding, dy: -caretDirtyPadding)
+    }
+
+    /// Restarts the blink phase so the caret stays solid while you type and
+    /// only starts blinking once you pause.
+    private func noteCaretActivity() {
+        caretBlinkOn = true
+        caretBlinkTimer?.invalidate()
+        caretBlinkTimer = nil
+        guard hasActiveCaret else { return }
+        caretBlinkTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.caretBlinkInterval, repeats: true
+        ) { [weak self] _ in
+            self?.toggleCaretBlink()
+        }
+        if let rest = caretRestRect { setNeedsDisplay(Self.caretDirty(rest, .zero)) }
+    }
+
+    private func toggleCaretBlink() {
+        caretBlinkOn.toggle()
+        let rect = drawnCaretRect
+        guard !rect.isEmpty else { return }
+        setNeedsDisplay(Self.caretDirty(rect, .zero))
     }
 
     private func caretRect(for characterIndex: Int) -> NSRect {
@@ -160,32 +347,36 @@ final class PaneTextView: NSTextView {
     }
 
     override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
-        if caretGlide != nil, hasActiveCaret {
-            caretGlide?.to = rect
+        // The caret is painted in `draw(_:)` instead. Handing it back to AppKit
+        // means it reappears on whatever blink phase the text view happens to
+        // be in, so the end of a hop could blank the caret for up to half a
+        // second — a visible flicker. This used to also overwrite the glide's
+        // destination from inside `super.draw(_:)`, which rewrote the animation
+        // target frame by frame and made the ghost jitter.
+        //
+        // `hasActiveCaret` is exactly when AppKit would draw a caret anyway, so
+        // IME composition, selections, and inactive windows stay native.
+        guard hasActiveCaret else {
+            super.drawInsertionPoint(in: rect, color: color, turnedOn: flag)
             return
         }
-        super.drawInsertionPoint(in: rect, color: color, turnedOn: flag)
     }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         drawVariableGhosts(in: dirtyRect)
-        guard hasActiveCaret, let glide = caretGlide else { return }
-        let elapsed = CACurrentMediaTime() - glide.start
-        let eased = 1 - pow(1 - min(max(elapsed / glide.duration, 0), 1), 3)
-        let rect = interpolatedCaretRect(glide)
-        let color = insertionPointColor ?? .labelColor
-
-        // Keep a small, bounded remnant at the source position so the glide
-        // reads as a ghost rather than a disappearing/reappearing caret.
-        // This deliberately uses the source caret's real height and never a
-        // document-sized rectangle.
-        if eased < 1 {
-            color.withAlphaComponent(0.2 * (1 - eased)).setFill()
-            NSBezierPath(roundedRect: glide.from, xRadius: 1, yRadius: 1).fill()
+        guard hasActiveCaret, caretBlinkOn else { return }
+        let rect = drawnCaretRect
+        guard !rect.isEmpty, dirtyRect.intersects(rect.insetBy(dx: -1, dy: -1)) else { return }
+        // Keep the resting position honest so the next hop leaves from where
+        // the caret actually appears.
+        if caretSpring == nil {
+            caretRestRect = rect
+            caretRestIndex = selectedRange().location
         }
-
-        color.withAlphaComponent(0.85).setFill()
+        // Full opacity: AppKit's caret is no longer drawn underneath, so the
+        // 0.85 the old ghost used would read as permanently faded.
+        (insertionPointColor ?? .labelColor).setFill()
         NSBezierPath(roundedRect: rect, xRadius: 1, yRadius: 1).fill()
     }
 
@@ -221,74 +412,39 @@ final class PaneTextView: NSTextView {
     }
 
     override func didChangeText() {
-        editAnimationGeneration += 1
-        clearCaretGlide()
         super.didChangeText()
+        // Typing and deleting both land here, so the caret does not have to
+        // predict which edits move it. `.typing` is stiff on purpose: the
+        // character is already drawn, and a soft caret would visibly trail it.
+        updateCaret(.typing)
     }
 
-    /// Starts an edit glide after the editor's deferred Markdown render has
-    /// settled. The edit itself has already completed; this is visual only.
-    private func scheduleEditCaretGlide(
-        from oldRect: NSRect,
-        oldLocation: Int,
-        to newLocation: Int,
-        generation: Int
-    ) {
-        guard !oldRect.isEmpty else { return }
-        DispatchQueue.main.async { [weak self] in
-            guard let self,
-                  self.editAnimationGeneration == generation,
-                  self.hasActiveCaret,
-                  self.selectedRange().location == newLocation else { return }
-            self.startCaretGlide(from: oldLocation, to: newLocation, from: oldRect)
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { noteCaretActivity() }
+        return accepted
+    }
+
+    override func resignFirstResponder() -> Bool {
+        stopCaretAnimation()
+        caretBlinkTimer?.invalidate()
+        caretBlinkTimer = nil
+        return super.resignFirstResponder()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else {
+            // A live display link retains its target, so leaving the caret
+            // running with no window would keep this view alive.
+            stopCaretLink()
+            caretBlinkTimer?.invalidate()
+            caretBlinkTimer = nil
+            caretSpring = nil
+            return
         }
-    }
-
-    private func isPlainSingleCharacterInsertion(
-        event: NSEvent,
-        oldRange: NSRange,
-        oldLength: Int,
-        newRange: NSRange,
-        newLength: Int
-    ) -> Bool {
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard oldRange.length == 0,
-              newRange.length == 0,
-              newLength == oldLength + 1,
-              newRange.location == oldRange.location + 1,
-              modifiers.subtracting([.shift, .capsLock, .function]).isEmpty,
-              let characters = event.characters,
-              characters.count == 1,
-              characters != "\n",
-              characters != "\r" else { return false }
-        return true
-    }
-
-    private func isSupportedDeletion(
-        event: NSEvent,
-        oldRange: NSRange,
-        oldLength: Int,
-        newRange: NSRange,
-        newLength: Int
-    ) -> Bool {
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard oldRange.length == 0, newRange.length == 0, newLength < oldLength else { return false }
-        switch event.keyCode {
-        case 51: // Backspace
-            if modifiers.isEmpty, newLength == oldLength - 1 {
-                return newRange.location == oldRange.location - 1
-            }
-            // Command-backspace deletes to the beginning of the line.
-            return modifiers == [.command] && newRange.location <= oldRange.location
-        case 117: // Forward Delete
-            if modifiers.isEmpty, newLength == oldLength - 1 {
-                return newRange.location == oldRange.location
-            }
-            // Command-forward-delete deletes to the end of the line.
-            return modifiers == [.command] && newRange.location == oldRange.location
-        default:
-            return false
-        }
+        caretRestRect = caretRect(for: selectedRange().location)
+        caretRestIndex = selectedRange().location
     }
 
     convenience init() {
@@ -343,14 +499,11 @@ final class PaneTextView: NSTextView {
         }
         pendingClick = (event.locationInWindow, modifiers)
         let clickIndex = characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))
-        let oldLocation = selectedRange().location
         super.mouseDown(with: event)
         DispatchQueue.main.async { [weak self] in
             self?.toggleTaskIfOnMarker(clickIndex: clickIndex)
         }
-        if selectedRange().length == 0 {
-            startCaretGlide(from: oldLocation, to: selectedRange().location)
-        }
+        if selectedRange().length == 0 { updateCaret(.hop) } else { stopCaretAnimation() }
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -585,57 +738,22 @@ final class PaneTextView: NSTextView {
         // to the end of the document.
         if event.modifierFlags.contains([.command, .option])
             && (event.keyCode == kVK_UpArrow || event.keyCode == kVK_DownArrow) {
-            let oldLocation = selectedRange().location
-            let oldRect = caretRect(for: oldLocation)
             if event.keyCode == kVK_UpArrow { moveLineUp() } else { moveLineDown() }
-            if selectedRange().length == 0 {
-                startCaretGlide(
-                    from: oldLocation,
-                    to: selectedRange().location,
-                    from: oldRect.isEmpty ? nil : oldRect
-                )
-            }
+            if selectedRange().length == 0 { updateCaret(.hop) } else { stopCaretAnimation() }
             return
         }
 
         let shouldAnimateCaret = [115, 119, 123, 124, 125, 126].contains(event.keyCode)
-        if !shouldAnimateCaret {
-            clearCaretGlide()
-        }
-        let oldRange = selectedRange()
-        let oldLength = textStorage?.length ?? 0
-        let oldLocation = oldRange.location
-        let oldRect = caretRect(for: oldLocation)
         super.keyDown(with: event)
 
-        let newRange = selectedRange()
-        let newLength = textStorage?.length ?? oldLength
-        if isPlainSingleCharacterInsertion(
-            event: event,
-            oldRange: oldRange,
-            oldLength: oldLength,
-            newRange: newRange,
-            newLength: newLength
-        ) || isSupportedDeletion(
-            event: event,
-            oldRange: oldRange,
-            oldLength: oldLength,
-            newRange: newRange,
-            newLength: newLength
-        ) {
-            scheduleEditCaretGlide(
-                from: oldRect,
-                oldLocation: oldLocation,
-                to: newRange.location,
-                generation: editAnimationGeneration
-            )
-        }
-        if shouldAnimateCaret, selectedRange().length == 0 {
-            startCaretGlide(
-                from: oldLocation,
-                to: selectedRange().location,
-                from: oldRect.isEmpty ? nil : oldRect
-            )
+        // Typing already moved the caret from `didChangeText`. This covers the
+        // keys that only move the selection — the arrows. Everything else
+        // (paste, formatting, find, a selection change) snaps: those move the
+        // caret somewhere that is not one step away from here.
+        if selectedRange().length == 0 {
+            updateCaret(shouldAnimateCaret ? .hop : .snap)
+        } else {
+            stopCaretAnimation()
         }
     }
 
@@ -662,19 +780,13 @@ final class PaneTextView: NSTextView {
 
 
     override func cancelOperation(_ sender: Any?) {
-        clearCaretGlide()
+        stopCaretAnimation()
         if let onCancelOperation {
             onCancelOperation()
         } else {
             super.cancelOperation(sender)
         }
     }
-
-    override func resignFirstResponder() -> Bool {
-        clearCaretGlide()
-        return super.resignFirstResponder()
-    }
-
 
     private func lineIndex(of cursorLocation: Int, in lines: [String]) -> Int {
         var charCount = 0

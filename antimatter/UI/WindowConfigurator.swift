@@ -69,6 +69,8 @@ struct WindowConfigurator: NSViewRepresentable {
     private static func apply(mode: PaneStyle.DisplayMode, to window: NSWindow) {
         guard mode == .dock else {
             removeTrafficLights(from: window)
+            // Geometry lives here, not in the styler — see `applyLive`.
+            window.contentMaxSize = NSSize(width: PaneStyle.maxWidth, height: PaneStyle.maxHeight)
             if !(window is NSPanel) {
                 window.orderOut(nil)
             }
@@ -87,9 +89,14 @@ struct WindowConfigurator: NSViewRepresentable {
         window.setFrameAutosaveName(window.frameAutosaveName)
         let windowMaxSize = NSSize(width: PaneStyle.windowMaxWidth, height: PaneStyle.windowMaxHeight)
         let windowMinSize = NSSize(width: PaneStyle.windowMinWidth, height: PaneStyle.windowMinHeight)
-        window.maxSize = windowMaxSize
         window.minSize = windowMinSize
+        // Order matters: assigning `contentMaxSize` makes AppKit *recompute*
+        // `maxSize` as content + window chrome, so setting `maxSize` first and
+        // then `contentMaxSize` silently discarded the explicit clamp — the
+        // window came out capped at the content limit plus a 32 pt titlebar
+        // instead of `PaneStyle.windowMaxWidth`/`Height`.
         window.contentMaxSize = NSSize(width: PaneStyle.maxWidth, height: PaneStyle.maxHeight)
+        window.maxSize = windowMaxSize
         restoreValidFrame(for: window, maxSize: windowMaxSize)
         window.tabbingMode = .disallowed
         window.collectionBehavior = [.fullScreenAuxiliary]
@@ -203,11 +210,16 @@ enum PaneWindowStyler {
         }
     }
 
+    /// Appearance only. Deliberately does *not* touch `contentMaxSize`:
+    /// AppKit derives `maxSize` from `contentMaxSize`, so setting it here
+    /// silently overrode the frame clamp `WindowConfigurator.apply` sets — and
+    /// because a Settings change calls this, the pane's own size limit was being
+    /// undone every time the user touched an appearance setting. Geometry has a
+    /// single owner, in `apply`.
     static func applyLive(to window: NSWindow) {
         window.level = PaneStyle.floatsAboveOtherApps ? .floating : .normal
         window.alphaValue = PaneStyle.windowAlpha
         window.contentView?.layer?.cornerRadius = PaneStyle.effectiveCornerRadius
-        window.contentMaxSize = NSSize(width: PaneStyle.maxWidth, height: PaneStyle.maxHeight)
         window.invalidateShadow()
     }
 }
