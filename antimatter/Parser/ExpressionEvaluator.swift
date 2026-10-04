@@ -170,6 +170,10 @@ nonisolated enum ExpressionEvaluator {
                 expectsOperand = true
             case .rparen, .rbracket:
                 expectsOperand = false
+            case .invalid:
+                // `1.` and friends contribute no literal and leave the scan
+                // expecting a fresh operand, so `1. 2` still yields `[2]`.
+                expectsOperand = true
             case .name, .interpolate, .string, .not:
                 expectsOperand = false
             }
@@ -199,6 +203,8 @@ nonisolated enum ExpressionEvaluator {
                 expectsOperand = true
             case .op, .rparen, .rbracket:
                 sign = 1
+                expectsOperand = true
+            case .invalid:
                 expectsOperand = true
             case .name, .interpolate, .string, .not:
                 expectsOperand = false
@@ -257,6 +263,11 @@ nonisolated enum ExpressionEvaluator {
         case rbracket
         case comma
         case not
+        /// A run of digits that is not a number (`1.`, `1.2.3`). Carries its own
+        /// source text so the parser can *name* it in a diagnostic. This used to
+        /// be a `NUL` stuffed into `.op`, which then reached the user verbatim
+        /// as `Unexpected '<NUL>'`.
+        case invalid(String)
     }
 
     private static func tokenize(_ input: String) -> [Token] {
@@ -268,7 +279,7 @@ nonisolated enum ExpressionEvaluator {
             guard !digits.isEmpty else { return }
             let s = String(digits)
             guard !s.hasSuffix("."), let value = Double(s) else {
-                tokens.append(.op("\u{0}"))
+                tokens.append(.invalid(s))
                 digits.removeAll()
                 return
             }
@@ -715,6 +726,14 @@ nonisolated enum ExpressionEvaluator {
                     }
                     value = .number(lhs / rhsNumber)
                 default:
+                    // `%` is `truncatingRemainder`, which is NaN for a zero
+                    // divisor. Guard it like `/` so the diagnostic says
+                    // "Division by zero" instead of surfacing a non-finite
+                    // result the caller has to second-guess.
+                    guard rhsNumber != 0 else {
+                        setError(&state, "Division by zero")
+                        return nil
+                    }
                     value = .number(lhs.truncatingRemainder(dividingBy: rhsNumber))
                 }
             case .lparen:
@@ -791,9 +810,19 @@ nonisolated enum ExpressionEvaluator {
                 switch name {
                 case "true": return .boolean(true)
                 case "false": return .boolean(false)
-                case "pi": return .number(Double.pi)
-                case "tau": return .number(Double.pi * 2)
-                case "e": return .number(M_E)
+                case "pi", "tau", "e":
+                    // A user definition shadows the built-in constant. `.vars`
+                    // reports `:e = 5`, so `e + 1` had better be 6 and not
+                    // M_E + 1 — and it did, because the constants used to be
+                    // resolved before `variables` was ever consulted.
+                    // `dependencies(in:)` still excludes these names, so `:x = pi`
+                    // resolves whether or not `pi` happens to be defined.
+                    if let value = variables[name] { return value }
+                    switch name {
+                    case "pi": return .number(Double.pi)
+                    case "tau": return .number(Double.pi * 2)
+                    default: return .number(M_E)
+                    }
                 default:
                     if let value = variables[name] { return value }
                     setError(&state, "'\(name)' isn't defined")
@@ -1038,6 +1067,7 @@ nonisolated enum ExpressionEvaluator {
         case .rbracket: "']'"
         case .comma: "','"
         case .not: "'!'"
+        case .invalid(let text): "'\(text)'"
         }
     }
 }

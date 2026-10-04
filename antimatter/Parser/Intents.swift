@@ -22,6 +22,39 @@ nonisolated enum IntentParser {
         line.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("\\")
     }
 
+    /// `text.index(i, offsetBy: n)` only when the result stays **strictly**
+    /// inside `limit` — nil otherwise.
+    ///
+    /// `index(_:offsetBy:limitedBy:)` treats `limit` as *reachable*, so it
+    /// returns `limit` itself rather than nil. A non-nil result there is
+    /// therefore **not** proof the index is inside the string, and subscripting
+    /// it traps once `limit == text.endIndex`. That is not an exotic state: the
+    /// Markdown pass runs on every keystroke, so half-typed input like `- [x`
+    /// at the end of a note is the normal case, not an edge case. Every
+    /// char-by-char lookahead that is about to be dereferenced goes through
+    /// here so "the caret is on the last character" can never be fatal.
+    static func safeIndex<Characters: StringProtocol>(
+        _ text: Characters,
+        from index: Characters.Index,
+        by offset: Int,
+        inside limit: Characters.Index
+    ) -> Characters.Index? {
+        guard let next = text.index(index, offsetBy: offset, limitedBy: limit), next < limit else {
+            return nil
+        }
+        return next
+    }
+
+    /// `safeIndex` by one, for the common "peek at the next character" shape.
+    static func character<Characters: StringProtocol>(
+        after index: Characters.Index,
+        in text: Characters,
+        inside limit: Characters.Index
+    ) -> Character? {
+        guard let next = safeIndex(text, from: index, by: 1, inside: limit) else { return nil }
+        return text[next]
+    }
+
     struct Calculation: Equatable {
         let expression: String
         let result: SparkValue

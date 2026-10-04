@@ -99,9 +99,9 @@ final class StatsCenter {
             // would race ahead of the read and read stale data back.
             Persistence.writeData(data, to: url)
         } else {
-            Task.detached {
-                Persistence.writeData(data, to: url)
-            }
+            // Ordered through the shared writer: counters are only ever
+            // incremented, so an out-of-order write loses keystrokes.
+            Task { await SerialDiskWriter.shared.write(data, to: url) }
         }
     }
 

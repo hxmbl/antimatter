@@ -11,8 +11,11 @@ final class OverlayScrollView: NSScrollView {
         autohidesScrollers = true
         hasHorizontalScroller = false
         drawsBackground = false
-        verticalScroller?.alphaValue = 0
-        horizontalScroller?.alphaValue = 0
+        // Deliberately no `scroller.alphaValue = 0` here. With
+        // `autohidesScrollers = true` and an overlay scroller AppKit already
+        // keeps the scroller hidden while idle; pinning the alpha to 0
+        // overrode that and had to be counteracted from `scrollWheel`, which
+        // is what left the overlay scroller permanently visible.
     }
 
     override func tile() {
@@ -26,7 +29,10 @@ final class OverlayScrollView: NSScrollView {
         guard PaneStyle.showScrollerWhileScrolling else { return }
         if event.timestamp - lastFlashTimestamp > 0.5 {
             lastFlashTimestamp = event.timestamp
-            verticalScroller?.alphaValue = 1
+            // `flashScrollers()` shows the scroller and restores the previous
+            // alpha itself once the scroll settles. Forcing
+            // `verticalScroller?.alphaValue = 1` here was never undone, so the
+            // scroller stayed on screen for good after the first scroll.
             flashScrollers()
         }
     }

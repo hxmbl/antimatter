@@ -62,12 +62,67 @@ nonisolated enum VariableTable {
 
     // MARK: Resolution
 
+    /// Re-entrancy depth for `resolve`, and the reason it needs one.
+    ///
+    /// Evaluating a definition hands the *whole note* to the evaluator as the
+    /// `$()` buffer, so a definition can reach back into the whole-note
+    /// machinery: `:a = $(.sum where it > 1)` runs
+    /// `resolve` → `evaluateValue(buffer:)` → `commandDryRun` →
+    /// `aggregateNumbers` → `filter` → `VariableTable.scan` → `resolve` → …
+    /// That cycle had no exit and took the process down with a stack overflow
+    /// (SIGSEGV). It is not an exotic line: the reactive pass, the footer
+    /// preview, `.vars`, both `.export` formats and *every repaint*
+    /// (`PaneTextView.drawVariableGhosts`) all call `scan`, so ordinary typing
+    /// on a note containing such a definition was enough.
+    ///
+    /// `Aggregates.numbers` already has its own `$()` guard for the
+    /// no-argument case; this covers the `where`/`if` filter path, and any
+    /// future one, by refusing to re-enter at all.
+    private nonisolated static let resolutionDepth = ResolutionDepth()
+
+    private final class ResolutionDepth: @unchecked Sendable {
+        private let lock = NSLock()
+        private var depth = 0
+
+        var isResolving: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return depth > 0
+        }
+
+        func enter() {
+            lock.lock(); depth += 1; lock.unlock()
+        }
+
+        func leave() {
+            lock.lock(); depth -= 1; lock.unlock()
+        }
+    }
+
     /// Repeated passes over the bindings. A definition lands once its
     /// dependencies are all in the table, so forward references and chains
     /// resolve whatever order they appear in. Deletions always land in the
     /// first pass at their document position. Anything still unmet at the end
     /// (self-reference, cycle, unknown name) stays text.
     private static func resolve(_ text: String) -> (table: [String: SparkValue], unresolved: [(name: String, rhs: String)]) {
+        // Re-entered from inside a definition's own evaluation. Starting over
+        // would recurse forever, so hand back an empty table and let the
+        // definition stay unresolved — the same quiet failure the language
+        // already uses for a self-reference or a cycle. A predicate that only
+        // binds `it` still works, because `filter` supplies `it` itself.
+        //
+        // Known limit, deliberate: a `where`/`if` predicate that references a
+        // note variable *and* lives inside a `$()` inside a definition
+        // (`:x = $(.sum where it > :thr)`) sees no variables, so it is treated
+        // as unevaluable and the numbers are kept unfiltered. Returning the
+        // partially-built table instead would be worse: it is only correct up to
+        // the current pass position, so it could produce a confident wrong
+        // number instead of an honest quiet failure. This mirrors the intent of
+        // the existing guard in `Aggregates.numbers` — a `$()` must not see the
+        // definition it is embedded in.
+        guard !resolutionDepth.isResolving else { return ([:], []) }
+        resolutionDepth.enter()
+        defer { resolutionDepth.leave() }
+
         var bindings: [Binding] = []
         for lineRange in lineRanges(text as NSString) {
             let trimmed = (text as NSString).substring(with: lineRange)

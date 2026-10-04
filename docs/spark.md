@@ -39,9 +39,9 @@ Evaluating an expression yields one of four values:
 | comparison | `<`, `<=`, `>`, `>=` | numbers only |
 | range | `a..b` | expands to a list, level above addition |
 | additive | `+`, `-` | `+` also concatenates strings |
-| multiplicative | `*`, `/`, `%` | `%` is the truncated remainder |
-| power | `^` | right-associative, `pow()` |
-| unary | `-`, `+`, `!` | `!` needs a boolean |
+| multiplicative | `*`, `/`, `%` | `%` is the truncated remainder; `/` and `%` both reject a zero divisor |
+| power | `^` | right-associative, `pow()`; binds the *unary-signed* base, so `-2^2` is `4` |
+| unary | `-`, `+`, `!` | `!` needs a boolean; `-` applies before `^` |
 | implicit multiply | `2(3 + 4)`, `(2)(3)` | paren juxtaposition only; `sqrt(9)2` isn't supported |
 
 Precedence example: `1..3 + 1` parses as `1..(3 + 1)` → `[1, 2, 3, 4]`.

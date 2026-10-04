@@ -374,3 +374,335 @@ struct StopwatchCenterTests {
         #expect(reloaded.stopwatches.isEmpty)
     }
 }
+
+// MARK: - Theme colours
+
+@MainActor
+struct ThemeHexTests {
+
+    /// `#abc` used to hit the `default` branch and render as pure white,
+    /// because only `hex.count == 6` was understood.
+    @Test func threeDigitHexExpandsByDoublingEachDigit() {
+        let c = HexColor.components(from: "#abc")
+        #expect(c?.red == Double(0xAA) / 255)
+        #expect(c?.green == Double(0xBB) / 255)
+        #expect(c?.blue == Double(0xCC) / 255)
+        #expect(c?.alpha == 1)
+
+        let color = NSColor(hex: "#abc").usingColorSpace(.sRGB)
+        #expect(abs((color?.redComponent ?? 0) - Double(0xAA) / 255) < 0.002)
+        #expect(abs((color?.greenComponent ?? 0) - Double(0xBB) / 255) < 0.002)
+        #expect(abs((color?.blueComponent ?? 0) - Double(0xCC) / 255) < 0.002)
+    }
+
+    @Test func sixDigitHexIsUnchanged() {
+        let c = HexColor.components(from: "#1C1C1E")
+        #expect(c?.red == Double(0x1C) / 255)
+        #expect(c?.green == Double(0x1C) / 255)
+        #expect(c?.blue == Double(0x1E) / 255)
+        #expect(c?.alpha == 1)
+    }
+
+    /// The alpha-carrying forms were broken the same way `#abc` was.
+    @Test func shortFormWithAlphaAndLongFormWithAlphaParse() {
+        let four = HexColor.components(from: "#f00a")
+        #expect(four?.red == 1)
+        #expect(four?.green == 0)
+        #expect(four?.blue == 0)
+        #expect(abs((four?.alpha ?? 0) - Double(0xAA) / 255) < 0.002)
+
+        let eight = HexColor.components(from: "#0000FF80")
+        #expect(eight?.red == 0)
+        #expect(eight?.green == 0)
+        #expect(eight?.blue == 1)
+        #expect(abs((eight?.alpha ?? 0) - Double(0x80) / 255) < 0.002)
+
+        let ns = NSColor(hex: "#0000FF80").usingColorSpace(.sRGB)
+        #expect(abs((ns?.alphaComponent ?? 0) - Double(0x80) / 255) < 0.002)
+    }
+
+    @Test func aLeadingHashIsOptionalAndJunkIsRejected() {
+        #expect(HexColor.components(from: "abc") == HexColor.components(from: "#abc"))
+        #expect(HexColor.components(from: " #abc ") == HexColor.components(from: "#abc"))
+        // Unsupported shapes fall through to the caller's white fallback.
+        #expect(HexColor.components(from: "") == nil)
+        #expect(HexColor.components(from: "#12") == nil)
+        #expect(HexColor.components(from: "#12345") == nil)
+        #expect(HexColor.components(from: "#1234567") == nil)
+        #expect(HexColor.components(from: "#123456789") == nil)
+        #expect(HexColor.components(from: "#gggggg") == nil)
+        let fallback = NSColor(hex: "not a colour").usingColorSpace(.sRGB)
+        #expect(abs((fallback?.redComponent ?? 0) - 1) < 0.002)
+    }
+
+    @Test func everyBuiltInThemeColourParses() {
+        for theme in PaneTheme.builtIn {
+            for hex in [theme.backgroundColor, theme.textColor, theme.accentColor, theme.tintColor] {
+                #expect(HexColor.components(from: hex) != nil,
+                        "\(theme.id) has an unparseable colour \"\(hex)\" — it would render as pure white")
+            }
+        }
+    }
+}
+
+// MARK: - Paste stream
+
+@MainActor
+struct PasteStreamTests {
+
+    private func tempStore() -> NoteStore {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("antimatter-paste-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("notes.json")
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                 withIntermediateDirectories: true)
+        return NoteStore(fileURL: url)
+    }
+
+    /// `.paste` hard-coded `NoteStore.shared`, so a ⌘N window streamed into
+    /// another window's note.
+    @Test func pasteAppendsToTheStoreItWasStartedWith() {
+        let target = tempStore()
+        let stream = PasteStream.shared
+        defer { stream.stopStreaming() }
+
+        stream.startStreaming(into: target)
+        stream.adoptClipboardText("copied text")
+        #expect(target.activeNote.text == "copied text")
+    }
+
+    @Test func appendingContinuesTheStreamedNoteOnOneLine() {
+        let target = tempStore()
+        let stream = PasteStream.shared
+        defer { stream.stopStreaming() }
+
+        stream.startStreaming(into: target)
+        stream.adoptClipboardText("first")
+        stream.adoptClipboardText("second")
+        #expect(target.activeNote.text == "first\nsecond")
+        // Empty clipboard payloads are ignored rather than appending a blank line.
+        stream.adoptClipboardText("")
+        #expect(target.activeNote.text == "first\nsecond")
+    }
+
+    @Test func aSecondPasteRetargetsARunningStream() {
+        let first = tempStore()
+        let second = tempStore()
+        let stream = PasteStream.shared
+        defer { stream.stopStreaming() }
+
+        stream.startStreaming(into: first)
+        stream.adoptClipboardText("into the first window")
+        #expect(first.activeNote.text == "into the first window")
+
+        stream.startStreaming(into: second)
+        stream.adoptClipboardText("into the second window")
+        #expect(second.activeNote.text == "into the second window")
+        #expect(first.activeNote.text == "into the first window")
+    }
+
+    @Test func stoppingClearsTheStreamingFlag() {
+        let stream = PasteStream.shared
+        defer { stream.stopStreaming() }
+        stream.startStreaming(into: tempStore())
+        #expect(stream.isStreaming)
+        stream.stopStreaming()
+        #expect(!stream.isStreaming)
+        // Idempotent: a second stop must not trap or resurrect the task.
+        stream.stopStreaming()
+        #expect(!stream.isStreaming)
+    }
+}
+
+// MARK: - Pane window configuration
+
+/// Serialized: it mutates `pane.displayMode` and a process-wide memo.
+@MainActor
+@Suite(.serialized)
+struct WindowConfiguratorTests {
+
+    private func withDisplayMode<T>(_ mode: String, _ body: () -> T) -> T {
+        let previous = UserDefaults.standard.string(forKey: "pane.displayMode")
+        UserDefaults.standard.set(mode, forKey: "pane.displayMode")
+        defer {
+            if let previous {
+                UserDefaults.standard.set(previous, forKey: "pane.displayMode")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "pane.displayMode")
+            }
+        }
+        return body()
+    }
+
+    private func makeWindow() -> NSWindow {
+        NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 520),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: true
+        )
+    }
+
+    /// Configuration used to be scheduled from `makeNSView`, where
+    /// `view.window` is always nil, so the *first* pass never ran and the
+    /// window only picked up its settings a runloop later.
+    @Test func theFirstDockConfigurationActuallyApplies() {
+        withDisplayMode("dock") {
+            let window = makeWindow()
+            WindowConfigurator.configure(window)
+            #expect(window.identifier?.rawValue.hasPrefix(PaneStyle.windowIdentifier) == true)
+            #expect(window.maxSize == NSSize(width: PaneStyle.windowMaxWidth, height: PaneStyle.windowMaxHeight))
+            #expect(window.minSize == NSSize(width: PaneStyle.windowMinWidth, height: PaneStyle.windowMinHeight))
+            #expect(window.isMovableByWindowBackground)
+        }
+    }
+
+    @Test func aNonDockWindowIsStrippedOfTrafficLightsAndOrderedOut() {
+        withDisplayMode("menuBar") {
+            let window = makeWindow()
+            WindowConfigurator.configure(window)
+            #expect(window.styleMask.contains(.closable) == false)
+            #expect(window.standardWindowButton(.closeButton)?.isHidden == true)
+            #expect(window.isVisible == false)
+        }
+    }
+
+    /// Switching modes must re-configure the same window rather than trusting
+    /// the memo from the previous mode.
+    @Test func switchingModesReconfiguresTheSameWindow() {
+        let window = makeWindow()
+        withDisplayMode("menuBar") {
+            WindowConfigurator.configure(window)
+            #expect(window.styleMask.contains(.closable) == false)
+        }
+        withDisplayMode("dock") {
+            WindowConfigurator.configure(window)
+            #expect(window.styleMask.contains(.closable) == true)
+            #expect(window.standardWindowButton(.closeButton)?.isHidden == false)
+            #expect(window.identifier?.rawValue.hasPrefix(PaneStyle.windowIdentifier) == true)
+        }
+    }
+
+    /// The memo used to be keyed by `ObjectIdentifier` alone, which is recycled
+    /// after deallocation, and it was never pruned. A live window's entry must
+    /// always belong to that window, and dead entries must not accumulate.
+    @Test func theConfigurationMemoNeverOutlivesItsWindows() {
+        withDisplayMode("dock") {
+            var survivors: [NSWindow] = []
+            for _ in 0..<3 {
+                let window = makeWindow()
+                WindowConfigurator.configure(window)
+                survivors.append(window)
+            }
+            #expect(WindowConfigurator.deadEntryCount == 0)
+            #expect(survivors.allSatisfy {
+                $0.identifier?.rawValue.hasPrefix(PaneStyle.windowIdentifier) == true
+            })
+            #expect(Set(survivors.map { ObjectIdentifier($0) }).count == survivors.count)
+
+            withExtendedLifetime(survivors) {
+                WindowConfigurator.pruneDeadEntries()
+            }
+            #expect(WindowConfigurator.deadEntryCount == 0)
+        }
+    }
+
+    /// A window that is gone must leave nothing behind: its entry is dropped on
+    /// the next pass instead of being inherited by a new window whose
+    /// `ObjectIdentifier` happens to be the same.
+    @Test func aWindowThatIsGoneLeavesNoConfigurationBehind() {
+        withDisplayMode("dock") {
+            // Start from a clean table so leftovers from an earlier test in this
+            // suite cannot inflate the count below.
+            WindowConfigurator.pruneDeadEntries()
+            #expect(WindowConfigurator.deadEntryCount == 0)
+
+            autoreleasepool {
+                let transient = makeWindow()
+                WindowConfigurator.configure(transient)
+                #expect(transient.identifier?.rawValue.hasPrefix(PaneStyle.windowIdentifier) == true)
+            }
+            #expect(WindowConfigurator.deadEntryCount == 1)
+
+            let fresh = makeWindow()
+            WindowConfigurator.configure(fresh)
+            #expect(WindowConfigurator.deadEntryCount == 0)
+            #expect(fresh.identifier?.rawValue.hasPrefix(PaneStyle.windowIdentifier) == true)
+            withExtendedLifetime(fresh) {}
+        }
+    }
+
+    @Test func configuringNoWindowIsANoOp() {
+        WindowConfigurator.configure(nil)
+    }
+}
+
+// MARK: - Pane windows
+
+@MainActor
+struct PaneWindowTests {
+
+    /// ⌘N gives every extra window a slot-scoped frame-autosave name, which is
+    /// what keeps the saved rect readable instead of growing an entry per
+    /// window ever opened.
+    @Test func frameAutosaveNamesAreSlotScopedAndUnique() {
+        #expect(WindowManager.maxWindowSlots > 0)
+        #expect(WindowManager.frameAutosaveName(for: 0) == "\(PaneStyle.frameAutosaveName).0")
+        let names = (0..<WindowManager.maxWindowSlots).map { WindowManager.frameAutosaveName(for: $0) }
+        #expect(Set(names).count == names.count)
+        #expect(names.allSatisfy { $0.hasPrefix(PaneStyle.frameAutosaveName) })
+    }
+
+    @Test func paneLookupIgnoresNonPaneWindows() {
+        let pane = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 520),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: true
+        )
+        pane.identifier = NSUserInterfaceItemIdentifier("\(PaneStyle.windowIdentifier).3")
+        let stranger = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 520),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: true
+        )
+        stranger.identifier = NSUserInterfaceItemIdentifier("some.other.window")
+
+        #expect(WindowManager.isPane(pane))
+        #expect(WindowManager.isPane(stranger) == false)
+
+        let identifierless = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 520),
+            styleMask: [.titled, .resizable],
+            backing: .buffered,
+            defer: true
+        )
+        #expect(WindowManager.isPane(identifierless) == false)
+    }
+
+    /// The free slot must always land inside the bounded range, so the saved
+    /// frame set can never grow past `maxWindowSlots`.
+    @Test func theFreeSlotIsAlwaysInRange() {
+        for _ in 0..<5 {
+            let slot = WindowManager.freeSlot()
+            #expect(slot >= 0)
+            #expect(slot < WindowManager.maxWindowSlots)
+        }
+    }
+}
+
+/// Settings offers Dock / Menu Bar / Dropdown tags; a tag that drifts from
+/// `PaneStyle.DisplayMode` becomes a dead mode only reachable by hand-editing
+/// defaults.
+@MainActor
+struct DisplayModeTests {
+    @Test func everyCaseRoundTripsThroughItsRawValue() {
+        for mode in PaneStyle.DisplayMode.allCases {
+            #expect(PaneStyle.DisplayMode(rawValue: mode.rawValue) == mode)
+        }
+        #expect(PaneStyle.DisplayMode.allCases.count == 3)
+        #expect(PaneStyle.DisplayMode(rawValue: "dropdown") == .dropdown)
+        #expect(PaneStyle.DisplayMode(rawValue: "not-a-mode") == nil)
+    }
+}

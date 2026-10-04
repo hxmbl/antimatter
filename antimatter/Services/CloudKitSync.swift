@@ -333,6 +333,11 @@ final class CloudKitSync: ObservableObject {
             }
         }
         store.notes = merged
+        // A merge replaces the whole stack, so re-assert the invariant the rest
+        // of the app depends on: `activeNoteID` names a note that is in `notes`.
+        // Without this a merge can leave the pointer dangling, and every later
+        // keystroke would target a note that no longer exists.
+        store.repairActiveNotePointer()
         store.flush()
     }
 

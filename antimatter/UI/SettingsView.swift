@@ -22,6 +22,11 @@ struct SettingsView: View {
     @AppStorage("pane.floats") private var floatsAboveOtherApps = true
     @AppStorage("pane.hidesOnEscape") private var hidesOnEscape = true
 
+    // `CloudKitSync.shared` was read straight out of `body`, so its
+    // `@Published` properties never invalidated this view: "Syncing…" stuck
+    // on screen until the window was reopened.
+    @ObservedObject private var sync = CloudKitSync.shared
+
     @State private var shortcutNotice: String?
     @State private var shortcutNoticeTask: Task<Void, Never>?
 
@@ -49,6 +54,7 @@ struct SettingsView: View {
                 Picker("Show as", selection: $displayMode) {
                     Text("Dock").tag("dock")
                     Text("Menu Bar").tag("menuBar")
+                    Text("Dropdown").tag("dropdown")
                 }
                 .pickerStyle(.segmented)
                 .onChange(of: displayMode) { _, _ in
@@ -57,7 +63,7 @@ struct SettingsView: View {
             } header: {
                 Label("General", systemImage: "gearshape")
             } footer: {
-                Text("Automatic follows your Mac's look; Light or Dark pins the app to that style. Show as picks where Antimatter lives — the Dock or the menu bar.")
+                Text("Automatic follows your Mac's look; Light or Dark pins the app to that style. Show as picks where Antimatter lives: a Dock window, a panel that drops from the menu-bar icon, or a Dropdown panel that drops from the top of the screen and closes when you click away.")
             }
 
             Section {
@@ -122,18 +128,18 @@ struct SettingsView: View {
 
             Section {
                 Toggle("Sync notes across your devices", isOn: Binding(
-                    get: { CloudKitSync.shared.isEnabled },
-                    set: { _ in CloudKitSync.shared.toggleSync() }
+                    get: { sync.isEnabled },
+                    set: { _ in sync.toggleSync() }
                 ))
 
-                if CloudKitSync.shared.isEnabled {
-                    if let lastSync = CloudKitSync.shared.lastSyncDate {
+                if sync.isEnabled {
+                    if let lastSync = sync.lastSyncDate {
                         Text("Last synced \(lastSync, style: .relative) ago")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
 
-                    switch CloudKitSync.shared.syncStatus {
+                    switch sync.syncStatus {
                     case .idle: Text("Synced").foregroundStyle(.green)
                     case .syncing: Text("Syncing...").foregroundStyle(.orange)
                     case .error(let msg): Text("Error: \(msg)").foregroundStyle(.red)
@@ -167,7 +173,19 @@ struct SettingsView: View {
         usesShift = chord.shift
         keyCode = chord.keyCode
         PaneHotKey.shared.reinstall()
-        let active = PaneHotKey.shared.activeChord
+
+        guard let active = PaneHotKey.shared.activeChord else {
+            // The app holds no hot key at all. Say why instead of leaving the
+            // fields showing a shortcut that does nothing.
+            usesControl = GlobalShortcut.default.control
+            usesOption = GlobalShortcut.default.option
+            usesCommand = GlobalShortcut.default.command
+            usesShift = GlobalShortcut.default.shift
+            keyCode = GlobalShortcut.default.keyCode
+            showShortcutNotice(notice(for: PaneHotKey.shared.registrationState, fallback: "Antimatter has no working shortcut right now."))
+            return
+        }
+
         let accepted = GlobalShortcut(control: active.control, option: active.option, command: active.command, shift: active.shift, keyCode: active.keyCode)
         usesControl = accepted.control
         usesOption = accepted.option
@@ -185,6 +203,18 @@ struct SettingsView: View {
         }
     }
 
+    private func notice(for state: PaneHotKey.RegistrationState, fallback: String) -> String {
+        switch state {
+        case .active: return fallback
+        case .tooBroad:
+            return "Shortcuts need Control, Option, or Command — bare keys and Shift alone would swallow typing everywhere."
+        case .unavailable:
+            return "That shortcut is already in use by another app — Antimatter has no shortcut until you pick a different one."
+        case .handlerUnavailable:
+            return "macOS refused the global shortcut handler, so no shortcut will work."
+        }
+    }
+
     private func showShortcutNotice(_ text: String) {
         shortcutNotice = text
         shortcutNoticeTask?.cancel()
@@ -195,7 +225,15 @@ struct SettingsView: View {
     }
 
     private func syncToActiveChord() {
-        let active = PaneHotKey.shared.activeChord
+        // With no chord registered there is nothing honest to show, so leave
+        // the stored preference alone and explain the state instead.
+        guard let active = PaneHotKey.shared.activeChord else {
+            if PaneHotKey.shared.registrationState != .active {
+                showShortcutNotice(notice(for: PaneHotKey.shared.registrationState,
+                                          fallback: "Antimatter has no working shortcut right now."))
+            }
+            return
+        }
         usesControl = active.control
         usesOption = active.option
         usesCommand = active.command
@@ -219,6 +257,13 @@ struct SettingsView: View {
         windowAlpha = 1.0
         floatsAboveOtherApps = true
         hidesOnEscape = true
+
+        // Theme and shortcut used to survive "Restore Defaults" while
+        // everything around them reset, so the button only half worked.
+        PaneTheme.set(PaneTheme.builtIn[0])
+        UserDefaults.standard.removeObject(forKey: "pane.customTheme")
+        applyShortcut(.default)
+
         LaunchPreferences.apply()
     }
 }

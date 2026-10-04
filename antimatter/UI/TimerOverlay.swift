@@ -51,6 +51,11 @@ struct TimerOverlay: View {
             }
         }
         .onTapGesture { onDismiss() }
+        // Only fires once the overlay itself is the key window (after a click on
+        // it). The usual case — Escape typed into the note underneath — is
+        // handled by the local monitor `TimerOverlayWindow` installs, because
+        // this borderless `.screenSaver` panel is deliberately never made key
+        // so it does not steal the caret out from under the user.
         .onKeyPress(.escape) { onDismiss(); return .handled }
     }
 
@@ -67,11 +72,19 @@ struct TimerOverlay: View {
 final class TimerOverlayWindow {
     static let shared = TimerOverlayWindow()
     private var window: NSWindow?
+    private var escapeMonitor: Any?
 
-    func show(timer: ActiveTimer) {
+    /// `screen` should be the display the note lives on. `NSScreen.main` was
+    /// hard-coded, so a full-screen overlay could cover the display the user
+    /// was *not* working on.
+    func show(timer: ActiveTimer, screen: NSScreen? = nil) {
         dismiss()
+        let target = screen
+            ?? WindowManager.shared.frontmostPane?.screen
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
         let panel = NSPanel(
-            contentRect: NSScreen.main?.frame ?? .zero,
+            contentRect: target?.frame ?? .zero,
             styleMask: [.borderless, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -88,12 +101,33 @@ final class TimerOverlayWindow {
                 self?.dismiss()
             }
         )
+        panel.setFrame(target?.frame ?? .zero, display: true)
         panel.orderFrontRegardless()
         window = panel
+
+        // The overlay is never made key, so `onKeyPress` above cannot see the
+        // Escape the user types into the note. Without this, Escape reached
+        // `PaneTextView.keyDown`, whose `dismissActiveDotcommands()` cancelled
+        // *every* timer, stopwatch and reminder — the overlay came back down
+        // and so did the user's whole board. A local monitor (no accessibility
+        // permission needed) intercepts the key first.
+        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return event }   // Escape
+            MainActor.assumeIsolated { self?.dismiss() }
+            return nil
+        }
     }
 
     func dismiss() {
+        if let escapeMonitor {
+            NSEvent.removeMonitor(escapeMonitor)
+            self.escapeMonitor = nil
+        }
         window?.orderOut(nil)
         window = nil
+    }
+
+    deinit {
+        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
     }
 }

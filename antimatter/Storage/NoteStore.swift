@@ -32,12 +32,29 @@ final class NoteStore: ObservableObject {
     private var isInitialized = false
 
     var activeNote: Note {
-        get { notes.first { $0.id == activeNoteID } ?? Note() }
+        get {
+            if let note = notes.first(where: { $0.id == activeNoteID }) { return note }
+            // The pointer is stale. Never hand back a *detached* `Note()`: the
+            // caller would read-modify-write it and the setter would drop the
+            // result, so the pane's next keystroke would vanish with no error
+            // while the store kept the old text — the note looks frozen.
+            // Returning a real member means the edit lands somewhere visible.
+            return notes.first ?? Note()
+        }
         set {
             if let idx = notes.firstIndex(where: { $0.id == activeNoteID }) {
                 notes[idx] = newValue
-                scheduleSave()
+            } else if let idx = notes.firstIndex(where: { $0.id == newValue.id }) {
+                // Writing a note that is still in the stack but is no longer the
+                // active one: honour the edit where it actually lives.
+                notes[idx] = newValue
+            } else {
+                // Genuinely unknown id. Keep the edit instead of losing it — it
+                // becomes a real, visible note rather than evaporating.
+                notes.insert(newValue, at: 0)
+                activeNoteID = newValue.id
             }
+            scheduleSave()
         }
     }
 
@@ -155,7 +172,21 @@ final class NoteStore: ObservableObject {
         if let idx = notes.firstIndex(where: { $0.id == note.id }) {
             notes[idx] = slotNote
         }
+        // The `removeAll` above drops the note that previously held this slot,
+        // and that can be the *active* one — pinning slot 2 onto a different
+        // note while slot 2 was active. Repair the pointer here, or every later
+        // keystroke, `.sum` and bridge append targets a note that is no longer
+        // in the stack.
+        repairActiveNotePointer()
         scheduleSave()
+    }
+
+    /// Re-points `activeNoteID` at a note that actually exists. Cheap, and
+    /// called from every path that can remove or replace notes wholesale —
+    /// including `CloudKitSync.pull()`, which swaps the whole stack out.
+    func repairActiveNotePointer() {
+        guard !notes.contains(where: { $0.id == activeNoteID }) else { return }
+        activeNoteID = notes.first?.id ?? create().id
     }
 
     func cycleNote(direction: Int) {

@@ -75,13 +75,23 @@ nonisolated enum IntentExecution {
 
         /// Split `.sum 10 20 30` into its kind, the command name typed,
         /// and the unparsed argument string (may be empty for bare `.sum`).
+        ///
+        /// Only the *command word* is matched case-insensitively. Lower-casing the
+        /// whole line — which this used to do — also lower-cased the arguments, so
+        /// a `where` predicate's string literals were rewritten: `.sum where
+        /// upper(it) == "A"` compared against `"a"`, never matched, and then the
+        /// "unevaluable predicate ⇒ keep everything" rule hid the failure by
+        /// keeping all the numbers.
         static func split(_ line: String) -> (kind: AggregateKind, command: String, args: String)? {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmed.hasPrefix(IntentParser.commandPrefix) else { return nil }
-            let stem = String(trimmed.dropFirst(IntentParser.commandPrefix.count)).lowercased()
+            let afterPrefix = trimmed.dropFirst(IntentParser.commandPrefix.count)
+            let head = afterPrefix.prefix { !$0.isWhitespace }
+            let stem = head.lowercased()
             for (command, kind) in Self.aliases {
-                guard stem == command || stem.hasPrefix(command + " ") else { continue }
-                let args = String(stem.dropFirst(command.count))
+                guard stem == command || afterPrefix.hasPrefix("\(command) ") else { continue }
+                let args = afterPrefix
+                    .dropFirst(command.count)
                     .trimmingCharacters(in: .whitespaces)
                 return (kind, IntentParser.commandPrefix + command, args)
             }
@@ -114,15 +124,22 @@ nonisolated enum IntentExecution {
     /// A trailing `where <predicate>` / `if <predicate>` filters the numbers,
     /// binding `it` to each one: `.sum where it > 10`.
     static func aggregateNumbers(forLine line: String, in text: String) -> [Double] {
-        guard let (_, _, args) = AggregateKind.split(line) else {
+        guard let parts = AggregateKind.split(line) else {
             return Aggregates.numbers(in: text)
         }
-        let (payload, predicate) = splitAggregateFilter(args)
+        let (payload, predicate) = splitAggregateFilter(parts.args)
         let candidates: [Double]
         if payload.isEmpty {
             candidates = Aggregates.numbers(in: text)
         } else {
-            candidates = aggregateArgumentNumbers(payload, in: text)
+            // Resolve the argument expression against the note's own variables,
+            // so `.sum :items` / `.avg :rate` see what the note defines. The
+            // buffer is passed too, so `$()` inside the arguments still works.
+            candidates = aggregateArgumentNumbers(
+                payload,
+                variables: VariableTable.scan(text),
+                buffer: text
+            )
         }
         guard let predicate, !predicate.isEmpty else { return candidates }
         return filter(candidates, by: predicate, in: text)
@@ -143,8 +160,17 @@ nonisolated enum IntentExecution {
     /// Explicit aggregate arguments: a single Spark expression that evaluates
     /// (`.sum 1..10`, `.sum :items`, `.sum [1,2,3]`, `.sum 2 * 3` → 6), falling
     /// back to an unparsed number list (`.sum 10 20 30`).
-    private static func aggregateArgumentNumbers(_ args: String, in text: String) -> [Double] {
-        if let value = ExpressionEvaluator.evaluateValue(args, variables: [:]) {
+    ///
+    /// `variables` is the note's table — without it a variable reference can
+    /// never resolve, the whole attempt fails, and the `listLiterals` fallback
+    /// yields nothing for a bare name. So `.sum :items` reported "No numbers
+    /// after `.sum` to sum" for a note where `:items` was perfectly well defined.
+    private static func aggregateArgumentNumbers(
+        _ args: String,
+        variables: [String: SparkValue],
+        buffer: String?
+    ) -> [Double] {
+        if let value = ExpressionEvaluator.evaluateValue(args, variables: variables, buffer: buffer) {
             let numbers = ExpressionEvaluator.numbers(from: value)
             if !numbers.isEmpty {
                 return numbers
@@ -221,7 +247,7 @@ nonisolated enum IntentExecution {
             let parts = trimmed.components(separatedBy: " = ")
             guard parts.count >= 2,
                   let storedToken = parts.last,
-                  Double(storedToken.trimmingCharacters(in: .whitespaces)) != nil
+                  Self.looksLikeCommittedAnswer(storedToken)
             else { continue }
             let storedText = storedToken.trimmingCharacters(in: .whitespaces)
 
@@ -235,14 +261,15 @@ nonisolated enum IntentExecution {
                 }
             }
 
-            let value: Double?
+            // Any Spark value, not just a number. `.flatMap(\.number)` sat here too, so
+            // even with the gate above widened, a boolean or string answer was
+            // extracted as `nil` and skipped.
+            let value: SparkValue?
             if let kind = AggregateKind.split(expression) {
-                // Argument- and filter-bearing aggregates recompute reactively
-                // too: `.sum 1..10`, `.sum :items`, `.sum where it > 10`.
                 value = kind.kind.value(of: aggregateNumbers(forLine: expression, in: text))
+                    .map(SparkValue.number)
             } else {
                 value = ExpressionEvaluator.evaluateValue(expression, variables: variables)
-                    .flatMap(\.number)
             }
             guard let value, value.isFinite,
                   IntentParser.format(value) != storedText
@@ -255,6 +282,21 @@ nonisolated enum IntentExecution {
             commits.append(Commit(range: lineRange, replacement: replacement))
         }
         return commits
+    }
+
+    /// Whether the right-hand side of `expr = …` looks like a committed Spark
+    /// answer rather than prose.
+    ///
+    /// This used to be `Double(token) != nil`, which silently excluded two of
+    /// the four value types the language produces: a committed `2 > 1 = true` or
+    /// `"a" + "b" = "ab"` was never eligible for a refresh, so every boolean and
+    /// string result in a note went stale forever while the numeric ones healed
+    /// themselves the moment you typed.
+    nonisolated static func looksLikeCommittedAnswer(_ token: String) -> Bool {
+        let trimmed = token.trimmingCharacters(in: .whitespaces)
+        if Double(trimmed) != nil { return true }
+        if trimmed == "true" || trimmed == "false" { return true }
+        return trimmed.count >= 2 && trimmed.hasPrefix("\"") && trimmed.hasSuffix("\"")
     }
 
     // MARK: Time-based reevaluation
@@ -678,15 +720,33 @@ nonisolated enum IntentExecution {
             var cursor = rest.index(after: rest.startIndex)
             // `- [ ]`, `- [x]`, `- [X]` (and the * / + twins) repeat their
             // whole box — the item type survives the newline.
+            //
+            // Layout after the bullet is `cursor` = space, `cursor + 1` = `[`,
+            // `cursor + 2` = the box glyph, `cursor + 3` = `]`. The glyph used
+            // to be read from `cursor + 1` — the very slot the next line
+            // compares against `"["` — so the condition demanded the glyph be
+            // simultaneously `[` and one of ` `/`x`/`X` and could never hold.
+            // The block was unreachable, and `- [x] milk` continued as a bare
+            // `- `, silently dropping the checkbox.
+            //
+            // Fixing that contradiction would in turn expose a trap the dead
+            // code was hiding: the closing `]` was read at
+            // `index(cursor, offsetBy: 3, limitedBy: endIndex)`, which *returns*
+            // `endIndex` rather than nil, so dereferencing it traps on a line
+            // that is just `- [x`. Every lookahead now goes through
+            // `IntentParser.safeIndex`, and `cursor` is bounds-checked first
+            // because for a bare `-` it already equals `endIndex`.
             var boxed = false
-            if let next = rest.index(cursor, offsetBy: 3, limitedBy: rest.endIndex) {
-                let inner = rest[rest.index(after: cursor)]
-                if rest[cursor] == " ",
-                   rest[rest.index(after: cursor)] == "[",
-                   inner == " " || inner == "x" || inner == "X",
-                   rest[next] == "]" {
-                    markerText = String(first) + " [" + String(inner) + "]"
-                    cursor = rest.index(after: next)
+            if cursor < rest.endIndex, rest[cursor] == " ",
+               let openBracket = IntentParser.safeIndex(rest, from: cursor, by: 1, inside: rest.endIndex),
+               let glyphIndex = IntentParser.safeIndex(rest, from: cursor, by: 2, inside: rest.endIndex),
+               let closeBracket = IntentParser.safeIndex(rest, from: cursor, by: 3, inside: rest.endIndex),
+               rest[openBracket] == "[",
+               rest[closeBracket] == "]" {
+                let glyph = rest[glyphIndex]
+                if glyph == " " || glyph == "x" || glyph == "X" {
+                    markerText = String(first) + " [" + String(glyph) + "]"
+                    cursor = rest.index(after: closeBracket)
                     boxed = true
                 }
             }
@@ -1114,13 +1174,24 @@ nonisolated enum IntentExecution {
         return partial == firstWord || partial.hasPrefix(firstWord + " ")
     }
 
+    /// Display order for the completion panel's grouped sections, and for the
+    /// sort that uses it. Built once: this used to be assembled inside the
+    /// comparison closure, so every `sort` of the command list allocated and
+    /// hashed a fresh dictionary on every single comparison — O(n log n)
+    /// allocations on a path that runs on each keystroke.
+    private nonisolated static let categoryOrder: [DotCommandCategory: Int] = {
+        var order: [DotCommandCategory: Int] = [:]
+        for (offset, category) in DotCommandCategory.allCases.enumerated() {
+            order[category] = offset
+        }
+        return order
+    }()
+
     private static func categorySort(
         _ lhs: DotCommand,
         _ rhs: DotCommand,
         usageCount: (String) -> Int
     ) -> Bool {
-        let categoryOrder = Dictionary(uniqueKeysWithValues:
-            DotCommandCategory.allCases.enumerated().map { ($0.element, $0.offset) })
         if lhs.category != rhs.category {
             return (categoryOrder[lhs.category] ?? .max) < (categoryOrder[rhs.category] ?? .max)
         }

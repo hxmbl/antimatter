@@ -3,33 +3,79 @@ import AppKit
 
 /// Applies the floating-pane window settings once the hosting window exists.
 struct WindowConfigurator: NSViewRepresentable {
-    private static var configuredModes: [ObjectIdentifier: PaneStyle.DisplayMode] = [:]
+
+    /// What `configure` has already done to a live window, keyed by window.
+    ///
+    /// The key alone was not enough: `ObjectIdentifier` values are recycled
+    /// after a window is deallocated, so a brand-new window could inherit a
+    /// dead window's "already configured" mark and skip configuration
+    /// entirely — never getting its identifier, size limits or frame clamp.
+    /// Each entry therefore also holds the window *weakly*, and `prune()` drops
+    /// the dead ones on every pass, so the table cannot grow without bound
+    /// and a recycled identifier always misses.
+    private struct Applied {
+        weak var window: NSWindow?
+        var mode: PaneStyle.DisplayMode
+    }
+
+    private static var applied: [ObjectIdentifier: Applied] = [:]
 
     func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async { configure(view.window) }
+        let view = WindowAttachProbe()
+        // A closure that captures nothing: the probe is owned by SwiftUI and
+        // holding on to the representable (or its window) here would be a
+        // cycle.
+        view.onAttach = { WindowConfigurator.configure($0) }
         return view
     }
 
     func updateNSView(_ view: NSView, context: Context) {
-        DispatchQueue.main.async { configure(view.window) }
+        // `view.window` is live by now (the view is already in the hierarchy),
+        // so this pass is synchronous — the old `DispatchQueue.main.async`
+        // deferred configuration by a whole runloop turn, which showed as an
+        // unstyled flash every time a window appeared.
+        Self.configure(view.window)
     }
 
-    private func configure(_ window: NSWindow?) {
+    /// Applies the current display mode's settings to `window`, at most once
+    /// per (window, mode). Exposed for tests and for the attach probe.
+    static func configure(_ window: NSWindow?) {
         guard let window else { return }
+        pruneDeadEntries()
         let mode = PaneStyle.displayMode
         let key = ObjectIdentifier(window)
-        guard Self.configuredModes[key] != mode else { return }
-        Self.configuredModes[key] = mode
+        if let existing = applied[key],
+           existing.window === window,
+           existing.mode == mode {
+            return
+        }
+        applied[key] = Applied(window: window, mode: mode)
+        apply(mode: mode, to: window)
+    }
+
+    /// Number of entries whose window has been deallocated. Always 0 outside
+    /// of a window-less test.
+    static var deadEntryCount: Int {
+        applied.values.filter { $0.window == nil }.count
+    }
+
+    /// Drops memo entries for windows that no longer exist. Safe to call at
+    /// any time; entries for live windows are kept.
+    static func pruneDeadEntries() {
+        guard applied.contains(where: { $0.value.window == nil }) else { return }
+        applied = applied.filter { $0.value.window != nil }
+    }
+
+    private static func apply(mode: PaneStyle.DisplayMode, to window: NSWindow) {
         guard mode == .dock else {
-            Self.removeTrafficLights(from: window)
+            removeTrafficLights(from: window)
             if !(window is NSPanel) {
                 window.orderOut(nil)
             }
             PaneWindowStyler.applyLive(to: window)
             return
         }
-        Self.showStandardTitleBar(on: window)
+        showStandardTitleBar(on: window)
         let windowID = window.identifier?.rawValue
         if windowID == nil || !windowID!.hasPrefix(PaneStyle.windowIdentifier) {
             window.identifier = NSUserInterfaceItemIdentifier(PaneStyle.windowIdentifier)
@@ -44,7 +90,7 @@ struct WindowConfigurator: NSViewRepresentable {
         window.maxSize = windowMaxSize
         window.minSize = windowMinSize
         window.contentMaxSize = NSSize(width: PaneStyle.maxWidth, height: PaneStyle.maxHeight)
-        Self.restoreValidFrame(for: window, maxSize: windowMaxSize)
+        restoreValidFrame(for: window, maxSize: windowMaxSize)
         window.tabbingMode = .disallowed
         window.collectionBehavior = [.fullScreenAuxiliary]
         window.isOpaque = false
@@ -119,6 +165,23 @@ struct WindowConfigurator: NSViewRepresentable {
         }
         window.titlebarAppearsTransparent = false
         window.titleVisibility = .visible
+    }
+}
+
+/// Fires as soon as AppKit puts the representable's view inside a window.
+///
+/// `makeNSView` cannot do this work itself: the view it returns is not in a
+/// window yet, so `view.window` is nil and anything scheduled from there
+/// (`DispatchQueue.main.async { configure(view.window) }`) was a guaranteed
+/// no-op — configuration landed a runloop late and showed as an unstyled
+/// flash.
+private final class WindowAttachProbe: NSView {
+    var onAttach: ((NSWindow) -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard let window else { return }
+        onAttach?(window)
     }
 }
 

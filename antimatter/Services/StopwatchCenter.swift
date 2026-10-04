@@ -139,20 +139,17 @@ final class StopwatchCenter: ObservableObject {
     private func persist() {
         guard let data = try? JSONEncoder().encode(stopwatches) else { return }
         let url = fileURL
+        let validate: (Data) -> Bool = { primary in
+            (try? JSONDecoder().decode([ActiveStopwatch].self, from: primary)) != nil
+        }
         if StorageLocation.isIsolatedRun {
             // Tests reload immediately after a mutation; a background write
             // would race ahead of the read and read stale data back.
-            let validate: (Data) -> Bool = { primary in
-                (try? JSONDecoder().decode([ActiveStopwatch].self, from: primary)) != nil
-            }
             Persistence.writeData(data, to: url, isValidPrimary: validate)
         } else {
-            let validate: @Sendable (Data) -> Bool = { primary in
-                (try? JSONDecoder().decode([ActiveStopwatch].self, from: primary)) != nil
-            }
-            Task.detached {
-                Persistence.writeData(data, to: url, isValidPrimary: validate)
-            }
+            // Ordered through the shared writer: dismiss-then-start used to
+            // race two unserialized writes and resurrect the stopped chip.
+            Task { await SerialDiskWriter.shared.write(data, to: url, isValidPrimary: validate) }
         }
     }
 }

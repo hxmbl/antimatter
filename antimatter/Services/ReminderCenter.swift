@@ -102,8 +102,12 @@ final class ReminderCenter: ObservableObject {
         }
         var out = ["Upcoming Reminders (\(pending.count))", ""]
         for reminder in pending {
-            let when = Self.format(reminder.date.timeIntervalSinceNow)
-            out.append("  in \(when)   \(reminder.message)")
+            let remaining = reminder.date.timeIntervalSinceNow
+            let when = Self.format(remaining)
+            // `format` clamps a past-due moment to zero, so the "in" prefix has
+            // to give way rather than read "in 0s".
+            out.append(remaining < 0 ? "  due \(when)   \(reminder.message)"
+                                     : "  in \(when)   \(reminder.message)")
         }
         out.append("")
         out.append("`.reminder cancel all` clears them.")
@@ -181,34 +185,35 @@ final class ReminderCenter: ObservableObject {
     private func persist() {
         guard let data = try? JSONEncoder().encode(reminders) else { return }
         let url = fileURL
+        let validate: (Data) -> Bool = { primary in
+            (try? JSONDecoder().decode([ActiveReminder].self, from: primary)) != nil
+        }
         if StorageLocation.isIsolatedRun {
             // Tests reload immediately after a mutation; a background write
             // would race ahead of the read and read stale data back.
-            let validate: (Data) -> Bool = { primary in
-                (try? JSONDecoder().decode([ActiveReminder].self, from: primary)) != nil
-            }
             Persistence.writeData(data, to: url, isValidPrimary: validate)
         } else {
-            let validate: @Sendable (Data) -> Bool = { primary in
-                (try? JSONDecoder().decode([ActiveReminder].self, from: primary)) != nil
-            }
-            Task.detached {
-                Persistence.writeData(data, to: url, isValidPrimary: validate)
-            }
+            // Ordered through the shared writer so a dismiss-then-add burst
+            // cannot persist the pre-dismiss snapshot last.
+            Task { await SerialDiskWriter.shared.write(data, to: url, isValidPrimary: validate) }
         }
     }
 
     /// `45s`, `12m`, `2h`, `3d` — fits the chip.
     nonisolated static func format(_ interval: TimeInterval) -> String {
-        if interval >= 86_400 * 2 {
-            return "\(Int(interval / 86_400))d"
+        // A reminder whose moment has passed but that has not fired yet (the
+        // app was asleep, or the report ran mid-trigger) used to render a
+        // negative remainder: `in -3s   stand up`. Clamp to the present.
+        let remaining = max(0, interval)
+        if remaining >= 86_400 * 2 {
+            return "\(Int(remaining / 86_400))d"
         }
-        if interval >= 3_600 {
-            return "\(Int(interval / 3_600))h"
+        if remaining >= 3_600 {
+            return "\(Int(remaining / 3_600))h"
         }
-        if interval >= 60 {
-            return "\(Int(interval / 60))m"
+        if remaining >= 60 {
+            return "\(Int(remaining / 60))m"
         }
-        return "\(Int(interval.rounded()))s"
+        return "\(Int(remaining.rounded()))s"
     }
 }

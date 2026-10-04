@@ -6,7 +6,7 @@ import SwiftUI
 @MainActor
 final class ReferenceViewManager {
     private(set) var isInHelpView = false
-    private var helpSnapshot: (text: String, selection: NSRange, font: NSFont, isHorizontallyResizable: Bool, widthTracksTextView: Bool, containerSize: NSSize)?
+    private var helpSnapshot: (text: String, selection: NSRange, font: NSFont, isHorizontallyResizable: Bool, widthTracksTextView: Bool, containerSize: NSSize, isEditable: Bool)?
     private weak var helpTextView: NSTextView?
 
     private let highlighter: MarkdownHighlighter
@@ -32,10 +32,23 @@ final class ReferenceViewManager {
             textView.font ?? .systemFont(ofSize: PaneStyle.fontSize),
             textView.isHorizontallyResizable,
             container?.widthTracksTextView ?? false,
-            container?.containerSize ?? .zero
+            container?.containerSize ?? .zero,
+            textView.isEditable
         )
         helpTextView = textView
         isInHelpView = true
+
+        // Genuinely read-only. Everything about this view is text you must not be
+        // able to edit, and only *selection* stays live so you can still copy a
+        // command line out of it. Editing was previously only blocked on the
+        // key path (`handleKey` swallows keystrokes), which left paste and drag
+        // and drop free to insert through `insertText:` → `textDidChange` →
+        // `NoteStore`. Because `exit()` restores the stashed note with
+        // `.string =` — which does *not* post `textDidChange` — nothing could
+        // undo such an edit, so dropping a text file while reading `.help`
+        // replaced the note permanently.
+        textView.isEditable = false
+        (textView as? PaneTextView)?.isReferenceMode = true
 
         // Table-like read-out: monospaced, and each logical line is its
         // own row — never wrapped, so a run-on line can't slip under the
@@ -66,6 +79,8 @@ final class ReferenceViewManager {
         isInHelpView = false
         helpSnapshot = nil
         helpTextView = nil
+        textView.isEditable = snapshot.isEditable
+        (textView as? PaneTextView)?.isReferenceMode = false
         textView.breakUndoCoalescing()
         textView.string = snapshot.text
         textView.autoresizingMask = [.width]
@@ -119,7 +134,18 @@ final class ReferenceViewManager {
                 scrollHorizontally(textView, delta: -.infinity)
                 resetVim(); return true
             }
-            pendingCount = pendingCount * 10 + n
+            // Bound the accumulator. `Int` arithmetic traps on overflow, and this
+            // runs in the key handler on the main thread with no recovery:
+            // nineteen `9` presses was a hard crash. The cap also keeps `j`/`k`
+            // honest — those are `for _ in 0..<count { scrollLineDown }`, so an
+            // unbounded count is a multi-billion-iteration hang inside a single
+            // keypress. Vim caps counts for the same reason.
+            let (scaled, overflowed) = pendingCount.multipliedReportingOverflow(by: 10)
+            guard !overflowed, scaled <= Self.maxRepeatCount - n else {
+                pendingCount = Self.maxRepeatCount
+                return true
+            }
+            pendingCount = scaled + n
             return true
         }
 
@@ -198,6 +224,11 @@ final class ReferenceViewManager {
 
     // MARK: – Vim helpers
 
+    /// Largest repeat count a motion may be prefixed with. A reference block is
+    /// tens of lines, so anything past this is either a typo or a key repeat —
+    /// never a real request, and never worth risking the main thread.
+    private static let maxRepeatCount = 1_000
+
     private func resetVim() { pendingCount = 0; pendingIsG = false }
 
     private func scrollView(of textView: NSTextView) -> NSScrollView? { textView.enclosingScrollView }
@@ -239,7 +270,14 @@ final class ReferenceViewManager {
     }
 
     private func lineCount(_ textView: NSTextView) -> Int {
-        max(1, textView.string.components(separatedBy: .newlines).count)
+        // Split on newlines only. `components(separatedBy: .newlines)` also
+        // splits on a *lone* carriage return, which double-counts every CRLF
+        // line ending (and a bare CR mid-line), so `gg`/`G`/`3G` landed on the
+        // wrong line for any text that arrived with Windows line endings — which
+        // is exactly what a note dragged in from another editor contains.
+        max(1, textView.string
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .count)
     }
 
     private func moveToLine(_ textView: NSTextView, _ line: Int, total: Int) {

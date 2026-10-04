@@ -47,31 +47,65 @@ struct PaneTheme: Identifiable, Codable, Equatable {
     var tintNSColor: NSColor { NSColor(hex: tintColor) }
 }
 
+/// Shared `#RGB` / `#RGBA` / `#RRGGBB` / `#RRGGBBAA` parsing for `Color` and
+/// `NSColor`. Both used to switch on `hex.count == 6` only, so every short
+/// form — `#abc`, `#abcd`, `#aabbccdd` — silently fell through to pure white.
+enum HexColor {
+    struct Components: Equatable {
+        var red: Double
+        var green: Double
+        var blue: Double
+        var alpha: Double
+
+        static let white = Components(red: 1, green: 1, blue: 1, alpha: 1)
+    }
+
+    /// Returns nil for anything that is not a supported hex form, so each
+    /// caller applies its own fallback exactly once.
+    static func components(from string: String) -> Components? {
+        var digits = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        if digits.hasPrefix("#") { digits.removeFirst() }
+        guard !digits.isEmpty,
+              digits.allSatisfy(\.isHexDigit),
+              [3, 4, 6, 8].contains(digits.count) else { return nil }
+        // Short forms double every digit: `#abc` is `#aabbcc`.
+        let expanded = digits.count <= 4
+            ? digits.map { "\($0)\($0)" }.joined()
+            : digits
+        var value: UInt64 = 0
+        guard Scanner(string: expanded).scanHexInt64(&value) else { return nil }
+        if expanded.count == 6 {
+            return Components(
+                red: byte((value >> 16) & 0xFF),
+                green: byte((value >> 8) & 0xFF),
+                blue: byte(value & 0xFF),
+                alpha: 1
+            )
+        }
+        return Components(
+            red: byte((value >> 24) & 0xFF),
+            green: byte((value >> 16) & 0xFF),
+            blue: byte((value >> 8) & 0xFF),
+            alpha: byte(value & 0xFF)
+        )
+    }
+
+    private static func byte(_ raw: UInt64) -> Double {
+        Double(raw & 0xFF) / 255
+    }
+}
+
 extension NSColor {
     convenience init(hex: String) {
-        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-        var int: UInt64 = 0
-        Scanner(string: hex).scanHexInt64(&int)
-        let r, g, b: CGFloat
-        switch hex.count {
-        case 6: (r, g, b) = (CGFloat((int >> 16) & 0xFF) / 255, CGFloat((int >> 8) & 0xFF) / 255, CGFloat(int & 0xFF) / 255)
-        default: (r, g, b) = (1, 1, 1)
-        }
-        self.init(srgbRed: r, green: g, blue: b, alpha: 1)
+        let c = HexColor.components(from: hex) ?? HexColor.Components.white
+        self.init(srgbRed: c.red, green: c.green, blue: c.blue, alpha: c.alpha)
     }
 }
 
 extension Color {
     init(hex: String) {
-        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-        var int: UInt64 = 0
-        Scanner(string: hex).scanHexInt64(&int)
-        let r, g, b: Double
-        switch hex.count {
-        case 6: (r, g, b) = (Double((int >> 16) & 0xFF) / 255, Double((int >> 8) & 0xFF) / 255, Double(int & 0xFF) / 255)
-        default: (r, g, b) = (1, 1, 1)
-        }
-        self.init(.sRGB, red: r, green: g, blue: b, opacity: 1)
+        let c = HexColor.components(from: hex) ?? HexColor.Components.white
+        self.init(.sRGB, red: c.red, green: c.green, blue: c.blue, opacity: c.alpha)
     }
 }
 

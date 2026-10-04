@@ -9,6 +9,20 @@ final class PaneTextView: NSTextView {
     var onTabKeyDown: (() -> Bool)?
     var onTopTextLevelChange: ((CGFloat) -> Void)?
 
+    /// True while the pane is showing a read-only block (`.help`, `.timer list`,
+    /// `.stats`, …) rather than the note.
+    ///
+    /// `isEditable = false` covers typing and ⌘V, but it does **not** cover a
+    /// drop: `performDragOperation` here routes images straight to
+    /// `onDroppedImage`, and a dropped text file reaches
+    /// `super.performDragOperation` → `readSelection(from:)` → `insertText`,
+    /// which fires `textDidChange` and writes the result into `NoteStore`. Since
+    /// `ReferenceViewManager.exit` restores the stashed note with `.string =`
+    /// (which does *not* post `textDidChange`), the stash cannot undo it — so
+    /// dropping a file while reading `.help` destroyed the note. Drag and drop
+    /// is not routed through `doCommandBy`, so nothing else gated it.
+    var isReferenceMode = false
+
     private var pendingClick: (location: NSPoint, modifiers: NSEvent.ModifierFlags)?
     private var windowMoveDrag: (windowOrigin: NSPoint, mouseScreenOrigin: NSPoint)?
     private var lastReportedTopLevel: CGFloat = -1
@@ -421,10 +435,14 @@ final class PaneTextView: NSTextView {
 
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        containsImage(sender.draggingPasteboard) ? [.copy] : super.draggingEntered(sender)
+        // Never accept a drop into a read-only block: it would replace the note
+        // behind the reference view. See `isReferenceMode`.
+        guard !isReferenceMode else { return [] }
+        return containsImage(sender.draggingPasteboard) ? [.copy] : super.draggingEntered(sender)
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        guard !isReferenceMode else { return false }
         let pasteboard = sender.draggingPasteboard
         let images = imageContents(of: pasteboard)
         guard !images.isEmpty else { return super.performDragOperation(sender) }
@@ -559,8 +577,14 @@ final class PaneTextView: NSTextView {
         }
         // ⌥⌘↑/⌥⌘↓ reorder the caret's line (the Xcode convention); plain
         // ⌥↑/⌥↓ stay with the text system's paragraph navigation.
-        if event.modifierFlags.contains([.command, .option]),
-           event.keyCode == kVK_UpArrow || event.keyCode == kVK_DownArrow {
+        //
+        // Parenthesised on purpose: `&&` binds tighter than `||`, so the
+        // unparenthesised `A && B || C` parsed as `(A && B) || C` and let a
+        // *plain* Down arrow (and ⌘↓, and ⌘↑) fall into the reorder branch —
+        // which rewrites the note, registers an undo entry and throws the caret
+        // to the end of the document.
+        if event.modifierFlags.contains([.command, .option])
+            && (event.keyCode == kVK_UpArrow || event.keyCode == kVK_DownArrow) {
             let oldLocation = selectedRange().location
             let oldRect = caretRect(for: oldLocation)
             if event.keyCode == kVK_UpArrow { moveLineUp() } else { moveLineDown() }
@@ -652,6 +676,21 @@ final class PaneTextView: NSTextView {
     }
 
 
+    private func lineIndex(of cursorLocation: Int, in lines: [String]) -> Int {
+        var charCount = 0
+        for (i, line) in lines.enumerated() {
+            let lineLen = (line as NSString).length
+            // `<=`, not `<`: a caret sitting at the very end of a line's content
+            // (i.e. immediately before its newline — the position you reach by
+            // typing to the end, or pressing ⌘→ / End) belongs to *that* line.
+            // With a strict `<` the end-of-line position fell through to the next
+            // line, so ⌥⌘↑ from there reordered the line above instead.
+            if cursorLocation <= charCount + lineLen { return i }
+            charCount += lineLen + 1
+        }
+        return lines.count - 1
+    }
+
     private func moveLineUp() {
         guard let textStorage = textStorage else { return }
         let fullText = textStorage.string as NSString
@@ -660,17 +699,7 @@ final class PaneTextView: NSTextView {
 
         let swiftText = fullText as String
         let lines = swiftText.components(separatedBy: "\n")
-
-        var charCount = 0
-        var currentLineIndex = lines.count - 1
-        for (i, line) in lines.enumerated() {
-            let lineLen = (line as NSString).length
-            if cursorLocation < charCount + lineLen {
-                currentLineIndex = i
-                break
-            }
-            charCount += lineLen + 1
-        }
+        let currentLineIndex = lineIndex(of: cursorLocation, in: lines)
 
         guard currentLineIndex > 0 else { return }
 
@@ -701,17 +730,7 @@ final class PaneTextView: NSTextView {
         let lines = swiftText.components(separatedBy: "\n")
         guard lines.count > 1 else { return }
 
-        var charCount = 0
-        var currentLineIndex = lines.count - 1
-        for (i, line) in lines.enumerated() {
-            let lineLen = (line as NSString).length
-            if cursorLocation < charCount + lineLen {
-                currentLineIndex = i
-                break
-            }
-            charCount += lineLen + 1
-        }
-
+        let currentLineIndex = lineIndex(of: cursorLocation, in: lines)
         guard currentLineIndex < lines.count - 1 else { return }
 
         var mutableLines = lines

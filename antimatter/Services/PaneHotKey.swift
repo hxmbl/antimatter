@@ -15,7 +15,35 @@ final class PaneHotKey {
         var keyCode = 49
     }
 
-    private(set) var activeChord = Chord()
+    /// The chord the app was last asked to register, whether or not the
+    /// system accepted it.
+    private(set) var requestedChord = Chord()
+
+    /// The chord *actually* registered with the system, or nil when the app
+    /// holds no hot key at all.
+    ///
+    /// This used to keep reporting the previous chord after both the new
+    /// registration and the rollback had failed, so Settings displayed a
+    /// shortcut that did nothing while the app had no hot key whatsoever.
+    private(set) var activeChord: Chord?
+
+    /// Why the app holds no hot key. Settings reads this instead of guessing
+    /// from a chord that may not be registered.
+    enum RegistrationState: Equatable {
+        /// `activeChord` is live.
+        case active
+        /// The requested chord has no ⌃/⌥/⌘ and would swallow ordinary
+        /// typing system-wide.
+        case tooBroad
+        /// Another application owns the chord (or Carbon refused it), so the
+        /// app ended up with no hot key.
+        case unavailable
+        /// The Carbon event handler could not be installed, so no chord can
+        /// ever fire.
+        case handlerUnavailable
+    }
+
+    private(set) var registrationState: RegistrationState = .active
 
     var onToggle: (() -> Void)?
     /// Recreates the pane after the user closed it with the red button.
@@ -43,7 +71,13 @@ final class PaneHotKey {
             }
             return noErr
         }, 1, &spec, context, &eventHandler)
-        guard status == noErr else { return }
+        guard status == noErr else {
+            // Without a handler no chord can fire; say so instead of leaving
+            // Settings showing a hot key that does nothing.
+            activeChord = nil
+            registrationState = .handlerUnavailable
+            return
+        }
         registerChord()
     }
 
@@ -60,11 +94,15 @@ final class PaneHotKey {
             shift: PaneStyle.hotKeyUsesShift,
             keyCode: Int(PaneStyle.hotKeyCode)
         )
+        requestedChord = chord
         // Refuse chords that would swallow ordinary typing system-wide:
         // no modifier at all, or shift alone (shift+space is an input-method
-        // staple). The previously registered chord stays live instead, and
-        // `activeChord` keeps telling the truth about which one that is.
-        guard chord.control || chord.option || chord.command else { return }
+        // staple). The previously registered chord stays live instead, so the
+        // refusal only becomes the reported failure when the app holds nothing.
+        guard chord.control || chord.option || chord.command else {
+            if activeChord == nil { registrationState = .tooBroad }
+            return
+        }
 
         // Carbon owns one hot key per signature/id pair, so the old
         // registration must be released before the new one can take its
@@ -80,10 +118,21 @@ final class PaneHotKey {
         if let newRef = Self.register(chord) {
             hotKeyRef = newRef
             activeChord = chord
-        } else if previous.control || previous.option || previous.command,
-                  let restored = Self.register(previous) {
-            hotKeyRef = restored
+            registrationState = .active
+            return
         }
+        if let previous, previous.control || previous.option || previous.command,
+           let restored = Self.register(previous) {
+            hotKeyRef = restored
+            activeChord = previous
+            registrationState = .active
+            return
+        }
+        // Both the new chord and the rollback were refused. Reporting
+        // `previous` here would be a lie: nothing is registered, so
+        // `activeChord` becomes nil and the state explains why.
+        activeChord = nil
+        registrationState = .unavailable
     }
 
     /// Registers `chord` and returns its reference, or nil if refused.

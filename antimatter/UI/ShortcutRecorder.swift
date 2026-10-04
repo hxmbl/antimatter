@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 import Carbon.HIToolbox
 
 struct GlobalShortcut: Equatable {
@@ -143,28 +144,111 @@ struct GlobalShortcut: Equatable {
     }
 }
 
+/// Recording state for `ShortcutField`, kept in a reference type.
+///
+/// The event monitors used to live in the SwiftUI view struct's `@State`, with
+/// monitor closures capturing `self` — the struct. The closure therefore kept
+/// the same `@State` boxes alive, and those boxes held the monitor tokens, so
+/// nothing was ever released except by `onDisappear`. A Settings window torn
+/// down without one leaked a live `keyDown` monitor that swallowed every
+/// keystroke in the app. Here the monitors capture only this object, and
+/// `deinit` removes them on every exit path.
+@MainActor
+final class ShortcutRecorder: ObservableObject {
+    @Published private(set) var isRecording = false
+    @Published private(set) var pressingNow = ""
+
+    var onRecord: ((GlobalShortcut) -> Void)?
+    var onCancel: (() -> Void)?
+
+    private var keyDownMonitor: Any?
+    private var flagsMonitor: Any?
+
+    deinit {
+        // Nonisolated by nature: the monitor registry is process-global and
+        // these tokens must not outlive the recorder.
+        if let keyDownMonitor { NSEvent.removeMonitor(keyDownMonitor) }
+        if let flagsMonitor { NSEvent.removeMonitor(flagsMonitor) }
+    }
+
+    func toggle() {
+        if isRecording { cancel() } else { start() }
+    }
+
+    func start() {
+        stopMonitoring()
+        pressingNow = ""
+        isRecording = true
+        // `[weak self]`: while recording, the view's `@StateObject` box owns
+        // this object; if it ever does not, the monitors must degrade to
+        // "let the key through" rather than silently eating input.
+        keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            MainActor.assumeIsolated { self.handleKeyDown(event) }
+            return nil
+        }
+        flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            guard let self else { return event }
+            MainActor.assumeIsolated {
+                self.pressingNow = GlobalShortcut.modifierPrefix(for: event.modifierFlags)
+            }
+            return event
+        }
+    }
+
+    func cancel() {
+        stopMonitoring()
+        isRecording = false
+        pressingNow = ""
+        onCancel?()
+    }
+
+    func stopMonitoring() {
+        if let keyDownMonitor { NSEvent.removeMonitor(keyDownMonitor) }
+        if let flagsMonitor { NSEvent.removeMonitor(flagsMonitor) }
+        keyDownMonitor = nil
+        flagsMonitor = nil
+    }
+
+    private func handleKeyDown(_ event: NSEvent) {
+        let code = Int(event.keyCode)
+        if code == kVK_Escape {
+            cancel()
+            return
+        }
+        guard !GlobalShortcut.isModifierKey(code) else { return }
+        stopMonitoring()
+        isRecording = false
+        pressingNow = ""
+        onRecord?(GlobalShortcut.from(event: event))
+    }
+}
+
 struct ShortcutField: View {
     let shortcut: GlobalShortcut
     var onRecord: (GlobalShortcut) -> Void
     var onCancel: (() -> Void) = {}
 
-    @State private var isRecording = false
-    @State private var pressingNow = ""
-    @State private var keyDownMonitor: Any?
-    @State private var flagsMonitor: Any?
+    @StateObject private var recorder = ShortcutRecorder()
 
     var body: some View {
         HStack(spacing: 8) {
             field
-            Button(isRecording ? "Stop" : "Record") { toggleRecording() }
+            Button(recorder.isRecording ? "Stop" : "Record") { recorder.toggle() }
         }
-        .onDisappear { stopMonitoring() }
+        .onAppear {
+            recorder.onRecord = { onRecord($0) }
+            recorder.onCancel = onCancel
+        }
+        .onDisappear { recorder.stopMonitoring() }
     }
 
     private var field: some View {
         Group {
-            if isRecording {
-                Text(pressingNow.isEmpty ? "Press the new shortcut…" : (pressingNow + " · finish with a key"))
+            if recorder.isRecording {
+                Text(recorder.pressingNow.isEmpty
+                     ? "Press the new shortcut…"
+                     : (recorder.pressingNow + " · finish with a key"))
                     .foregroundStyle(Color.accentColor)
             } else {
                 Text(shortcut.display)
@@ -179,54 +263,12 @@ struct ShortcutField: View {
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color(nsColor: .textBackgroundColor)))
         .overlay {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(isRecording ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: isRecording ? 1.5 : 1)
+                .strokeBorder(recorder.isRecording
+                              ? Color.accentColor
+                              : Color(nsColor: .separatorColor),
+                              lineWidth: recorder.isRecording ? 1.5 : 1)
         }
         .contentShape(Rectangle())
-        .onTapGesture { toggleRecording() }
-    }
-
-    private func toggleRecording() {
-        if isRecording { cancelRecording() } else { startRecording() }
-    }
-
-    private func startRecording() {
-        stopMonitoring()
-        withAnimation { isRecording = true }
-        pressingNow = ""
-        keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            MainActor.assumeIsolated { self.handleKeyDown(event) }
-            return nil
-        }
-        flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
-            MainActor.assumeIsolated { self.pressingNow = GlobalShortcut.modifierPrefix(for: event.modifierFlags) }
-            return event
-        }
-    }
-
-    private func handleKeyDown(_ event: NSEvent) {
-        let code = Int(event.keyCode)
-        if code == kVK_Escape {
-            cancelRecording()
-            return
-        }
-        guard !GlobalShortcut.isModifierKey(code) else { return }
-        stopMonitoring()
-        withAnimation { isRecording = false }
-        pressingNow = ""
-        onRecord(GlobalShortcut.from(event: event))
-    }
-
-    private func cancelRecording() {
-        stopMonitoring()
-        withAnimation { isRecording = false }
-        pressingNow = ""
-        onCancel()
-    }
-
-    private func stopMonitoring() {
-        if let keyDownMonitor { NSEvent.removeMonitor(keyDownMonitor) }
-        if let flagsMonitor { NSEvent.removeMonitor(flagsMonitor) }
-        keyDownMonitor = nil
-        flagsMonitor = nil
+        .onTapGesture { recorder.toggle() }
     }
 }

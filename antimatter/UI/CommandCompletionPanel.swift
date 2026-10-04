@@ -148,6 +148,22 @@ struct CommandCompletionRow: View {
 /// as a child window so the pane keeps key focus while the list stays above.
 @MainActor
 final class CommandCompletionPanel {
+
+    /// How many completion panels are on screen, across every pane.
+    ///
+    /// A global Escape monitor has to be able to tell "the note is idle" from
+    /// "the completion list is up". Whichever order AppKit calls local event
+    /// monitors in, taking Escape there would otherwise steal the key from the
+    /// list's own dismiss.
+    /// `nonisolated(unsafe)` because `deinit` is nonisolated and still has to
+    /// keep the count honest. Every mutation happens on the main thread.
+    nonisolated(unsafe) private static var openPanelStorage = 0
+
+    static var openPanelCount: Int { openPanelStorage }
+
+    /// True while any pane is showing a completion list.
+    static var isAnyPanelOpen: Bool { openPanelStorage > 0 }
+
     /// Inserts a candidate. The last flag is true for Return/click (panel
     /// closes) and false for Tab-cycling, which must stay reopenable.
     var onAccept: ((IntentExecution.DotCommand, Int, Int, Bool) -> Void)?
@@ -157,15 +173,25 @@ final class CommandCompletionPanel {
     private var keyMonitor: Any?
     private var mouseMonitor: Any?
     private var resignObserver: Any?
+    private var orderOutObserver: Any?
+    private var minimizeObserver: Any?
     private weak var textView: NSTextView?
     private var entries: [CompletionEntry] = []
     private var tokenStart = 0
     private var replacementLength = 0
+    /// True while `tabComplete()` drives an insertion. The insert
+    /// synchronously re-enters this panel through `textDidChange` →
+    /// `syncCompletion`, and at that moment the caret sits mid-snippet (after a
+    /// space, or inside a `<placeholder>`), so no completion token matches and
+    /// the caller asks to dismiss — or refilters against a token the user never
+    /// typed. Both would kill Tab cycling after a single press.
+    private var isTabCycling = false
 
     var isShown: Bool { panel != nil }
 
     func show(in textView: NSTextView, candidates: [IntentExecution.DotCommand], tokenStart: Int, query: String) {
         guard !candidates.isEmpty, let window = textView.window else { return }
+        guard !isTabCycling else { return }
         dismiss()
         self.textView = textView
         self.entries = Self.buildEntries(from: candidates)
@@ -190,10 +216,12 @@ final class CommandCompletionPanel {
         panel.setFrame(placedFrame(for: textView, tokenStart: tokenStart, size: size), display: true)
         window.addChildWindow(panel, ordered: .above)
         self.panel = panel
+        Self.openPanelStorage += 1
         startMonitoring()
     }
 
     func refilter(candidates: [IntentExecution.DotCommand], query: String) {
+        guard !isTabCycling else { return }
         guard let panel, !candidates.isEmpty else { dismiss(); return }
         entries = Self.buildEntries(from: candidates)
         replacementLength = (query as NSString).length
@@ -201,9 +229,16 @@ final class CommandCompletionPanel {
         model.query = query
         model.selection = Self.nextSelectableIndex(from: entries, startingAt: model.selection)
         let size = NSSize(width: panel.frame.width, height: Self.height(for: entries))
-        var frame = panel.frame
-        frame.size = size
-        panel.setFrame(frame, display: true)
+        if let textView {
+            // Re-place rather than only resizing: a taller list would
+            // otherwise hang off the bottom of the screen.
+            panel.setFrame(placedFrame(for: textView, tokenStart: tokenStart, size: size), display: true)
+        } else {
+            var frame = panel.frame
+            frame.size = size
+            frame.origin.y = max(frame.origin.y, panel.screen?.visibleFrame.minY ?? frame.origin.y)
+            panel.setFrame(frame, display: true)
+        }
     }
 
     func moveSelection(_ delta: Int) {
@@ -215,7 +250,7 @@ final class CommandCompletionPanel {
     }
 
     func acceptSelected() {
-        guard !entries.isEmpty else { dismiss(); return }
+        guard entries.indices.contains(model.selection) else { dismiss(); return }
         if entries[model.selection].isCommand {
             pick(model.selection)
         } else {
@@ -227,24 +262,62 @@ final class CommandCompletionPanel {
         }
     }
 
+    deinit {
+        // Keep the global open-panel census honest and unhook the event
+        // monitors even if a pane is torn down mid-cycle without `dismiss()`
+        // running. A leaked `keyDown` monitor stays in the process-wide event
+        // pipeline forever.
+        Self.removeMonitors(key: keyMonitor, mouse: mouseMonitor,
+                            resign: resignObserver, orderOut: orderOutObserver)
+        if let minimizeObserver {
+            NotificationCenter.default.removeObserver(minimizeObserver)
+        }
+        if panel != nil { Self.openPanelStorage -= 1 }
+    }
+
+    /// `nonisolated` so `deinit` can reach it; `NSEvent`/`NotificationCenter`
+    /// removal is safe from any thread.
+    private nonisolated static func removeMonitors(
+        key: Any?, mouse: Any?, resign: Any?, orderOut: Any?
+    ) {
+        if let key { NSEvent.removeMonitor(key) }
+        if let mouse { NSEvent.removeMonitor(mouse) }
+        if let resign { NotificationCenter.default.removeObserver(resign) }
+        if let orderOut { NotificationCenter.default.removeObserver(orderOut) }
+    }
+
     /// Inserts the current candidate while leaving the panel open so the next
     /// Tab replaces that insertion with the next candidate.
     func tabComplete() {
-        guard let index = Self.selectableIndices(in: entries).first(where: { $0 == model.selection }),
+        guard onAccept != nil else { dismiss(); return }
+        let selectable = Self.selectableIndices(in: entries)
+        guard let index = selectable.firstIndex(of: model.selection) ?? selectable.first,
               let command = entries[index].command
         else { dismiss(); return }
 
-        onAccept?(command, tokenStart, replacementLength, false)
-        replacementLength = (command.snippet as NSString).length
+        // Highlight the *next* row before the insertion, while `entries` is
+        // still intact. The insert below re-enters this panel through
+        // `textDidChange` → `syncCompletion`, and the caret is then sitting
+        // after the inserted text, so the original order (insert, then advance)
+        // found an empty `entries` and dropped the advance: Tab worked once and
+        // the second Tab typed a literal tab.
+        model.selection = selectable[(index + 1) % selectable.count]
 
-        let selectable = Self.selectableIndices(in: entries)
-        guard let position = selectable.firstIndex(of: index), !selectable.isEmpty else { return }
-        model.selection = selectable[(position + 1) % selectable.count]
+        let previousReplacementLength = replacementLength
+        replacementLength = (command.snippet as NSString).length
+        isTabCycling = true
+        defer { isTabCycling = false }
+        onAccept?(command, tokenStart, previousReplacementLength, false)
     }
 
     func dismiss() {
+        // A Tab-driven insertion asks to dismiss from inside `onAccept`. Honour
+        // that and the panel disappears the moment Tab is pressed once, which is
+        // precisely what the cycling is supposed to avoid.
+        guard !isTabCycling else { return }
         dismissMonitoring()
         if let panel {
+            Self.openPanelStorage -= 1
             panel.parent?.removeChildWindow(panel)
             panel.orderOut(nil)
         }
@@ -261,8 +334,14 @@ final class CommandCompletionPanel {
     private func pick(_ index: Int) {
         guard entries.indices.contains(index) else { return }
         guard let command = entries[index].command else { return }
+        // Read the replacement window *before* dismissing: `dismiss()` resets
+        // `tokenStart`/`replacementLength` to 0, and passing those on meant
+        // every click inserted the snippet at the top of the note, replacing
+        // nothing.
+        let start = tokenStart
+        let length = replacementLength
         dismiss()
-        onAccept?(command, tokenStart, replacementLength, true)
+        onAccept?(command, start, length, true)
     }
 
     private static func height(for entries: [CompletionEntry]) -> CGFloat {
@@ -366,15 +445,48 @@ final class CommandCompletionPanel {
             ) { [weak self] _ in
                 MainActor.assumeIsolated { self?.dismiss() }
             }
+            // The panel is a *child* window, so it is hidden whenever the pane
+            // is — but hidden, not torn down. Esc and ⌘. both dismiss, but the
+            // global hot key and `WindowConfigurator`'s non-dock `orderOut` do
+            // not, and a panel that survives those comes back VISIBLE with stale
+            // rows the next time the pane is shown.
+            //
+            // AppKit posts no notification for `orderOut` (verified against the
+            // SDK: only didBecomeKey/didResignKey/didMiniaturize/willClose and
+            // friends exist), so close and minimize are covered by observers and
+            // the `orderOut` case is covered by `paneIsVisible`, which the
+            // coordinator consults before re-showing anything.
+            orderOutObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.willCloseNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.dismiss() }
+            }
+            minimizeObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didMiniaturizeNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.dismiss() }
+            }
         }
     }
 
+    /// True when the pane this panel is attached to is on screen. AppKit gives no
+    /// order-out notification, so this is how a panel that outlived a
+    /// hide-the-pane gesture gets torn down instead of reappearing stale.
+    var paneIsVisible: Bool {
+        textView?.window?.isVisible ?? false
+    }
+
     private func dismissMonitoring() {
-        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
-        if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
-        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
-        keyMonitor = nil
-        mouseMonitor = nil
-        resignObserver = nil
+        Self.removeMonitors(key: keyMonitor, mouse: mouseMonitor,
+                            resign: resignObserver, orderOut: orderOutObserver)
+        orderOutObserver = nil
+        if let minimizeObserver {
+            NotificationCenter.default.removeObserver(minimizeObserver)
+        }
+        minimizeObserver = nil
     }
 }

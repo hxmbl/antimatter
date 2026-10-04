@@ -263,11 +263,14 @@ final class TimerCenter: ObservableObject {
 
     private func persistPomodoroSession(_ session: PomodoroSession) {
         guard let data = try? JSONEncoder().encode(session) else { return }
-        try? data.write(to: pomodoroFileURL, options: .atomic)
+        // Synchronous on purpose: `clearPomodoroSession` removes the file, and
+        // a queued async write could resurrect a cancelled session.
+        Persistence.writeData(data, to: pomodoroFileURL)
     }
 
     private func clearPomodoroSession() {
         try? FileManager.default.removeItem(at: pomodoroFileURL)
+        try? FileManager.default.removeItem(at: Persistence.backupURL(for: pomodoroFileURL))
     }
 
 
@@ -370,20 +373,18 @@ final class TimerCenter: ObservableObject {
     private func persist() {
         guard let data = try? JSONEncoder().encode(timers) else { return }
         let url = fileURL
+        let validate: (Data) -> Bool = { primary in
+            (try? JSONDecoder().decode([ActiveTimer].self, from: primary)) != nil
+        }
         if StorageLocation.isIsolatedRun {
             // Tests reload immediately after a mutation; a background write
             // would race ahead of the read and read stale data back.
-            let validate: (Data) -> Bool = { primary in
-                (try? JSONDecoder().decode([ActiveTimer].self, from: primary)) != nil
-            }
             Persistence.writeData(data, to: url, isValidPrimary: validate)
         } else {
-            let validate: @Sendable (Data) -> Bool = { primary in
-                (try? JSONDecoder().decode([ActiveTimer].self, from: primary)) != nil
-            }
-            Task.detached {
-                Persistence.writeData(data, to: url, isValidPrimary: validate)
-            }
+            // One shared serial writer per URL: two quick mutations used to
+            // spawn two unserialized tasks, and whichever finished last won —
+            // so a dismissed timer could come back on relaunch.
+            Task { await SerialDiskWriter.shared.write(data, to: url, isValidPrimary: validate) }
         }
     }
 }

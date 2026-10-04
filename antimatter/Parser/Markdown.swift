@@ -185,14 +185,30 @@ enum Markdown {
     // MARK: Line primitives
 
     private nonisolated static func lineRanges(_ text: String) -> [Range<String.Index>] {
+        // Split by scanning for the newline *inside* each grapheme cluster, not
+        // with `firstIndex(of: "\n")`. Swift follows GB3, so `"\r\n"` is ONE
+        // `Character` — it is not equal to `"\n"`, and the search skipped right
+        // past it. For any text with Windows line endings the whole document
+        // therefore came back as a single line: one heading became a document-wide
+        // H1, fenced code lost its styling entirely, blank lines stopped being
+        // blank (so paragraphs never split), and every list collapsed into one
+        // item. `Persistence.read` does no CRLF normalisation and writes the text
+        // back verbatim, so a note dragged in from another editor triggers it.
         var ranges: [Range<String.Index>] = []
         var start = text.startIndex
-        while true {
-            let end = text[start...].firstIndex(of: "\n") ?? text.endIndex
-            ranges.append(start..<end)
-            if end == text.endIndex { break }
-            start = text.index(after: end)
+        var cursor = text.startIndex
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character.unicodeScalars.contains("\n") {
+                // The range stops *before* the cluster, so a CRLF terminator is
+                // left out of the line entirely — which is what the LF path
+                // already did, and what `isBlank` needs to see an empty line.
+                ranges.append(start..<cursor)
+                start = text.index(after: cursor)
+            }
+            cursor = text.index(after: cursor)
         }
+        ranges.append(start..<text.endIndex)
         return ranges
     }
 
@@ -393,9 +409,16 @@ enum Markdown {
         var taskBracket: Range<String.Index>?
         var taskDone = false
         if body < line.upperBound, text[body] == "[" {
-            let close = text.index(after: body)
-            if close < line.upperBound, let mark = text.index(close, offsetBy: 1, limitedBy: line.upperBound) {
-                let inner = text[close]
+            // `- [ ]` / `- [x]`: the glyph sits at `body + 1` and the closing
+            // `]` at `body + 2`. Both must be strictly inside the line before
+            // they are read — see `IntentParser.safeIndex`. The old
+            // `index(_:offsetBy:limitedBy:)` guard let `mark` reach
+            // `line.upperBound`, so typing `- [x` as the last line of a note
+            // dereferenced `endIndex` and took the whole app down on a
+            // keystroke that is a perfectly ordinary thing to type.
+            if let glyph = IntentParser.safeIndex(text, from: body, by: 1, inside: line.upperBound),
+               let mark = IntentParser.safeIndex(text, from: body, by: 2, inside: line.upperBound) {
+                let inner = text[glyph]
                 if text[mark] == "]" && (inner == "x" || inner == "X" || inner == " ") {
                     let afterBracket = text.index(after: mark)
                     if afterBracket == line.upperBound || isBlockBreak(text[afterBracket]) {
@@ -433,6 +456,14 @@ enum Markdown {
         let cells = tableCells(line, in: text)
         guard !cells.isEmpty else { return false }
         return cells.allSatisfy { cell in
+            // `:---`, `---:`, `:---:` or a bare `---`. An **empty** cell has to
+            // be tolerated: a blank column is perfectly legal and common, and
+            // rejecting it meant `| a | | c |` over `| --- | | --- |` was not
+            // recognised as a table at all — the pipes showed and the grid, the
+            // monospace and the banding all silently vanished. Checking this
+            // first also stops the reads below from stepping outside the cell,
+            // which for an empty one is the separator that follows it.
+            guard !cell.isEmpty else { return true }
             var i = cell.lowerBound
             if text[i] == ":" { i = text.index(after: i) }
             var dashes = 0
@@ -584,9 +615,24 @@ enum Markdown {
         while i < range.upperBound {
             switch text[i] {
             case "\\":
+                // Only a backslash in front of ASCII punctuation is an escape.
+                // Treating *every* backslash as one hid the ones in a Windows
+                // path or a regex: `copy C:\Users\me\a.txt now` displayed as
+                // `copy C:Usersmea.txt now` — three characters present in the
+                // buffer but invisible, and not what the note says it says.
+                //
+                // A backslash with nothing after it stays an escape: that is the
+                // established contract for a trailing lone `\`, which is the state
+                // the user is in while still typing one.
                 let next = text.index(after: i)
-                out.append(Element(kind: .escape, range: NSRange(i..<next, in: text)))
-                i = next < range.upperBound ? text.index(after: next) : next
+                let isTrailing = next >= range.upperBound
+                if isTrailing || isEscapablePunctuation(text[next]) {
+                    out.append(Element(kind: .escape, range: NSRange(i..<next, in: text)))
+                    i = isTrailing ? next : text.index(after: next)
+                } else {
+                    // A literal backslash: leave the text alone and step over it.
+                    i = next
+                }
             case "`":
                 let ticks = codeTickLength(i, range: range, text: text)
                 if let end = readSpan("`", count: ticks, from: i, limit: range.upperBound, kind: .code, inclusive: true, text: text, into: &out) {
@@ -628,6 +674,16 @@ enum Markdown {
                     i = next
                 }
             case "_":
+                // `_` only opens emphasis at a word boundary. CommonMark forbids
+                // intraword `_`, and without this check the most ordinary
+                // identifier in a scratchpad — `snake_case_name` — rendered as
+                // *snake* + italic *case* + *name* with both underscores shrunk to
+                // 1 pt and made `.clear`, i.e. invisible. Two glyphs the user
+                // typed silently vanished from their own line.
+                guard opensAtWordBoundary(i, in: range, text: text) else {
+                    i = text.index(after: i)
+                    continue
+                }
                 let next = text.index(after: i)
                 let third = next < range.upperBound ? text.index(after: next) : next
                 if next < range.upperBound, third < range.upperBound,
@@ -799,7 +855,36 @@ enum Markdown {
         return nil
     }
 
+        /// `_` may only open emphasis at a *word* boundary: the preceding character
+    /// must not be alphanumeric. That is CommonMark's rule, and it is exactly
+    /// the difference between `_hi_` rendering as italic and `snake_case_name`
+    /// rendering as *snake* + italic *case* + *name* with both underscores
+    /// shrunk to 1 pt and made `.clear` — i.e. two glyphs the user typed silently
+    /// vanished from their own line, which is the most ordinary identifier shape
+    /// in a scratchpad. `__` is deliberately left alone: CommonMark permits
+    /// intraword strong, so `__init__` stays bold rather than being special-cased.
+    private nonisolated static func opensAtWordBoundary(
+        _ index: String.Index,
+        in range: Range<String.Index>,
+        text: String
+    ) -> Bool {
+        if index > range.lowerBound {
+            let before = text[text.index(before: index)]
+            if before.isLetter || before.isNumber { return false }
+        }
+        let afterIndex = text.index(after: index)
+        guard afterIndex < range.upperBound else { return false }
+        return !text[afterIndex].isWhitespace
+    }
+
+    /// ASCII punctuation is the escapable set in CommonMark. Anything else —
+    /// a letter, a digit, a space, a newline — leaves the backslash literal.
+    private nonisolated static func isEscapablePunctuation(_ character: Character) -> Bool {
+        character.isASCII && character.isPunctuation
+    }
+
     private nonisolated static func advanceEscaped(_ backslash: String.Index, limit: String.Index, in text: String) -> String.Index {
+
         let next = text.index(after: backslash)
         return next < limit ? text.index(after: next) : next
     }

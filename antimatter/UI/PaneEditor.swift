@@ -692,6 +692,14 @@ struct PaneEditor: NSViewRepresentable {
         /// it while it's open, or dismiss when the token stopped matching.
         private func syncCompletion(_ textView: NSTextView) {
             guard !referenceViewManager.isInHelpView else { return }
+            // AppKit posts no notification for a window being ordered out, so a
+            // panel that outlived a "hide the pane" gesture would come back
+            // VISIBLE the next time the pane showed, still carrying live event
+            // monitors and its old rows. Tear it down instead.
+            if completionPanel.isShown, !completionPanel.paneIsVisible {
+                completionPanel.dismiss()
+                return
+            }
             bindCompletionAccept()
             guard let tokenRange = completionTokenRange(in: textView), tokenRange.length > 1 else {
                 completionPanel.dismiss()
