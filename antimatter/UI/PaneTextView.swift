@@ -241,6 +241,12 @@ final class PaneTextView: NSTextView {
     // The caret spring advances from a display link, which a test cannot wait on
     // deterministically. These drive it by hand and expose what the view would
     // otherwise keep to itself.
+    //
+    // NOTE: `insertionPointXForTesting` is *not* an independent oracle. It uses
+    // the same `location(forGlyphAt:)` primitive as `caretRect`, so it agrees
+    // with the caret even when the caret is wrong — which is why the known
+    // rightward-offset defect is not caught by the tests that use it. See the
+    // commit message on 60ceb2c for what has been ruled out and where to look.
 
     var caretQuadForTesting: CaretQuad {
         get { caretQuad ?? CaretQuad() }

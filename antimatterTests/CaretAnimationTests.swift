@@ -316,17 +316,20 @@ struct CaretAnimationTests {
         #expect(!view.caretQuadForTesting.isActive, "caret never settled")
     }
 
-    /// The caret must sit exactly where the text system puts the insertion
-    /// point. It was reported as sitting slightly right of the character, so
-    /// this asserts the drawn position against the layout manager's own
-    /// measurement of the preceding run — which accounts for kerning and
-    /// ligature boundaries, unlike reading one glyph's origin.
-    @Test func caretSitsOnTheInsertionPointNotBesideIt() {
+    /// The caret's *target* must sit where the text system puts the insertion
+    /// point.
+    ///
+    /// NOTE: this does **not** cover the reported offset defect. The offset is
+    /// a constant ~one space-width to the right, unchanged by character or font
+    /// size, and it is *not* reproduced here: the target matches the insertion
+    /// point to 0.000pt, the resting quad matches its target exactly, and the
+    /// spring never overshoots. So this test is pinning the geometry that is
+    /// known good, and it is **not** a regression test for the bug. The oracle
+    /// shares `location(forGlyphAt:)` with `caretRect`, so if the defect lives
+    /// there this test would agree with it. See the commit message.
+    @Test func caretTargetSitsOnTheInsertionPoint() {
         for text in ["ab", "hello world", "MMM", "iiii", "AV Wa", "café naïve", "a  b"] {
             let view = makeLaidOutView(text: text)
-            // Excludes index == length, the trailing-insertion case measured
-            // separately below; it is resolved from the extra line fragment
-            // rather than a preceding run.
             for index in 0..<text.utf16.count {
                 guard let expected = view.insertionPointXForTesting(at: index),
                       let actual = view.caretXForTesting(at: index) else {
@@ -340,9 +343,10 @@ struct CaretAnimationTests {
     }
 
     /// Same check across several lines, where each caret comes from a different
-    /// line fragment. Uses explicit newlines rather than relying on wrap width,
-    /// so the geometry under test does not depend on the container resizing.
-    @Test func caretSitsOnTheInsertionPointOnEveryLine() {
+    /// line fragment. Subject to the same caveat as
+    /// `caretTargetSitsOnTheInsertionPoint`: it pins known-good geometry, it
+    /// does not cover the reported offset.
+    @Test func caretTargetSitsOnTheInsertionPointOnEveryLine() {
         let text = (0..<8).map { "line \($0) of the note has some text" }.joined(separator: "\n")
         let view = makeLaidOutView(text: text)
         let length = text.utf16.count
