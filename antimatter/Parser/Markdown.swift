@@ -825,7 +825,8 @@ enum Markdown {
         return closeEnd
     }
 
-    /// Finds the first unescaped run of exactly `required` delimiter characters.
+    /// Finds the first unescaped run of **exactly** `required` delimiter
+    /// characters.
     private nonisolated static func findDelimiter(
         _ delimiter: Character,
         count required: Int,

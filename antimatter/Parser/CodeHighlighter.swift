@@ -6,50 +6,55 @@ import Foundation
 /// Lightweight syntax highlighter for code blocks.
 enum CodeHighlighter {
     // MARK: Color palette
+    //
+    // Resolved once per `highlight` call and passed down. These used to be
+    // computed properties, so `isDark` re-ran `NSAppearance.bestMatch` once per
+    // *token* — thousands of times for a single code block — and every colour
+    // below rebuilt its `NSColor` on every access.
 
     /// Colorful, Xcode/GitHub-inspired palette. Adapts to light/dark appearance.
     private static var isDark: Bool {
         NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
     }
 
-    private static var keywordColor: NSColor {
-        isDark ? NSColor(hex: "#FF7AB2") : NSColor(hex: "#AF00DB")
+    private static func keywordColor(_ dark: Bool) -> NSColor {
+        dark ? NSColor(hex: "#FF7AB2") : NSColor(hex: "#AF00DB")
     }
-    private static var stringColor: NSColor {
-        isDark ? NSColor(hex: "#C3E88D") : NSColor(hex: "#C41A16")
+    private static func stringColor(_ dark: Bool) -> NSColor {
+        dark ? NSColor(hex: "#C3E88D") : NSColor(hex: "#C41A16")
     }
-    private static var commentColor: NSColor {
-        isDark ? NSColor(hex: "#7A7F98") : NSColor(hex: "#6E7781")
+    private static func commentColor(_ dark: Bool) -> NSColor {
+        dark ? NSColor(hex: "#7A7F98") : NSColor(hex: "#6E7781")
     }
-    private static var numberColor: NSColor {
-        isDark ? NSColor(hex: "#F78C6C") : NSColor(hex: "#098658")
+    private static func numberColor(_ dark: Bool) -> NSColor {
+        dark ? NSColor(hex: "#F78C6C") : NSColor(hex: "#098658")
     }
-    private static var typeColor: NSColor {
-        isDark ? NSColor(hex: "#82AAFF") : NSColor(hex: "#0550AE")
+    private static func typeColor(_ dark: Bool) -> NSColor {
+        dark ? NSColor(hex: "#82AAFF") : NSColor(hex: "#0550AE")
     }
-    private static var literalColor: NSColor {
-        isDark ? NSColor(hex: "#C792EA") : NSColor(hex: "#CF222E")
+    private static func literalColor(_ dark: Bool) -> NSColor {
+        dark ? NSColor(hex: "#C792EA") : NSColor(hex: "#CF222E")
     }
-    private static var functionColor: NSColor {
-        isDark ? NSColor(hex: "#FFCB6B") : NSColor(hex: "#8250DF")
+    private static func functionColor(_ dark: Bool) -> NSColor {
+        dark ? NSColor(hex: "#FFCB6B") : NSColor(hex: "#8250DF")
     }
-    private static var operatorColor: NSColor {
-        isDark ? NSColor(hex: "#FF6B6B") : NSColor(hex: "#D63031")
+    private static func operatorColor(_ dark: Bool) -> NSColor {
+        dark ? NSColor(hex: "#FF6B6B") : NSColor(hex: "#D63031")
     }
-    private static var preprocessorColor: NSColor {
-        isDark ? NSColor(hex: "#00B894") : NSColor(hex: "#00897B")
+    private static func preprocessorColor(_ dark: Bool) -> NSColor {
+        dark ? NSColor(hex: "#00B894") : NSColor(hex: "#00897B")
     }
-    private static var attributeColor: NSColor {
-        isDark ? NSColor(hex: "#00CEC9") : NSColor(hex: "#0097A7")
+    private static func attributeColor(_ dark: Bool) -> NSColor {
+        dark ? NSColor(hex: "#00CEC9") : NSColor(hex: "#0097A7")
     }
-    private static var htmlTagColor: NSColor {
-        isDark ? NSColor(hex: "#A29BFE") : NSColor(hex: "#6C5CE7")
+    private static func htmlTagColor(_ dark: Bool) -> NSColor {
+        dark ? NSColor(hex: "#A29BFE") : NSColor(hex: "#6C5CE7")
     }
-    private static var cssPropertyColor: NSColor {
-        isDark ? NSColor(hex: "#FDCB6E") : NSColor(hex: "#E1705A")
+    private static func cssPropertyColor(_ dark: Bool) -> NSColor {
+        dark ? NSColor(hex: "#FDCB6E") : NSColor(hex: "#E1705A")
     }
-    private static var markdownColor: NSColor {
-        isDark ? NSColor(hex: "#74B9FF") : NSColor(hex: "#0984E3")
+    private static func markdownColor(_ dark: Bool) -> NSColor {
+        dark ? NSColor(hex: "#74B9FF") : NSColor(hex: "#0984E3")
     }
 
     // MARK: Token classification
@@ -89,6 +94,9 @@ enum CodeHighlighter {
             return highlighted
         }
 
+        // Resolved once per call; every colour below used to re-read the
+        // appearance and rebuild its NSColor on each token.
+        let dark = isDark
         let nsCode = code as NSString
         let length = nsCode.length
         guard length > 0 else { return highlighted }
@@ -105,11 +113,11 @@ enum CodeHighlighter {
             if inBlockComment {
                 if let end = def.blockCommentEnd,
                    let endRange = SyntaxScanner.findString(end, in: nsCode, from: i) {
-                    highlighted.addAttribute(.foregroundColor, value: commentColor, range: NSRange(location: i, length: endRange.location - i + endRange.length))
+                    highlighted.addAttribute(.foregroundColor, value: commentColor(dark), range: NSRange(location: i, length: endRange.location - i + endRange.length))
                     i = endRange.location + endRange.length
                     inBlockComment = false
                 } else {
-                    highlighted.addAttribute(.foregroundColor, value: commentColor, range: NSRange(location: i, length: length - i))
+                    highlighted.addAttribute(.foregroundColor, value: commentColor(dark), range: NSRange(location: i, length: length - i))
                     break
                 }
                 continue
@@ -121,10 +129,10 @@ enum CodeHighlighter {
                 if let end = def.blockCommentEnd,
                    let endRange = SyntaxScanner.findString(end, in: nsCode, from: i + start.count) {
                     let endLoc = endRange.location + endRange.length
-                    highlighted.addAttribute(.foregroundColor, value: commentColor, range: NSRange(location: i, length: endLoc - i))
+                    highlighted.addAttribute(.foregroundColor, value: commentColor(dark), range: NSRange(location: i, length: endLoc - i))
                     i = endLoc
                 } else {
-                    highlighted.addAttribute(.foregroundColor, value: commentColor, range: NSRange(location: i, length: length - i))
+                    highlighted.addAttribute(.foregroundColor, value: commentColor(dark), range: NSRange(location: i, length: length - i))
                     break
                 }
                 continue
@@ -136,7 +144,7 @@ enum CodeHighlighter {
                 // Find end of line
                 let lineEnd = nsCode.range(of: "\n", range: NSRange(location: i, length: length - i))
                 let commentEnd = lineEnd.location == NSNotFound ? length : lineEnd.location
-                highlighted.addAttribute(.foregroundColor, value: commentColor, range: NSRange(location: i, length: commentEnd - i))
+                highlighted.addAttribute(.foregroundColor, value: commentColor(dark), range: NSRange(location: i, length: commentEnd - i))
                 i = commentEnd
                 continue
             }
@@ -152,10 +160,10 @@ enum CodeHighlighter {
                     let closeRange = nsCode.range(of: String(repeating: delim, count: 3), range: NSRange(location: openEnd, length: length - openEnd))
                     if closeRange.location != NSNotFound {
                         let end = closeRange.location + closeRange.length
-                        highlighted.addAttribute(.foregroundColor, value: stringColor, range: NSRange(location: i, length: end - i))
+                        highlighted.addAttribute(.foregroundColor, value: stringColor(dark), range: NSRange(location: i, length: end - i))
                         i = end
                     } else {
-                        highlighted.addAttribute(.foregroundColor, value: stringColor, range: NSRange(location: i, length: length - i))
+                        highlighted.addAttribute(.foregroundColor, value: stringColor(dark), range: NSRange(location: i, length: length - i))
                         break
                     }
                     continue
@@ -166,7 +174,7 @@ enum CodeHighlighter {
             if char == 0x22 || char == 0x27 {
                 let delimiter = Character(UnicodeScalar(UInt32(char))!)
                 let stringEnd = SyntaxScanner.findStringEnd(from: i + 1, delimiter: delimiter, in: nsCode, escaped: true)
-                highlighted.addAttribute(.foregroundColor, value: stringColor, range: NSRange(location: i, length: stringEnd - i))
+                highlighted.addAttribute(.foregroundColor, value: stringColor(dark), range: NSRange(location: i, length: stringEnd - i))
                 i = stringEnd
                 continue
             }
@@ -174,49 +182,49 @@ enum CodeHighlighter {
             // Numbers
             if SyntaxScanner.isNumberStart(at: i, in: nsCode, length: length) {
                 let numEnd = SyntaxScanner.findNumberEnd(from: i, in: nsCode, length: length)
-                highlighted.addAttribute(.foregroundColor, value: numberColor, range: NSRange(location: i, length: numEnd - i))
+                highlighted.addAttribute(.foregroundColor, value: numberColor(dark), range: NSRange(location: i, length: numEnd - i))
                 i = numEnd
                 continue
             }
 
             // Preprocessor directives
             if char == 0x23, let ppRange = SyntaxScanner.preprocessorRange(at: i, in: nsCode, length: length) {
-                highlighted.addAttribute(.foregroundColor, value: preprocessorColor, range: NSRange(location: ppRange.location, length: ppRange.length))
+                highlighted.addAttribute(.foregroundColor, value: preprocessorColor(dark), range: NSRange(location: ppRange.location, length: ppRange.length))
                 i = ppRange.location + ppRange.length
                 continue
             }
 
             // Attributes / decorators (@ prefix)
             if char == 0x40, let attrRange = SyntaxScanner.attributeRange(at: i, in: nsCode, length: length) {
-                highlighted.addAttribute(.foregroundColor, value: attributeColor, range: NSRange(location: attrRange.location, length: attrRange.length))
+                highlighted.addAttribute(.foregroundColor, value: attributeColor(dark), range: NSRange(location: attrRange.location, length: attrRange.length))
                 i = attrRange.location + attrRange.length
                 continue
             }
 
             // HTML tags and attributes
             if language == "html", char == 0x3C, let htmlRange = SyntaxScanner.htmlRange(at: i, in: nsCode, length: length) {
-                highlighted.addAttribute(.foregroundColor, value: htmlTagColor, range: NSRange(location: htmlRange.location, length: htmlRange.length))
+                highlighted.addAttribute(.foregroundColor, value: htmlTagColor(dark), range: NSRange(location: htmlRange.location, length: htmlRange.length))
                 i = htmlRange.location + htmlRange.length
                 continue
             }
 
             // CSS property names
             if language == "css", let cssRange = SyntaxScanner.cssPropertyRange(at: i, in: nsCode, length: length) {
-                highlighted.addAttribute(.foregroundColor, value: cssPropertyColor, range: NSRange(location: cssRange.location, length: cssRange.length))
+                highlighted.addAttribute(.foregroundColor, value: cssPropertyColor(dark), range: NSRange(location: cssRange.location, length: cssRange.length))
                 i = cssRange.location + cssRange.length
                 continue
             }
 
             // Markdown syntax characters
             if language == "markdown" || language == "md", let mdRange = SyntaxScanner.markdownSyntaxRange(at: i, in: nsCode, length: length) {
-                highlighted.addAttribute(.foregroundColor, value: markdownColor, range: NSRange(location: mdRange.location, length: mdRange.length))
+                highlighted.addAttribute(.foregroundColor, value: markdownColor(dark), range: NSRange(location: mdRange.location, length: mdRange.length))
                 i = mdRange.location + mdRange.length
                 continue
             }
 
             // Operators (multi-character aware)
             if let opRange = SyntaxScanner.operatorRange(at: i, in: nsCode, length: length) {
-                highlighted.addAttribute(.foregroundColor, value: operatorColor, range: NSRange(location: opRange.location, length: opRange.length))
+                highlighted.addAttribute(.foregroundColor, value: operatorColor(dark), range: NSRange(location: opRange.location, length: opRange.length))
                 i = opRange.location + opRange.length
                 continue
             }
@@ -227,17 +235,17 @@ enum CodeHighlighter {
                 let lower = word.lowercased()
                 let range = NSRange(location: i, length: wordEnd - i)
                 if literals.contains(word) || literals.contains(lower) {
-                    highlighted.addAttribute(.foregroundColor, value: literalColor, range: range)
+                    highlighted.addAttribute(.foregroundColor, value: literalColor(dark), range: range)
                 } else if typeKeywords.contains(lower) {
-                    highlighted.addAttribute(.foregroundColor, value: typeColor, range: range)
+                    highlighted.addAttribute(.foregroundColor, value: typeColor(dark), range: range)
                 } else if SyntaxScanner.isFunctionCall(at: wordEnd, in: nsCode, length: length) {
                     // Function / method call — `foo(` — distinct from keywords
-                    highlighted.addAttribute(.foregroundColor, value: functionColor, range: range)
+                    highlighted.addAttribute(.foregroundColor, value: functionColor(dark), range: range)
                 } else if def.keywords.contains(word) || def.keywords.contains(lower) {
-                    highlighted.addAttribute(.foregroundColor, value: keywordColor, range: range)
+                    highlighted.addAttribute(.foregroundColor, value: keywordColor(dark), range: range)
                 } else if let first = word.unicodeScalars.first, CharacterSet.uppercaseLetters.contains(first) {
                     // Capitalised identifier likely a type / class / constructor
-                    highlighted.addAttribute(.foregroundColor, value: typeColor, range: range)
+                    highlighted.addAttribute(.foregroundColor, value: typeColor(dark), range: range)
                 }
                 i = wordEnd
                 continue

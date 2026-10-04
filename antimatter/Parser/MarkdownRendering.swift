@@ -6,12 +6,23 @@ import Foundation
 /// the document's glyph attributes, so caret movement cannot reflow glyphs.
 final class MarkdownHighlighter {
     private var source = ""
-    private var elements: [Markdown.Element] = []
+    /// The appearance the last render was done for. `refresh` skips work when the
+    /// text has not changed, but code-block colours are picked from the live
+    /// `NSApp.effectiveAppearance` — so a light/dark switch whose theme happens to
+    /// share the same text colour left every code colour in the old palette until
+    /// the next keystroke.
+    private var renderedForDarkAppearance = false
+
+    /// Appearance resolved once per render rather than once per token.
+    static var isDarkAppearance: Bool {
+        NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    }
 
     /// Re-parses and re-applies Markdown styling. The raw string stays untouched.
     func render(_ textView: NSTextView) {
         guard let storage = textView.textStorage else { return }
         let text = textView.string
+        renderedForDarkAppearance = Self.isDarkAppearance
         let baseSize = PaneStyle.fontSize
         let typingAttributes = textView.typingAttributes
         let selectedRanges = textView.selectedRanges
@@ -25,8 +36,7 @@ final class MarkdownHighlighter {
         let elements = Markdown.parse(text)
         let headings = elements.compactMap { Heading(element: $0) }
         self.source = text
-        self.elements = elements
-        
+
         // Table cells need monospaced face for column alignment.
         let cellRanges = elements.compactMap { element -> NSRange? in
             guard case .tableCell = element.kind else { return nil }
@@ -72,13 +82,27 @@ final class MarkdownHighlighter {
             case .tableCell:
                 storage.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: baseSize, weight: .regular), range: element.range)
                 storage.addAttribute(.backgroundColor, value: NSColor.quaternarySystemFill, range: element.range)
+                // `alignment` is parsed and deliberately not applied: a table row
+                // is a *single paragraph* to AppKit, so per-cell alignment is not
+                // expressible — setting it over one cell's range would move the
+                // whole line, and the last cell written would win. Left unused
+                // rather than faked; the value is kept for a future renderer that
+                // can lay cells out as separate text blocks.
             case .taskBody(let done):
                 if done {
                     storage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: element.range)
                     storage.addAttribute(.foregroundColor, value: PaneStyle.secondaryTextNSColor, range: element.range)
                 }
             case .tableHeader:
-                storage.addAttribute(.font, value: Self.monospacedFont(ofSize: baseSize, weight: .bold), range: element.range)
+                // Font is *not* set here. A wholesale `.font` over the whole
+                // header line re-styled two things it should not have: the syntax
+                // markers already shrunk to 1 pt and made `.clear` by the
+                // `.hidden` branch (which put them back to full width, so a `**`
+                // in a header occupied two monospaced columns and broke the very
+                // alignment the monospaced face exists for), and any italic or
+                // inline code inside the header, which was silently flattened.
+                // Header weight is added by `boldenHeader`, which adds the bold
+                // trait to whatever font each run already has.
                 storage.addAttribute(.backgroundColor, value: NSColor.tertiarySystemFill, range: element.range)
             case .strong:
                 storage.addAttribute(.font, value: inlineFont(for: element, cells: cellRanges, headings: headings, base: baseSize, trait: .bold), range: element.range)
@@ -122,12 +146,13 @@ final class MarkdownHighlighter {
             }
         }
         
-        // Cell styling is applied while walking the parser elements, so
-        // re-apply header weight after cells have established their fonts.
+        // Cell styling is applied while walking the parser elements, so header
+        // weight goes on afterwards — by *adding* the bold trait to each run's
+        // existing font rather than replacing it, which is what preserves italic
+        // and inline code inside a header cell.
         for element in elements {
             if case .tableHeader = element.kind {
-                storage.addAttribute(.font, value: Self.monospacedFont(ofSize: baseSize, weight: .bold), range: element.range)
-                storage.addAttribute(.backgroundColor, value: NSColor.tertiarySystemFill, range: element.range)
+                boldenHeader(in: storage, range: element.range)
             }
         }
 
@@ -154,10 +179,13 @@ final class MarkdownHighlighter {
     /// Re-renders after a text edit. Selection-only changes are intentionally
     /// ignored because syntax attributes are stable across caret movement.
     func refresh(_ textView: NSTextView) {
-        guard textView.string == source else {
-            render(textView)
+        // Unchanged text is normally nothing to do — but code-block colours come
+        // from the live appearance, so a light/dark switch has to force a
+        // re-render even when the text is untouched.
+        guard textView.string != source || Self.isDarkAppearance != renderedForDarkAppearance else {
             return
         }
+        render(textView)
     }
 
 
@@ -193,6 +221,24 @@ final class MarkdownHighlighter {
 
     private func italicFont(ofSize size: CGFloat) -> NSFont {
         NSFontManager.shared.convert(NSFont.systemFont(ofSize: size), toHaveTrait: .italicFontMask)
+    }
+
+    /// Adds bold to a table header without disturbing anything else about it.
+    ///
+    /// Runs already collapsed to the hidden-marker font (1 pt, `.clear`) are
+    /// skipped: they are syntax, not content, and giving them a real weight put
+    /// their width back and pushed the columns out of alignment.
+    private func boldenHeader(in storage: NSTextStorage, range: NSRange) {
+        let hiddenFont = NSFont.systemFont(ofSize: 1)
+        storage.enumerateAttribute(.font, in: range, options: []) { value, run, _ in
+            guard let font = value as? NSFont else { return }
+            guard font.pointSize > 1.01 else { return }
+            storage.addAttribute(
+                .font,
+                value: NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask),
+                range: run)
+        }
+        _ = hiddenFont
     }
 
     private enum InlineTrait {
@@ -273,40 +319,63 @@ final class MarkdownHighlighter {
     }
     
     
+    /// Highlights each fenced block in one pass.
+    ///
+    /// `Markdown.parse` emits one `.codeBlock` element *per line*, and feeding
+    /// those to the lexer one at a time reset its state every line — so a
+    /// multi-line block comment or a Python triple-quoted string only coloured
+    /// its first line, and the closing `*/` was tokenised as two operators,
+    /// which made the comment look like it broke open mid-way. Consecutive code
+    /// lines are therefore merged back into a single contiguous span (newlines
+    /// included) and handed over as one string, which is the only way lexer
+    /// state can survive a line boundary.
     private func applyCodeHighlighting(to storage: NSTextStorage, text: String, elements: [Markdown.Element], baseSize: CGFloat) {
+        let ns = text as NSString
         var currentLanguage: String?
-        var prevWasCodeBlock = false
-        
+        var pendingStart: Int?
+        var pendingEnd = 0
+
+        func flush() {
+            defer { pendingStart = nil }
+            guard let start = pendingStart, let language = currentLanguage, !language.isEmpty else { return }
+            let range = NSRange(location: start, length: pendingEnd - start)
+            guard range.length > 0, NSMaxRange(range) <= storage.length else { return }
+            let code = ns.substring(with: range)
+            guard !code.isEmpty else { return }
+            let highlighted = CodeHighlighter.highlight(
+                code: code,
+                language: language,
+                baseFont: NSFont.monospacedSystemFont(ofSize: baseSize - 1, weight: .regular))
+            highlighted.enumerateAttributes(
+                in: NSRange(location: 0, length: highlighted.length), options: []
+            ) { attrs, attrRange, _ in
+                let storageRange = NSRange(location: start + attrRange.location, length: attrRange.length)
+                guard storageRange.location + storageRange.length <= storage.length else { return }
+                storage.addAttributes(attrs, range: storageRange)
+            }
+        }
+
         for element in elements {
             switch element.kind {
             case .language:
-                currentLanguage = (text as NSString).substring(with: element.range).trimmingCharacters(in: .whitespaces)
-                prevWasCodeBlock = false
+                flush()
+                currentLanguage = ns.substring(with: element.range)
+                    .trimmingCharacters(in: .whitespaces)
             case .codeBlock:
-                prevWasCodeBlock = true
-                if let language = currentLanguage, !language.isEmpty {
-                    let range = element.range
-                    let codeContent = (text as NSString).substring(with: range)
-                    if !codeContent.isEmpty {
-                        let highlighted = CodeHighlighter.highlight(code: codeContent, language: language, baseFont: NSFont.monospacedSystemFont(ofSize: baseSize - 1, weight: .regular))
-                        let fullRange = NSRange(location: 0, length: highlighted.length)
-                        highlighted.enumerateAttributes(in: fullRange, options: []) { attrs, attrRange, _ in
-                            let storageRange = NSRange(location: range.location + attrRange.location, length: attrRange.length)
-                            if storageRange.location + storageRange.length <= storage.length {
-                                storage.addAttributes(attrs, range: storageRange)
-                            }
-                        }
-                    }
-                }
-            case .hidden where prevWasCodeBlock:
-                // Closing fence immediately after code block lines — end highlighting.
-                prevWasCodeBlock = false
+                // Elements arrive location-sorted, so a run of code lines is
+                // simply consecutive `.codeBlock` cases.
+                if pendingStart == nil { pendingStart = element.range.location }
+                pendingEnd = NSMaxRange(element.range)
+            case .hidden:
+                // The closing fence ends the block.
+                if pendingStart != nil { flush() }
                 currentLanguage = nil
             default:
-                prevWasCodeBlock = false
+                if pendingStart != nil { flush() }
                 break
             }
         }
+        flush()
     }
 }
 
