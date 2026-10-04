@@ -153,8 +153,9 @@ struct PaneEditor: NSViewRepresentable {
         private var pendingRender: DispatchWorkItem?
 
         /// How long typing must pause before the full-document Markdown pass
-        /// runs. Long enough to swallow a burst of keystrokes.
-        private static let renderIdleDelay: TimeInterval = 0.12
+        /// runs. Long enough to swallow a burst of keystrokes, short enough
+        /// that styling has visibly settled by the time you look at it.
+        private static let renderIdleDelay: TimeInterval = 0.05
         private var pendingStatusUpdate: DispatchWorkItem?
         private var appliedFontSize: CGFloat = PaneStyle.fontSize
         private var appliedThemeID = PaneTheme.current.id
