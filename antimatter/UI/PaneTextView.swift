@@ -309,6 +309,20 @@ final class PaneTextView: NSTextView {
         caretRect(for: index)
     }
 
+    /// The ghost values currently cached, and how many whole-note resolves have
+    /// happened. `draw(_:)` runs on every caret frame and blink tick, so the
+    /// cache is what keeps typing off an O(note) resolve per frame.
+    var ghostCacheForTesting: [(lineRange: NSRange, text: String)] { ghostCache }
+    private(set) var ghostResolveCountForTesting = 0
+
+    /// Resolve and cache, as `drawVariableGhosts` does before positioning.
+    @discardableResult
+    func resolveGhostsForTesting() -> [(lineRange: NSRange, text: String)] {
+        guard let storage = textStorage else { return [] }
+        cachedGhosts(for: storage.string)
+        return ghostCache
+    }
+
     /// One spring step, bypassing the display link.
     func advanceCaretForTesting(by dt: CFTimeInterval) {
         guard var quad = caretQuad else { return }
@@ -577,11 +591,32 @@ final class PaneTextView: NSTextView {
         return bounds
     }
 
-    private func drawVariableGhosts(in dirtyRect: NSRect) {
-        guard let storage = textStorage, let layoutManager, let textContainer else { return }
-        let source = storage.string
+    /// The `text` the ghost cache was built from, and the resolved ghost values
+    /// for it. Both are pure functions of the note text, so they survive a
+    /// repaint but not an edit.
+    ///
+    /// `draw(_:)` runs on every `CADisplayLink` frame of a caret hop and on
+    /// every blink tick, so resolving here unconditionally meant a whole-note
+    /// `VariableTable.scan` plus one `evaluateValue` per `$()` several times a
+    /// second while typing. The key is compared rather than invalidated from
+    /// `didChangeText` alone because a reload assigns `.string =` directly,
+    /// which posts no notification.
+    private var ghostCacheKey: String?
+    private var ghostCache: [(lineRange: NSRange, text: String)] = []
+
+    private func cachedGhosts(for source: String) -> [(lineRange: NSRange, text: String)] {
+        if source != ghostCacheKey {
+            ghostCache = Self.resolveGhosts(in: source)
+            ghostCacheKey = source
+            ghostResolveCountForTesting += 1
+        }
+        return ghostCache
+    }
+
+    private static func resolveGhosts(in source: String) -> [(lineRange: NSRange, text: String)] {
         let variables = VariableTable.scan(source)
         let ns = source as NSString
+        var resolved: [(lineRange: NSRange, text: String)] = []
         for span in ExpressionEvaluator.interpolationSpans(in: source) {
             let lineRange = ns.lineRange(for: span.range)
             let line = ns.substring(with: lineRange).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -589,27 +624,44 @@ final class PaneTextView: NSTextView {
                   let value = ExpressionEvaluator.evaluateValue(span.inner, variables: variables, buffer: source)
                     ?? IntentExecution.commandDryRun(span.inner, buffer: source).map(SparkValue.number),
                   value.isFinite else { continue }
+            resolved.append((lineRange, IntentParser.format(value)))
+        }
+        return resolved
+    }
 
-            var contentEnd = NSMaxRange(lineRange)
+    private func drawVariableGhosts(in dirtyRect: NSRect) {
+        guard let storage = textStorage, let layoutManager, let textContainer else { return }
+        let source = storage.string
+        let ns = source as NSString
+        // Only the glyph measurement below is per-frame; the values came from
+        // the cache.
+        for ghost in cachedGhosts(for: source) {
+            var contentEnd = NSMaxRange(ghost.lineRange)
             if contentEnd > 0, ns.character(at: contentEnd - 1) == unichar(10) { contentEnd -= 1 }
-            let characterRange = NSRange(location: lineRange.location, length: max(0, contentEnd - lineRange.location))
+            let characterRange = NSRange(location: ghost.lineRange.location,
+                                         length: max(0, contentEnd - ghost.lineRange.location))
             let glyphRange = layoutManager.glyphRange(forCharacterRange: characterRange, actualCharacterRange: nil)
             let lineRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
-            let origin = NSPoint(x: textContainerOrigin.x + lineRect.maxX + 10, y: textContainerOrigin.y + lineRect.minY)
-            let ghost = IntentParser.format(value)
+            let origin = NSPoint(x: textContainerOrigin.x + lineRect.maxX + 10,
+                                 y: textContainerOrigin.y + lineRect.minY)
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.monospacedSystemFont(ofSize: PaneStyle.fontSize - 1, weight: .regular),
                 .foregroundColor: PaneStyle.secondaryTextNSColor.withAlphaComponent(0.72)
             ]
-            let size = (ghost as NSString).size(withAttributes: attributes)
+            let size = (ghost.text as NSString).size(withAttributes: attributes)
             let rect = NSRect(origin: origin, size: size)
             guard dirtyRect.intersects(rect) else { continue }
-            (ghost as NSString).draw(in: rect, withAttributes: attributes)
+            (ghost.text as NSString).draw(in: rect, withAttributes: attributes)
         }
     }
 
     override func didChangeText() {
         super.didChangeText()
+        // The ghost values are derived from the note, so they are stale the
+        // moment it changes. `cachedGhosts` also compares its key, which covers
+        // edits that reach the storage without this callback.
+        ghostCacheKey = nil
+        ghostCache = []
         // Typing and deleting both land here, so the caret does not have to
         // predict which edits move it. Animated like any other hop, but a
         // one-character move is classified as *short* (see `CaretQuad`), which

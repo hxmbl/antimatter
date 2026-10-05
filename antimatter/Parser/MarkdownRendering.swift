@@ -287,14 +287,17 @@ final class MarkdownHighlighter {
     private func isListBulletMarker(at location: Int, in text: String) -> Bool {
         let ns = text as NSString
         guard location < ns.length else { return false }
+        // Scalar values, not `unichar("-")`: `unichar` takes a number, so
+        // `unichar("-")` returns nil and every comparison below would be
+        // silently false, dimming all bullets like ordinary syntax.
         let character = ns.character(at: location)
-        guard character == unichar("-") || character == unichar("*") || character == unichar("+") else { return false }
+        guard character == 45 || character == 42 || character == 43 else { return false } // - * +
         var index = location
         while index > 0 {
             switch ns.character(at: index - 1) {
-            case unichar("\n"):
+            case 10: // \n
                 return true
-            case unichar(" "), unichar("\t"):
+            case 32, 9: // space, tab
                 index -= 1
             default:
                 return false

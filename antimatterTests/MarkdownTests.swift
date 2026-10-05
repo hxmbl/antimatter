@@ -511,7 +511,7 @@ struct MarkdownHighlightTests {
         #expect(line2Marker?.pointSize == 1)
     }
 
-    @Test func listMarkerIsDimmedAndTaskBodyStrikesWhenDone() {
+    @Test func taskBodyStrikesAndTheBulletKeepsItsTint() {
         let textView = NSTextView()
         textView.string = "- [x] finished"
         Markdown.highlight(textView)
@@ -520,8 +520,14 @@ struct MarkdownHighlightTests {
             return
         }
 
+        // A lone `-` at content start is a bullet, so it takes the accent
+        // tint. This expectation used to be the dim secondary colour, which
+        // passed only because `isListBulletMarker` compared against
+        // `unichar("-")` — that is `nil`, so the comparison was always false
+        // and every bullet was dimmed. See `UnicharTests`.
         let markerColor = storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
-        #expect(markerColor == NSColor.secondaryLabelColor)
+        #expect(markerColor == PaneStyle.accentNSColor.withAlphaComponent(0.85))
+        #expect(markerColor != PaneStyle.secondaryTextNSColor)
 
         let strike = storage.attribute(.strikethroughStyle, at: 6, effectiveRange: nil)
         #expect(strike != nil)
