@@ -161,7 +161,10 @@ struct PaneEditor: NSViewRepresentable {
         private var appliedThemeID = PaneTheme.current.id
         /// Undo replays suppress automatic rewrites until a real keystroke arrives.
         private var autoRewritesSuppressed = false
-        private var suppressedTokenStart: Int?
+        /// Suppresses the AutoReact panel for exactly the buffer state an accept
+        /// produced, so the insert doesn't echo the panel back open. Keyed on the
+        /// buffer, not on a token offset — see `CompletionSuppression`.
+        private var completionSuppression: IntentExecution.CompletionSuppression?
         private var completionTask: Task<Void, Never>?
         private let completionPanel = CommandCompletionPanel()
         /// Dispatch source timer for minute-boundary .time updates
@@ -657,18 +660,12 @@ struct PaneEditor: NSViewRepresentable {
         /// Auto-open the completion panel once per `.partial` token.
         private func scheduleCompletion(_ textView: NSTextView) {
             completionTask?.cancel()
-            let ns = textView.string as NSString
-            let location = textView.selectedRange().location
-            var start = location
-            while start > 0 {
-                let character = ns.character(at: start - 1)
-                if character == unichar(" ") || character == unichar("\t") || character == unichar("\n") { break }
-                start -= 1
-            }
-            let isDotCommand = isAutoReactCommandStart(in: ns, at: start, location: location)
-                && !isEscapedDotCommand(in: ns, at: start)
+            // A live command token opens the panel at once; anything else waits
+            // out the pause, so abandoning a half-typed token does not flash the
+            // panel before dismissing it.
+            let isCommandToken = completionTokenRange(in: textView) != nil
             completionTask = Task { [weak self, weak textView] in
-                if !isDotCommand { try? await Task.sleep(for: .milliseconds(240)) }
+                if !isCommandToken { try? await Task.sleep(for: .milliseconds(240)) }
                 guard !Task.isCancelled, let self, let textView else { return }
                 guard !autoRewritesSuppressed,
                       textView.window?.firstResponder == textView,
@@ -688,13 +685,12 @@ struct PaneEditor: NSViewRepresentable {
                 return true
             }
             guard let textView = ownedTextView,
-                  let tokenRange = completionTokenRange(in: textView),
-                  tokenRange.length > 0
+                  let tokenRange = completionTokenRange(in: textView)
             else { return false }
             let token = (textView.string as NSString).substring(with: tokenRange)
             let candidates = IntentExecution.completionCandidates(
                 for: token, buffer: textView.string, usageCount: StatsCenter.shared.usageCount(for:))
-            guard !candidates.isEmpty, suppressedTokenStart != tokenRange.location else { return false }
+            guard !candidates.isEmpty, !isCompletionSuppressed(in: textView) else { return false }
             bindCompletionAccept()
             completionPanel.show(
                 in: textView,
@@ -716,15 +712,18 @@ struct PaneEditor: NSViewRepresentable {
                 completionPanel.dismiss()
                 return
             }
+            // The panel is not allowed back while the caret still sits on the
+            // exact buffer an accept produced. Any edit at all — including
+            // deleting the snippet back down to a shorter partial — ends that
+            // state and re-enables the panel.
+            guard !isCompletionSuppressed(in: textView) else { return }
             bindCompletionAccept()
-            guard let tokenRange = completionTokenRange(in: textView), tokenRange.length > 1 else {
+            // A one-character token — a bare `.` or `:` — is a real token, so
+            // the panel opens on the marker alone as the README promises.
+            guard let tokenRange = completionTokenRange(in: textView) else {
                 completionPanel.dismiss()
                 return
             }
-            if let suppressed = suppressedTokenStart, suppressed != tokenRange.location {
-                suppressedTokenStart = nil
-            }
-            if suppressedTokenStart == tokenRange.location { return }
             let token = (textView.string as NSString).substring(with: tokenRange)
             let candidates = IntentExecution.completionCandidates(
                 for: token, buffer: textView.string, usageCount: StatsCenter.shared.usageCount(for:))
@@ -743,62 +742,28 @@ struct PaneEditor: NSViewRepresentable {
             }
         }
 
-        /// The unbroken token ending at the caret, or nil when none sits there.
+        /// The token ending at the caret that the panel completes, or nil when
+        /// none sits there. The scanning rules live in `IntentExecution` so they
+        /// are covered by tests rather than only reachable by typing.
         private func completionTokenRange(in textView: NSTextView) -> NSRange? {
-            let ns = textView.string as NSString
-            let location = textView.selectedRange().location
-            guard location > 0, location <= ns.length else { return nil }
-            var start = location
-            while start > 0 {
-                let character = ns.character(at: start - 1)
-                if character == unichar(" ") || character == unichar("\t") || character == unichar("\n") {
-                    break
-                }
-                start -= 1
-            }
-            guard !isEscapedDotCommand(in: ns, at: start),
-                  isAutoReactCommandStart(in: ns, at: start, location: location) else { return nil }
-            // Commands after `$(` start two characters in (the `$` and `(`);
-            // `:name` references and dot-commands start at the token itself.
-            let commandStart: Int
-            if ns.character(at: start) == unichar("$") {
-                commandStart = start + 2
-            } else {
-                commandStart = start
-            }
-            return NSRange(location: commandStart, length: location - commandStart)
+            IntentExecution.completableToken(
+                in: textView.string as NSString, at: textView.selectedRange().location)
         }
 
-        /// Finds a dot-command (or `:name` variable reference) token either
-        /// at the start of a normal token or immediately inside an
-        /// interpolation such as `$(.sum 10 20)` or `$(:price)`.
-        private func isAutoReactCommandStart(
-            in ns: NSString,
-            at start: Int,
-            location: Int
-        ) -> Bool {
-            if start < location, ns.character(at: start) == unichar(".") {
-                return true
+        /// True while the panel must stay shut because the note is still exactly
+        /// as the last accepted completion left it. Clears itself on the next
+        /// edit, and across notes for free — a different buffer never matches.
+        private func isCompletionSuppressed(in textView: NSTextView) -> Bool {
+            guard let suppression = completionSuppression else { return false }
+            guard IntentExecution.isCompletionSuppressed(
+                suppression,
+                text: textView.string,
+                caret: textView.selectedRange().location
+            ) else {
+                completionSuppression = nil
+                return false
             }
-            if start < location, ns.character(at: start) == unichar(":") {
-                return true
-            }
-            return start + 2 < location
-                && ns.character(at: start) == unichar("$")
-                && ns.character(at: start + 1) == unichar("(")
-                && (ns.character(at: start + 2) == unichar(".") || ns.character(at: start + 2) == unichar(":"))
-        }
-
-        /// True when the dot-command at `start` sits on an escaped line
-        /// (`\ .timer`), so typing it never auto-opens the completion panel.
-        private func isEscapedDotCommand(in ns: NSString, at start: Int) -> Bool {
-            var lineStart = start
-            while lineStart > 0, ns.character(at: lineStart - 1) != unichar("\n") {
-                lineStart -= 1
-            }
-            let prefix = ns.substring(with: NSRange(location: lineStart, length: start - lineStart))
-            let trimmed = prefix.trimmingCharacters(in: .whitespaces)
-            return !trimmed.isEmpty && trimmed.hasPrefix("\\")
+            return true
         }
 
         private func bindCompletionAccept() {
@@ -831,9 +796,16 @@ struct PaneEditor: NSViewRepresentable {
             textView.insertText(entry.snippet, replacementRange: NSRange(location: tokenStart, length: tokenLength))
             StatsCenter.shared.record(typed: (entry.snippet as NSString).length, deleted: tokenLength)
             StatsCenter.shared.record(command: entry.name)
-            if suppressFurther { suppressedTokenStart = tokenStart }
             if let (range, _) = IntentExecution.placeholderRange(in: entry.snippet) {
                 textView.setSelectedRange(NSRange(location: tokenStart + range.location, length: range.length))
+            }
+            // Captured last, once the snippet and any placeholder selection are
+            // both in place, so the suppression describes the state the user is
+            // actually looking at.
+            if suppressFurther {
+                completionSuppression = .init(
+                    text: textView.string,
+                    caret: textView.selectedRange().location)
             }
         }
 

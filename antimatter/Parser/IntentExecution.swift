@@ -1067,6 +1067,8 @@ nonisolated enum IntentExecution {
                    snippet: ".timer list ", category: .timers),
         DotCommand(name: ".stopwatch", description: "start a stopwatch — .stopwatch [label]",
                    snippet: ".stopwatch ", category: .timers),
+        DotCommand(name: ".stopwatch cancel all", description: "cancel every running stopwatch",
+                   snippet: ".stopwatch cancel all ", category: .timers),
         DotCommand(name: ".stopwatch list", description: "show stopwatch readings",
                    snippet: ".stopwatch list ", category: .timers),
         DotCommand(name: ".remind", description: "set a natural-language reminder",
@@ -1088,6 +1090,8 @@ nonisolated enum IntentExecution {
                    snippet: ".sum ", category: .math),
         DotCommand(name: ".avg", description: "average numbers — .avg [10 20 30]",
                    snippet: ".avg ", category: .math),
+        DotCommand(name: ".total", description: "sum numbers — same as `.sum`", category: .math),
+        DotCommand(name: ".average", description: "average numbers — same as `.avg`", category: .math),
         DotCommand(name: ".count", description: "count numbers — .count [10 20 30]",
                    snippet: ".count ", category: .math),
         DotCommand(name: ".time", description: "stamp the current time", category: .utilities),
@@ -1213,6 +1217,140 @@ nonisolated enum IntentExecution {
         return true
     }
 
+    // MARK: Caret token
+
+    /// Character markers as scalars.
+    ///
+    /// `unichar` takes a *number*. `unichar(".")` therefore falls back to
+    /// `LosslessStringConvertible`, cannot parse a non-numeric character, and
+    /// returns `nil` — so `ns.character(at: i) == unichar(".")` compares a real
+    /// character against `nil` and is silently false for every input. Every
+    /// marker comparison goes through these constants instead.
+    private static let scalarDot: unichar = 46          // "."
+    private static let scalarColon: unichar = 58        // ":"
+    private static let scalarDollar: unichar = 36       // "$"
+    private static let scalarOpenParen: unichar = 40   // "("
+    private static let scalarNewline: unichar = 10      // "\n"
+
+    /// The run of characters before the caret that a completion token can
+    /// occupy, stopping at whitespace.
+    private static let completionWhitespace: Set<unichar> = [32, 9, 10, 13]
+
+    /// Where the command or variable marker sits inside a bare word ending at
+    /// `end`: 0 for a `.`/`:`-led word, 2 for one inside `$(`, nil when the
+    /// word starts neither. `$(` on its own is deliberately nil — there is
+    /// nothing to complete until the marker arrives.
+    static func commandAnchor(in ns: NSString, from start: Int, to end: Int) -> Int? {
+        guard start < end else { return nil }
+        let first = ns.character(at: start)
+        if first == scalarDot || first == scalarColon { return 0 }
+        guard start + 2 < end,
+              first == scalarDollar,
+              ns.character(at: start + 1) == scalarOpenParen
+        else { return nil }
+        let marker = ns.character(at: start + 2)
+        return (marker == scalarDot || marker == scalarColon) ? 2 : nil
+    }
+
+    /// The token the completion panel should offer for a caret at `location`,
+    /// or nil when there is nothing there to complete.
+    ///
+    /// A word counts when it starts a command or variable reference — `.t`,
+    /// `:pri`, or the same inside `$(.sum` / `$(:price`. A bare `.` or `:` is
+    /// one character long and is a token like any other, which is what lets the
+    /// panel open on the marker alone.
+    ///
+    /// A second word extends a command word before it, so `.timer l` completes
+    /// `.timer list`. Without that the space ended the token, the lone `l` was
+    /// not a command start, and the registry's multi-word entries were
+    /// unreachable by typing — reachable only by arrowing or Tab-cycling from
+    /// the shortlist, which is the opposite of what the panel is for. The
+    /// extension is gated on the preceding word being a real command name, so
+    /// ordinary prose (`.timer 5 soup`, `.sum 10`) does not open the panel: the
+    /// candidates for such a token come back empty and the panel dismisses.
+    static func completionToken(in ns: NSString, at location: Int) -> NSRange? {
+        guard location > 0, location <= ns.length else { return nil }
+
+        var start = location
+        while start > 0, !completionWhitespace.contains(ns.character(at: start - 1)) {
+            start -= 1
+        }
+        // The caret sits in whitespace: no partial word under it.
+        guard start < location else { return nil }
+
+        if let extended = extendedCompletionToken(in: ns, wordStart: start, location: location) {
+            return extended
+        }
+        guard let anchor = commandAnchor(in: ns, from: start, to: location) else { return nil }
+        return NSRange(location: start + anchor, length: location - start - anchor)
+    }
+
+    /// `.timer l` → the whole `.timer l`, when the word before the space is
+    /// itself a dot-command name. nil in every other case, so the plain
+    /// single-word path stays the common one.
+    private static func extendedCompletionToken(
+        in ns: NSString,
+        wordStart: Int,
+        location: Int
+    ) -> NSRange? {
+        guard wordStart > 0, completionWhitespace.contains(ns.character(at: wordStart - 1)) else {
+            return nil
+        }
+        var commandEnd = wordStart - 1
+        while commandEnd > 0, completionWhitespace.contains(ns.character(at: commandEnd - 1)) {
+            commandEnd -= 1
+        }
+        var commandStart = commandEnd
+        while commandStart > 0, !completionWhitespace.contains(ns.character(at: commandStart - 1)) {
+            commandStart -= 1
+        }
+        guard commandStart < commandEnd,
+              commandAnchor(in: ns, from: commandStart, to: commandEnd) == 0,
+              isCommandWord(ns.substring(with: NSRange(location: commandStart,
+                                                       length: commandEnd - commandStart)))
+        else { return nil }
+        return NSRange(location: commandStart, length: location - commandStart)
+    }
+
+    /// True when `word` is a dot-command's leading word, making it a valid
+    /// anchor for a second one. That covers both a bare command (`.timer` in
+    /// `.timer cancel all`) and a word shared only by multi-word commands
+    /// (`.export`, which has no bare form of its own). Both sides drop the
+    /// leading dot so a bare command and a shared prefix compare equal.
+    private static func isCommandWord(_ word: String) -> Bool {
+        let bare = word.hasPrefix(IntentParser.commandPrefix)
+            ? String(word.dropFirst(IntentParser.commandPrefix.count))
+            : word
+        return dotCommands.contains { command in
+            let name = String(command.name.dropFirst(IntentParser.commandPrefix.count))
+            if name.compare(bare, options: .caseInsensitive) == .orderedSame { return true }
+            guard let space = name.firstIndex(of: " ") else { return false }
+            return String(name[..<space]).compare(bare, options: .caseInsensitive) == .orderedSame
+        }
+    }
+
+    /// What the pane actually asks: the caret token, unless the line is escaped.
+    /// Composing the two here keeps the escape rule from being applied in one
+    /// place and forgotten in another.
+    static func completableToken(in ns: NSString, at location: Int) -> NSRange? {
+        guard let range = completionToken(in: ns, at: location),
+              !isCompletionEscaped(in: ns, at: range.location)
+        else { return nil }
+        return range
+    }
+
+    /// True when the token at `start` sits on an escaped line (`\ .timer`), so
+    /// typing it stays literal and never opens the completion panel.
+    static func isCompletionEscaped(in ns: NSString, at start: Int) -> Bool {
+        var lineStart = start
+        while lineStart > 0, ns.character(at: lineStart - 1) != scalarNewline {
+            lineStart -= 1
+        }
+        let prefix = ns.substring(with: NSRange(location: lineStart, length: start - lineStart))
+        let trimmed = prefix.trimmingCharacters(in: .whitespaces)
+        return !trimmed.isEmpty && trimmed.hasPrefix("\\")
+    }
+
     /// Completion strings for text typed after a dot, or nil when the caret
     /// token is not a partial dot-command (`.ti`, `.su`). A bare `.` yields
     /// nil here — the AutoReact panel asks for everything via
@@ -1237,6 +1375,45 @@ nonisolated enum IntentExecution {
         return (NSRange(location: start, length: (text as NSString).length), text)
     }
 
+
+    // MARK: Completion suppression
+
+    /// Keeps the AutoReact panel from springing straight back open the instant a
+    /// completion is accepted — that echo reads as a glitch.
+    ///
+    /// This used to be a bare `Int`: the accepted token's **offset**. An offset
+    /// is the wrong key, because it stays put while the text around it changes.
+    /// Accept `.stats ` at offset 5, delete back to `.h`, and the token still
+    /// starts at 5, so the panel stayed shut — a dead zone that only a caret
+    /// move to a different column could revive, which is why the panel
+    /// "never appears" for stretches at a time. The flag was also never reset
+    /// on a note switch, so the dead offset followed you into the next note.
+    ///
+    /// Keying on the buffer the accept actually produced gives the lifetime the
+    /// code always intended: the echo is suppressed, and the very next edit
+    /// clears it.
+    struct CompletionSuppression: Equatable {
+        /// The note as it stands immediately after the accepted snippet landed.
+        let text: String
+        /// Where the caret ended up, so a placeholder selection doesn't count as
+        /// an edit and end the suppression early.
+        let caret: Int
+
+        /// Whether this suppression is still live for `text` at `caret`.
+        func applies(to text: String, caret: Int) -> Bool {
+            self.text == text && self.caret == caret
+        }
+    }
+
+    /// Whether the panel must stay closed because it is still looking at the
+    /// very buffer state an accept just produced.
+    static func isCompletionSuppressed(
+        _ suppression: CompletionSuppression?,
+        text: String,
+        caret: Int
+    ) -> Bool {
+        suppression?.applies(to: text, caret: caret) ?? false
+    }
 
     // MARK: Deferred commit guard
 
