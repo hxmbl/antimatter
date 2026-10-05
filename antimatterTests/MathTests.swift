@@ -188,6 +188,38 @@ struct SparkSyntaxTests {
         #expect(ExpressionEvaluator.error(in: "price + 1", buffer: "price + 1") != nil)
     }
 
+    /// A diagnostic must quote the token exactly once. `describeToken` used to
+    /// return pre-quoted text that the single call site quoted again, so every
+    /// "unexpected token" message came out as `Unexpected '')''`.
+    @Test func unexpectedTokensAreQuotedOnce() {
+        #expect(ExpressionEvaluator.error(in: "(2))") == "Unexpected ')'")
+        #expect(ExpressionEvaluator.error(in: "1e") == "Unexpected 'e'")
+        #expect(ExpressionEvaluator.error(in: "[1, 2] ]") == "Unexpected ']'")
+        #expect(ExpressionEvaluator.error(in: "min()") == "Unexpected ')'")
+    }
+
+    /// …and it must name what the user *typed*. Number tokens used to carry only
+    /// the parsed `Double`, so `2 3` complained about `'3.0'` and `1e6 2` about
+    /// `'1000000'`.
+    @Test func unexpectedNumbersEchoTheirSourceText() {
+        #expect(ExpressionEvaluator.error(in: "2 3") == "Unexpected '3'")
+        #expect(ExpressionEvaluator.error(in: "1e6 2") == "Unexpected '2'")
+        #expect(ExpressionEvaluator.error(in: "1.2.3 + 1") == "Unexpected '1.2.3'")
+    }
+
+    /// A non-finite result one level down still gets said out loud. The check
+    /// only looked at a top-level number, so a NaN *inside* a list produced
+    /// silence even though `looksArithmetic` asked for a reason.
+    @Test func nestedNonFiniteResultsAreDiagnosed() {
+        let message = "Result is too large or undefined"
+        #expect(ExpressionEvaluator.error(in: "ln(-1)") == message)
+        #expect(ExpressionEvaluator.error(in: "[ln(-1)]") == message)
+        #expect(ExpressionEvaluator.error(in: "[[0^-1]]") == message)
+        // …and they still refuse to commit, list or not.
+        #expect(value("[ln(-1)]")?.isFinite == false)
+        #expect(IntentParser.pendingCalculation("[ln(-1)] =") == nil)
+    }
+
     @Test func answersExtractBooleansAndStrings() {
         #expect(IntentExecution.answer(fromLine: "2 > 1 = true") == "true")
         #expect(IntentExecution.answer(fromLine: "\"a\" + \"b\" = \"ab\"") == "ab")
@@ -201,6 +233,336 @@ struct SparkSyntaxTests {
         #expect(IntentExecution.definitionDiagnostic(for: ("a", ":a"), in: ":a = :a") == ":a can't be defined from itself")
         #expect(IntentExecution.definitionDiagnostic(for: ("a", "2 + 2"), in: ":b = 2") == nil)
         #expect(IntentExecution.definitionDiagnostic(for: ("a", "\"hi\""), in: "") == nil) // strings store now
+    }
+}
+
+/// Ranges, lists, indexing, and `if` — plus the two ceilings that keep a
+/// malformed line from taking the process down.
+///
+/// None of this had a single test, which is how `range()` came to compute its
+/// own width *before* validating it and trap on `:x = -5e18..5e18`. Every
+/// boundary that can end a process belongs here.
+struct SparkCollectionsAndLimitsTests {
+
+    private func value(_ input: String) -> SparkValue? {
+        ExpressionEvaluator.evaluateValue(input)
+    }
+
+    private func list(_ input: String) -> [Double]? {
+        value(input)?.list?.compactMap(\.number)
+    }
+
+    private func num(_ input: String) -> Double? {
+        value(input)?.number
+    }
+
+    /// `2^2^2^…`, right-associative.
+    private func powerChain(_ terms: Int) -> String {
+        (0...terms).map { _ in "2" }.joined(separator: "^")
+    }
+
+    // MARK: Ranges
+
+    @Test func rangesExpandUpwardAndInclusively() {
+        #expect(list("1..5") == [1, 2, 3, 4, 5])
+        #expect(list("-2..0") == [-2, -1, 0])
+        #expect(list("3..3") == [3])
+        #expect(value("1..5") == .list([.number(1), .number(2), .number(3), .number(4), .number(5)]))
+    }
+
+    @Test func rangesMustGoUpwardAndTakeWholeNumbers() {
+        #expect(value("5..1") == nil)
+        #expect(ExpressionEvaluator.error(in: "5..1") == "Ranges go upward")
+        #expect(value("1.5..3") == nil)
+        #expect(ExpressionEvaluator.error(in: "1.5..3") == "Ranges need whole numbers")
+        #expect(value("1...5") == nil) // a third dot is a number, not an operator
+        // `..` binds looser than `+`, so this widens rather than adding.
+        #expect(list("1..3 + 1") == [1, 2, 3, 4])
+    }
+
+    /// The cap, and the boundary either side of it.
+    @Test func theRangeCapIsEnforced() {
+        #expect(list("1..100000")?.count == 100_000)
+        #expect(value("1..100001") == nil)
+        #expect(ExpressionEvaluator.error(in: "1..100001") == "That range is too large")
+    }
+
+    /// Regression: the width was computed as `last - first + 1` *before* the
+    /// upward and cap checks, so any range wider than `Int.max` trapped instead
+    /// of reporting an error. `-5e18..5e18` is 1e19 wide.
+    ///
+    /// This killed the app rather than the line: `VariableTable.scan` runs on
+    /// every repaint, so a single such definition in a note crashed the process
+    /// every time the note was drawn. Ordering the bounds first was not enough
+    /// either — it rules out underflow, not overflow.
+    @Test func absurdRangeBoundsReportAnErrorInsteadOfTrapping() {
+        for input in ["-5e18..5e18", "-4.7e18..4.7e18", "-1e18..9.2e18", "-9.2e18..1e18"] {
+            #expect(value(input) == nil, "\(input) must not evaluate")
+            #expect(ExpressionEvaluator.error(in: input) == "That range is too large",
+                    "\(input) should say it is too large")
+        }
+        // The widest range that *is* legal still works. `1..100000` is 100,000
+        // entries; `0..100000` is 100,001 and so one over the cap.
+        #expect(list("1..100000")?.count == 100_000)
+        #expect(ExpressionEvaluator.error(in: "0..100000") == "That range is too large")
+        // A single-element range at the very bottom of `Int` is fine.
+        #expect(list("-9223372036854775808..-9223372036854775808")?.count == 1)
+        // A negative width can't underflow either.
+        #expect(value("5..1") == nil)
+    }
+
+    /// The same crash by the route that mattered most: a note containing the
+    /// definition, scanned the way every repaint scans it.
+    @Test func scanningANoteWithAnAbsurdRangeDoesNotTrap() {
+        #expect(VariableTable.scan(":x = -5e18..5e18").isEmpty)
+        #expect(VariableTable.scan(":x = 1..5")["x"]?.list?.count == 5)
+    }
+
+    // MARK: Lists
+
+    @Test func listsHoldEveryValueKind() {
+        #expect(value("[]") == .list([]))
+        #expect(list("[1, 2, 3]") == [1, 2, 3])
+        #expect(value("[[1], [2, 3]]") == .list([.list([.number(1)]), .list([.number(2), .number(3)])]))
+        #expect(value("[\"a\", true]") == .list([.string("a"), .boolean(true)]))
+        #expect(value("[1,]") == nil) // no trailing comma
+    }
+
+    @Test func listAggregatesAndLength() {
+        #expect(value("len([1, 2, 3])") == .number(3))
+        #expect(value("len([])") == .number(0))
+        #expect(value("min([3, 1], 2)") == .number(1))
+        #expect(value("max(1..5)") == .number(5))
+        #expect(value("max([1, 2], [5, -9])") == .number(5))
+    }
+
+    /// Lists compare by value, all the way down. The `(list, list)` arm of
+    /// `equality` used to be missing, so identical lists fell through to the
+    /// mixed-kind default and compared *unequal* — `1..5 == 1..5` answered
+    /// `false`, and being a finite non-list value it committed that to the note
+    /// and kept it on every reactive pass.
+    @Test func listsCompareStructurally() {
+        #expect(value("[1, 2] == [1, 2]") == .boolean(true))
+        #expect(value("[1, 2] != [1, 2]") == .boolean(false))
+        #expect(value("[1, [2]] == [1, [2]]") == .boolean(true))
+        #expect(value("[1, 2] == [1, 3]") == .boolean(false))
+        #expect(value("[] == []") == .boolean(true))
+        // Different kinds are still just unequal, never an error.
+        #expect(value("[1] == 1") == .boolean(false))
+        #expect(value("1 == \"1\"") == .boolean(false))
+        // Ordering lists is not a thing.
+        #expect(value("[1] < [2]") == nil)
+    }
+
+    @Test func listsCannotBeAddedOrSubtracted() {
+        #expect(value("[1, 2] + 1") == nil)
+        #expect(value("1 + [1, 2]") == nil)
+        #expect(ExpressionEvaluator.error(in: "1 + [1, 2]") == "Can't add these")
+    }
+
+    /// A list answer is never written back into the line — a committed answer
+    /// is rewritten text, and a range can be a hundred thousand entries long.
+    @Test func listAnswersDoNotCommitOrRefresh() {
+        #expect(IntentParser.pendingCalculation("1..5 =") == nil)
+        #expect(IntentParser.pendingCalculation("[1, 2, 3] =") == nil)
+        #expect(IntentParser.parseCalculation("[1, 2, 3]") == nil)
+        // They still render everywhere a value is displayed.
+        #expect(IntentParser.format(.list([.number(1), .number(2)])) == "[1, 2]")
+    }
+
+    // MARK: Indexing
+
+    @Test func indexingReadsListsAndStrings() {
+        #expect(value("[1, 2, 3][0]") == .number(1))
+        #expect(value("[1, 2, 3][-1]") == .number(3))
+        #expect(value("[[1, 2], [3, 4]][0][1]") == .number(2))
+        #expect(value("\"abc\"[1]") == .string("b"))
+        #expect(value("(1..5)[2]") == .number(3)) // a range is a list
+    }
+
+    @Test func badIndexesExplainThemselves() {
+        #expect(value("[1, 2][5]") == nil)
+        #expect(ExpressionEvaluator.error(in: "[1, 2][5]") == "No item 5 in a list of 2")
+        #expect(ExpressionEvaluator.error(in: "[1, 2][\"a\"]") == "Indexes need whole numbers")
+        #expect(ExpressionEvaluator.error(in: "[1, 2][1.5]") == "Indexes need whole numbers")
+        #expect(ExpressionEvaluator.error(in: "[1, 2][-9]") == "No item -9 in a list of 2")
+        #expect(ExpressionEvaluator.error(in: "1[0]") == "'[' needs a list or string")
+    }
+
+    /// A huge negative index used to be the other way to run the stack out of
+    /// arithmetic — worth pinning, since it is the same shape of bug.
+    @Test func extremeIndexesFailWithoutTrapping() {
+        #expect(value("[1, 2][-9223372036854775808]") == nil)
+        #expect(value("[1, 2][9e18]") == nil)
+        #expect(value("\"ab\"[-9223372036854775808]") == nil)
+    }
+
+    // MARK: Conditionals
+
+    @Test func conditionalsPickABranch() {
+        #expect(value("if true then 1 else 2") == .number(1))
+        #expect(value("if false then 1 else 2") == .number(2))
+        #expect(value("if 1 > 2 then \"a\" else \"b\"") == .string("b"))
+        #expect(value("if false then 1 else if true then 2 else 3") == .number(2))
+        // Nested in the *then* branch, the inner `else` is the inner `if`'s, so
+        // the outer one is left without an `else` — dangling `else` binds
+        // innermost, as it does in C. `if false then …` (inner in an else
+        // branch) nests fine, as above.
+        #expect(value("if true then if true then 2 else 3") == nil)
+        #expect(value("if true then if true then 1 else 2 else 3") == .number(1))
+        // A branch can be any kind of value, lists included.
+        #expect(value("if true then [1, 2] else []") == .list([.number(1), .number(2)]))
+    }
+
+    /// Only the taken branch runs, so a division by zero in the other one is
+    /// not an error. The untaken branch is still parsed, but into a scratch
+    /// state so its errors stay isolated.
+    @Test func conditionalsAreLazy() {
+        #expect(value("if 1 < 0 then 100 / 0 else 5") == .number(5))
+        #expect(value("if false then 1 / 0 else 5") == .number(5))
+        #expect(value("if true then 5 else 100 / 0") == .number(5))
+        // The *taken* branch still has to work.
+        #expect(value("if true then 100 / 0 else 5") == nil)
+        #expect(ExpressionEvaluator.error(in: "if true then 100 / 0 else 5") == "Division by zero")
+    }
+
+    @Test func malformedConditionalsExplainThemselves() {
+        #expect(ExpressionEvaluator.error(in: "if 1 then 2 else 3") == "Expected a boolean after 'if'")
+        #expect(ExpressionEvaluator.error(in: "if true then 2") == "Expected 'else'")
+        #expect(ExpressionEvaluator.error(in: "if true 2 else 3") == "Expected 'then'")
+        #expect(value("if true then 2") == nil)
+    }
+
+    // MARK: Constants
+
+    /// `^` is right-associative and used to recurse once per operator, so a long
+    /// chain was bounded only by stack depth — and inconsistently: 200,000 terms
+    /// was fine at `-Onone` and a segfault at `-O`. The fold is now iterative,
+    /// and it stops at the first intermediate that isn't finite rather than
+    /// carrying an `inf` into the next `pow` (where a fractional exponent makes
+    /// `nan`, and `nan` slips past `isFinite` guards downstream).
+    @Test func powerChainsAreIterativeAndBounded() {
+        #expect(value("2^3^2") == .number(512))   // 2^(3^2), not (2^3)^2
+        #expect(value("2^2^3") == .number(256))   // 2^8
+        #expect(value("-2^2") == .number(4))      // unary binds the base
+        #expect(value("2^-1") == .number(0.5))
+        #expect(value("1^99999") == .number(1))
+        #expect(value(powerChain(5_000)) == nil) // past the 4,096 chain ceiling
+        #expect(ExpressionEvaluator.error(in: powerChain(5_000))
+                == "That expression has too many operators in a row")
+        #expect(value("2^") == nil)
+        #expect(ExpressionEvaluator.error(in: "2^") == "Expected a value after '^'")
+    }
+
+    /// Long operator runs are collected rather than recursed, for the same
+    /// reason. Semantics must be identical to the recursive form.
+    @Test func unaryRunsAreIterativeAndKeepTheirSemantics() {
+        #expect(value("!!!true") == .boolean(false))
+        #expect(value("!!true") == .boolean(true))
+        #expect(value("!false") == .boolean(true))
+        #expect(value("--3") == .number(3))
+        #expect(value("+-3") == .number(-3))
+        #expect(value("-  -3") == .number(3))
+        #expect(value("-1") == .number(-1))
+        #expect(value("- (2 + 3)") == .number(-5))
+        #expect(value(String(repeating: "!", count: 5_000) + "true") == nil)
+        #expect(value(String(repeating: "-", count: 5_000) + "1") == nil)
+    }
+
+    /// `1e` is the number 1 followed by the constant `e` — two tokens, not one
+    /// malformed number — so it must not evaluate.
+    @Test func aTrailingLoneEIsNotANumber() {
+        #expect(value("1e") == nil)
+        #expect(ExpressionEvaluator.error(in: "1e") == "Unexpected 'e'")
+        #expect(value("1e3") == .number(1000))
+        #expect(value("2e-3") == .number(0.002))
+        #expect(value("1E5") == .number(100000))
+    }
+
+    @Test func constantsAreAvailable() {
+        #expect(num("pi") == Double.pi)
+        #expect(num("tau") == Double.pi * 2)
+        #expect(num("e") == M_E)
+    }
+
+    // MARK: Nesting ceiling
+
+    /// Recursive descent used to have no depth bound at all, and four separate
+    /// shapes of input exhausted the stack (SIGSEGV): parentheses, list
+    /// brackets, a run of unary operators, a run of `^`, and nested `$( )`.
+    ///
+    /// Sized to just past each ceiling rather than to the 200,000 that used to
+    /// segfault: past the guard the parser is iterative, so a bigger input only
+    /// buys a bigger token array. Tokenizing 200k tokens allocates ~6 MB, which
+    /// is enough to destabilize the test host — it runs the whole app, keychain
+    /// and all — so the enormous versions took the *runner* down and read as a
+    /// failure of the very thing being tested.
+    @Test func deeplyNestedInputIsRejectedNotCrashed() {
+        let tooDeep = "That expression is nested too deeply"
+        let beyondChain = 5_000 // the chain ceiling is 4,096
+        #expect(ExpressionEvaluator.error(in: String(repeating: "(", count: 1_000)
+                                             + "1"
+                                             + String(repeating: ")", count: 1_000)) == tooDeep)
+        #expect(ExpressionEvaluator.error(in: String(repeating: "[", count: 1_000)
+                                             + "1"
+                                             + String(repeating: "]", count: 1_000)) == tooDeep)
+        #expect(value(String(repeating: "!", count: beyondChain) + "true") == nil)
+        #expect(value(String(repeating: "-", count: beyondChain) + "1") == nil)
+        #expect(value(powerChain(beyondChain)) == nil)
+        #expect(value(String(repeating: "$(", count: 1_000) + "1" + String(repeating: ")", count: 1_000)) == nil)
+        #expect(ExpressionEvaluator.error(in: String(repeating: "$(", count: 1_000)
+                                             + "1"
+                                             + String(repeating: ")", count: 1_000)) == tooDeep)
+        // A lone `^`, and a trailing operator, report rather than trap.
+        #expect(value("2^") == nil)
+        #expect(ExpressionEvaluator.error(in: "2^") == "Expected a value after '^'")
+    }
+
+    /// The nesting ceiling counts parens, brackets and `$( )` spans — the
+    /// constructs a person would call nesting — so 64 has to mean 64. It first
+    /// didn't: sharing one counter with the operator chains cost three units per
+    /// paren and made the documented limit behave like 20.
+    @Test func theNestingLimitIsExactlyWhatItSays() {
+        let parens = { (count: Int) in
+            String(repeating: "(", count: count) + "1" + String(repeating: ")", count: count)
+        }
+        // 24 is the ceiling; it is not a round number by accident. One level of
+        // nesting is ~11 parser frames and a Debug frame is several times a
+        // release one, so 64 levels overflowed the 512 KB stack the test host
+        // gives a thread. See `maxNestingDepth`.
+        #expect(value(parens(23)) == .number(1))
+        #expect(value(parens(24)) == .number(1))
+        #expect(value(parens(25)) == nil)
+        #expect(ExpressionEvaluator.error(in: parens(25)) == "That expression is nested too deeply")
+        // Long operator chains get their own, far larger allowance — 4,096 — and
+        // a run of `!` is the clean check that it isn't firing on ordinary
+        // input. 500 is even, so the answer is `true`.
+        #expect(value(String(repeating: "!", count: 500) + "true") == .boolean(true))
+    }
+
+    /// This suite exists because the first attempt at the ceiling passed every
+    /// standalone check and still crashed `xctest`. One paren costs *eleven*
+    /// parser frames, so a guard on any single link of the chain bounds one
+    /// frame in eleven: 64 parens still recursed ~700 deep, which the main
+    /// thread's 8 MB stack absorbs and the test host's does not. The guard has
+    /// to sit where a nesting construct is *entered*, once per level, and the
+    /// thresholds below are load-bearing rather than incidental.
+    @Test func ordinaryNestingStillWorks() {
+        #expect(value("((((1 + 2))))") == .number(3))
+        #expect(value("$($($(1 + 2)))") == .number(3))
+        #expect(value("if true then if true then if true then 1 else 2 else 3 else 4") == .number(1))
+        #expect(value("[[1, 2], [3, 4]][0][1]") == .number(2))
+        #expect(value("sqrt(sqrt(sqrt(sqrt(65536))))") == .number(2))
+        #expect(value(String(repeating: "(", count: 20) + "1" + String(repeating: ")", count: 20)) == .number(1))
+        #expect(value(String(repeating: "$(", count: 13) + "1 + 2" + String(repeating: ")", count: 13)) == .number(3))
+        // Ten-deep bracket nesting is ten *lists*, one wrapping the next. Comparing the
+        // whole shape is unreadable; what matters is that it built without
+        // complaint and that indexing reaches the innermost value.
+        let nested = value("[[[[[[[[[[1]]]]]]]]]]")
+        #expect(nested?.isList == true)
+        #expect(nested?.list?.first?.isList == true)
+        #expect(value("[[[[[[[[[[1]]]]]]]]]][0][0][0][0][0][0][0][0][0][0]") == .number(1))
+        #expect(value("[1, 2, 3][1]") == .number(2))
     }
 }
 

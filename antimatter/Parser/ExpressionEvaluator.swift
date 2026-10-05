@@ -68,9 +68,36 @@ nonisolated enum ExpressionEvaluator {
     /// list), or nil when the expression is malformed or references an
     /// unknown name.
     static func evaluateValue(_ input: String, variables: [String: SparkValue] = [:], buffer: String? = nil) -> SparkValue? {
+        evaluateValue(input, variables: variables, buffer: buffer, depth: 0)
+    }
+
+    /// `depth` seeds the caller's nesting level so `$($($(…)))` meets the same
+    /// ceiling as `(((…)))`. A `$()` span is tokenized as a *single* token, so
+    /// the parser's own counter cannot see inside one; without threading the
+    /// level through, nested substitutions recursed unbounded exactly like
+    /// nested parens used to. Seeded by `resolveSubstitution` as `depth + 1`,
+    /// because entering the span *is* a nesting level.
+    private static func evaluateValue(
+        _ input: String,
+        variables: [String: SparkValue],
+        buffer: String?,
+        depth: Int
+    ) -> SparkValue? {
         let tokens = tokenize(input)
         guard !tokens.isEmpty else { return nil }
+        // Refuse *before* descending. Checking inside `expression` is not enough: a
+        // `$()` span is one token however deeply it nests, so the parser only
+        // discovers the depth by recursing into it — the guard would already be
+        // on the stack. `depth` carries the level in from an enclosing span, and
+        // the scan catches a span nested within this line.
+        guard depth <= maxNestingDepth,
+              spanNestingDepth(of: input) <= maxNestingDepth
+        else { return nil }
         var state = ParseState(tokens: tokens)
+        // Start at -1 so the outermost expression spends no budget: it is not
+        // nested inside anything, and charging it meant 64 parens actually
+        // allowed 63 — an off-by-one in a number the documentation quotes.
+        state.depth = depth - 1
         guard let value = expression(&state, variables, buffer),
               state.cursor == state.tokens.count
         else { return nil }
@@ -87,13 +114,28 @@ nonisolated enum ExpressionEvaluator {
     ) -> String? {
         let tokens = tokenize(input)
         guard !tokens.isEmpty else { return "Couldn't read this as an expression" }
+        // `spanNestingDepth` is a linear scan with no recursion or allocation, so
+        // running it on every parse costs nothing measurable and removes the
+        // temptation to reason about which token shapes need it. A `$()` span is
+        // the case that *must* be caught here — it is a single token however
+        // deeply it nests, so the per-level check inside `expression` only runs
+        // after the recursive descent has already begun.
+        guard spanNestingDepth(of: input) <= maxNestingDepth else { return nestingError }
         var state = ParseState(tokens: tokens)
+        // Outermost expression spends no nesting budget — see `evaluateValue`.
+        state.depth = -1
         let value = expression(&state, variables, buffer)
         if let message = state.error { return message }
         if state.cursor != state.tokens.count {
             return "Unexpected '\(describeToken(state.tokens[state.cursor]))'"
         }
-        if let value, let number = value.number, !number.isFinite {
+        if let value, !value.isFinite {
+            // `isFinite` recurses through lists, so `[ln(-1)]` is diagnosed too.
+            // This only looked at `value.number`, which is non-nil for a
+            // top-level NaN and nil for a list *containing* one — so the worst
+            // case was silence: `looksArithmetic("[ln(-1)]")` is true, the pane
+            // went looking for a reason to show, and `error(in:)` handed back
+            // nil because the check could not see one level down.
             return "Result is too large or undefined"
         }
         return value == nil ? "Couldn't evaluate this expression" : nil
@@ -154,7 +196,7 @@ nonisolated enum ExpressionEvaluator {
         var expectsOperand = true
         for token in tokens {
             switch token {
-            case .number(let value):
+            case .number(let value, _):
                 literals.append(sign * value)
                 sign = 1
                 expectsOperand = false
@@ -192,7 +234,7 @@ nonisolated enum ExpressionEvaluator {
         var expectsOperand = true
         for token in tokens {
             switch token {
-            case .number(let value):
+            case .number(let value, _):
                 literals.append(sign * value)
                 sign = 1
                 expectsOperand = false
@@ -252,7 +294,11 @@ nonisolated enum ExpressionEvaluator {
     // MARK: Tokenizer
 
     private enum Token: Equatable {
-        case number(Double)
+        /// The value plus the text it was written as, so a diagnostic can echo
+        /// what the user typed. Carrying only the `Double` made every message
+        /// quote the *parsed* number instead — `2 3` complained about an
+        /// unexpected `'3.0'`, and `1e6` about `'1000000'`.
+        case number(Double, source: String)
         case op(String)
         case name(String)
         case interpolate(String)
@@ -283,7 +329,7 @@ nonisolated enum ExpressionEvaluator {
                 digits.removeAll()
                 return
             }
-            tokens.append(.number(value))
+            tokens.append(.number(value, source: s))
             digits.removeAll()
         }
 
@@ -505,6 +551,13 @@ nonisolated enum ExpressionEvaluator {
         let tokens: [Token]
         var cursor = 0
         var error: String?
+        /// Nesting level: parens, list brackets, `$( )`. Bounded by
+        /// `maxNestingDepth`.
+        var depth = 0
+        /// Length of the current run of unary operators / `^`. Bounded by
+        /// `maxChainDepth`, and tracked apart from `depth` because the two are
+        /// unrelated hazards.
+        var chain = 0
 
         init(tokens: [Token]) {
             self.tokens = tokens
@@ -522,12 +575,34 @@ nonisolated enum ExpressionEvaluator {
 
     /// The top of the expression grammar. Adds `if ... then ... else`
     /// conditionals over the Boolean chain.
+    ///
+    /// This is where the nesting ceiling belongs, and the placement is not
+    /// arbitrary. One paren costs *eleven* stack frames — `expression`,
+    /// `orExpression`, `andExpression`, `equality`, `comparison`, `range`,
+    /// `additive`, `term`, `power`, `unary`, `primary` — so a guard on any
+    /// single link of that chain is a guard on one frame in eleven. Mine was on
+    /// `primaryAtom`, which meant 64 parens still recursed ~700 frames deep, and
+    /// a test host with a smaller stack than the main thread died on it: a
+    /// 50,000-paren line crashed `xctest` while passing standalone. The ceiling
+    /// has to sit where a nesting construct is *entered*, which is exactly one
+    /// level per level, and `expression` is reached once per nesting construct
+    /// — from `primaryAtom`'s paren case, its bracket case, and `if`'s branches.
     private static func expression(_ state: inout ParseState, _ variables: [String: SparkValue], _ buffer: String?) -> SparkValue? {
+        state.depth += 1
+        defer { state.depth -= 1 }
+        guard state.depth <= maxNestingDepth else {
+            setError(&state, nestingError)
+            return nil
+        }
         guard case .name("if")? = peek(&state) else {
             return orExpression(&state, variables, buffer)
         }
         return ifExpression(&state, variables, buffer)
     }
+
+    private static let nestingError = "That expression is nested too deeply"
+
+    private static let chainError = "That expression has too many operators in a row"
 
     private static func ifExpression(_ state: inout ParseState, _ variables: [String: SparkValue], _ buffer: String?) -> SparkValue? {
         state.cursor += 1 // consume `if`
@@ -619,8 +694,18 @@ nonisolated enum ExpressionEvaluator {
                 value = .boolean(op == "==" ? lhs == rhsString : lhs != rhsString)
             case (.boolean(let lhs), .boolean(let rhsBool)):
                 value = .boolean(op == "==" ? lhs == rhsBool : lhs != rhsBool)
+            case (.list(let lhs), .list(let rhsList)):
+                // Structural, recursively — `SparkValue` is already `Equatable`.
+                // This arm used to be missing, so two identical lists fell
+                // through to `default:` and compared *unequal*: `[1, 2] == [1, 2]`
+                // answered `false` and, being a finite non-list value, committed
+                // `1..5 == 1..5 = false` to the note and kept it on every
+                // reactive pass. A confidently wrong answer that persists is
+                // worse here than an error, because the whole language is built
+                // around never committing one.
+                value = .boolean(op == "==" ? lhs == rhsList : lhs != rhsList)
             default:
-                // Comparing different types is never an error, just unequal.
+                // Comparing *different* kinds is never an error, just unequal.
                 value = .boolean(op == "!=")
             }
         }
@@ -669,12 +754,25 @@ nonisolated enum ExpressionEvaluator {
                 setError(&state, "Ranges need whole numbers")
                 return nil
             }
-            let count = last - first + 1
             guard first <= last else {
                 setError(&state, "Ranges go upward")
                 return nil
             }
-            guard count <= 100_000 else {
+            // Ordering the bounds rules out *underflow*, not overflow: `-5e18 ..
+            // 5e18` is ordered and still 1e19 wide, which no `Int` holds. So the
+            // width is measured with a checked subtraction and a width that
+            // doesn't fit is simply "too large" — which it demonstrably is,
+            // being wider than `Int.max` and so than the cap. The count used to
+            // be `last - first + 1` computed before *any* of these checks, so
+            // that input trapped instead of reporting an error, and it killed
+            // the process rather than the line: `VariableTable.scan` runs on
+            // every repaint, so one such definition crashed the app every time
+            // the note was drawn.
+            //
+            // `width` is one less than the entry count, so `< rangeCap` here is
+            // the same limit as `<= rangeCap` on the count.
+            let (width, overflowed) = last.subtractingReportingOverflow(first)
+            guard !overflowed, width < rangeCap else {
                 setError(&state, "That range is too large")
                 return nil
             }
@@ -760,35 +858,132 @@ nonisolated enum ExpressionEvaluator {
             return nil
         }
         state.cursor += 1
-        guard let exponent = power(&state, variables, buffer)?.number else {
+        // A lone `^` with nothing after it: `2^`. Handled before the loop so the
+        // operand list is never empty to index into.
+        guard let first = unary(&state, variables, buffer)?.number else {
             setError(&state, "Expected a value after '^'")
             return nil
         }
-        return .number(pow(baseNumber, exponent))
+        // Right-associative, so the exponent is the rest of the chain: `2^3^2`
+        // is `2^(3^2)`. Walk it iteratively and collect the operands, then fold
+        // from the right. Recursing per `^` put one stack frame per operator, so
+        // `2^2^2^…` was bounded only by however deep the stack happened to be —
+        // 200,000 terms was fine at `-Onone` and a segfault at `-O`, which is
+        // the worst kind of limit to ship: it depends on a build setting. (The
+        // same rewrite is why `unary` collects its run too.)
+        var operands: [Double] = [first]
+        while case .op("^")? = peek(&state) {
+            state.cursor += 1
+            guard let operand = unary(&state, variables, buffer)?.number else {
+                setError(&state, "Expected a value after '^'")
+                return nil
+            }
+            operands.append(operand)
+            guard operands.count < maxChainDepth else {
+                setError(&state, chainError)
+                return nil
+            }
+        }
+        // `2^3^2` is `2^(3^2)` — the base is raised to a chain of exponents folded
+        // right-to-left, then the base goes on the outside. Folding this the
+        // obvious way round (`pow(base, …)` per step) is both wrong and fatal:
+        // it computes `2^2` then `2^4` then `2^16`, which is not `2^(2^(2^2))`,
+        // and on a long chain it walks a value into `inf` and then asks for
+        // `pow(inf, fractional)`, i.e. `nan`, i.e. a trap.
+        var exponent = operands[operands.count - 1]
+        for operand in operands.dropLast().reversed() {
+            exponent = pow(operand, exponent)
+            // `2^2^2^…` asks for intermediates no `Double` holds. Stop at the
+            // first one rather than carrying an `inf` into the next `pow`, where
+            // a fractional exponent turns it into `nan` and a `nan` result
+            // silently fails `isFinite` checks downstream.
+            guard exponent.isFinite else {
+                setError(&state, "Result is too large or undefined")
+                return nil
+            }
+        }
+        let result = pow(baseNumber, exponent)
+        guard result.isFinite else {
+            setError(&state, "Result is too large or undefined")
+            return nil
+        }
+        return .number(result)
     }
 
     private static func unary(_ state: inout ParseState, _ variables: [String: SparkValue], _ buffer: String?) -> SparkValue? {
-        switch peek(&state) {
-        case .op("-"):
-            state.cursor += 1
-            guard let value = unary(&state, variables, buffer)?.number else {
-                setError(&state, "Can't negate this")
+        // A run of `-`/`+`/`!` recurses straight back into `unary` — one frame
+        // per character, and previously another way to run the stack out.
+        //
+        // The chain is counted in a loop rather than by recursing, because the
+        // ceiling this needs is nowhere near the parser's per-level frame cost:
+        // `-` × 200,000 still blew an 8 MB stack with 100,000 frames allowed,
+        // so the guard has to be low enough to be safe, which makes "count the
+        // operators, then apply them" the honest shape. It also fixes a plain
+        // wrong answer: `1e` tokenizes as the number 1 followed by the name
+        // `e`, and the old guard lived in `expression`, which a unary run never
+        // re-entered.
+        var operators: [UnaryOperator] = []
+        loop: while true {
+            switch peek(&state) {
+            case .op("-"):
+                state.cursor += 1
+                operators.append(.negate)
+            case .op("+"):
+                state.cursor += 1
+                operators.append(.identity)
+            case .not:
+                state.cursor += 1
+                operators.append(.logicalNot)
+            default:
+                break loop
+            }
+            guard operators.count < maxChainDepth else {
+                setError(&state, chainError)
                 return nil
             }
-            return .number(-value)
-        case .op("+"):
-            state.cursor += 1
-            return unary(&state, variables, buffer)
-        case .not:
-            state.cursor += 1
-            guard let value = unary(&state, variables, buffer)?.boolean else {
-                setError(&state, "Expected a boolean after '!'")
-                return nil
-            }
-            return .boolean(!value)
-        default:
-            return primary(&state, variables, buffer)
         }
+        guard let value = primary(&state, variables, buffer) else { return nil }
+        guard operators.isEmpty else {
+            return apply(operators, to: value, &state)
+        }
+        return value
+    }
+
+    /// One operator in a run of `-`/`+`/`!`. `SparkValue` would have done, but a
+    /// dedicated type keeps the application loop total — no `default` arm.
+    private enum UnaryOperator {
+        case negate
+        case identity
+        case logicalNot
+    }
+
+    /// Applies a collected run outside-in, so `!!true` is `true` and `--3` is
+    /// `3` — the same order the recursive form produced.
+    private static func apply(
+        _ operators: [UnaryOperator],
+        to input: SparkValue,
+        _ state: inout ParseState
+    ) -> SparkValue? {
+        var value = input
+        for prefix in operators.reversed() {
+            switch prefix {
+            case .negate:
+                guard let number = value.number else {
+                    setError(&state, "Can't negate this")
+                    return nil
+                }
+                value = .number(-number)
+            case .identity:
+                break
+            case .logicalNot:
+                guard let flag = value.boolean else {
+                    setError(&state, "Expected a boolean after '!'")
+                    return nil
+                }
+                value = .boolean(!flag)
+            }
+        }
+        return value
     }
 
     private static func primary(_ state: inout ParseState, _ variables: [String: SparkValue], _ buffer: String?) -> SparkValue? {
@@ -797,8 +992,11 @@ nonisolated enum ExpressionEvaluator {
     }
 
     private static func primaryAtom(_ state: inout ParseState, _ variables: [String: SparkValue], _ buffer: String?) -> SparkValue? {
+        // No depth guard here: `expression` owns the ceiling, because that is
+        // the frame each nesting construct re-enters. Counting in both places
+        // would charge a paren twice and make the documented limit a fiction.
         switch peek(&state) {
-        case .number(let value):
+        case .number(let value, _):
             state.cursor += 1
             return .number(value)
         case .string(let value):
@@ -834,7 +1032,7 @@ nonisolated enum ExpressionEvaluator {
             return applyFunction(name, args, &state)
         case .interpolate(let inner):
             state.cursor += 1
-            return resolveSubstitution(inner, variables: variables, buffer: buffer)
+            return resolveSubstitution(inner, &state, variables, buffer)
         case .lparen:
             state.cursor += 1
             guard let value = expression(&state, variables, buffer),
@@ -914,8 +1112,18 @@ nonisolated enum ExpressionEvaluator {
 
     /// Value of a `$()` span: try math first (supports `:refs` and nested
     /// substitutions), then a side-effect-free command dry-run.
-    private static func resolveSubstitution(_ inner: String, variables: [String: SparkValue], buffer: String?) -> SparkValue? {
-        if let value = evaluateValue(inner, variables: variables, buffer: buffer), value.isFinite {
+    private static func resolveSubstitution(
+        _ inner: String,
+        _ state: inout ParseState,
+        _ variables: [String: SparkValue],
+        _ buffer: String?
+    ) -> SparkValue? {
+        // The nested parse gets a fresh `ParseState`, so the level is threaded
+        // across explicitly — otherwise `$($($($(…` would reset the counter and
+        // never trip any ceiling.
+        if let value = evaluateValue(inner, variables: variables, buffer: buffer, depth: state.depth + 1),
+           value.isFinite
+        {
             return value
         }
         if let number = IntentExecution.commandDryRun(inner, buffer: buffer) {
@@ -945,6 +1153,38 @@ nonisolated enum ExpressionEvaluator {
         "sin", "cos", "tan", "asin", "acos", "atan",
         "ln", "log", "exp", "floor", "ceil", "sign",
     ]
+
+    /// The most entries `a..b` may expand to. Exceeding it is an error rather
+    /// than a truncated range: a silently shortened list would be a wrong
+    /// answer committed to the note.
+    private static let rangeCap = 100_000
+
+    /// How deeply an expression may nest — parentheses, list brackets, `$( )`
+    /// spans — before the parser gives up. This is the number a person means by
+    /// "nested too deeply", and it counts those constructs and nothing else.
+    ///
+    /// Sized against the *cost of a frame*, not by feel. One level of nesting is
+    /// ~11 stack frames (`expression`, `orExpression`, `andExpression`,
+    /// `equality`, `comparison`, `range`, `additive`, `term`, `power`, `unary`,
+    /// `primary`), and in a Debug build — which is what the test runner uses —
+    /// those frames are several times larger than in release. 64 levels is ~700
+    /// frames, which overflows the 512 KB stack the test host hands a thread
+    /// and killed `xctest` even though every standalone check passed. 24 levels
+    /// is ~260 frames: past anything written by hand by a wide margin, and
+    /// comfortable in a small stack in either build.
+    ///
+    /// If this is ever raised, re-check it against a Debug build on a small
+    /// `Thread.stackSize` rather than assuming release-build headroom applies.
+    private static let maxNestingDepth = 24
+
+    /// The ceiling on *operator chains* instead: right-associative `^` recurses
+    /// through `power`, one frame per operator. Those are bounded by line length
+    /// rather than by nesting, so they get their own, far larger allowance.
+    ///
+    /// Kept separate from `maxNestingDepth` on purpose: sharing one counter made
+    /// the nesting limit meaningless, since each parenthesis also costs a
+    /// `power` and a `unary` frame, so a documented "64 deep" behaved like 20.
+    private static let maxChainDepth = 4_096
 
     /// Flattens nested lists into their numbers, so `min([1, 2], 3)` and
     /// `max(1..5)` behave like their multi-argument forms.
@@ -1054,20 +1294,54 @@ nonisolated enum ExpressionEvaluator {
         return false
     }
 
+    /// How many `$(` spans are open at the deepest point of `input`. A linear
+    /// scan: no recursion, no allocation — cheap enough to run on every parse.
+    ///
+    /// This is what makes the `$()` ceiling enforceable. A span is a *single*
+    /// token however deeply it nests, so the parser can only learn the depth by
+    /// recursing into it, which is exactly what exhausts the stack. Parens and
+    /// brackets don't have that problem — they're separate tokens, and the
+    /// per-level check inside `expression` bounds them as they're entered — so
+    /// this count is the one that has to be known up front.
+    private static func spanNestingDepth(of input: String) -> Int {
+        let ns = input as NSString
+        var deepest = 0
+        var index = 0
+        var open = 0
+        while index < ns.length {
+            switch ns.character(at: index) {
+            case 36 where index + 1 < ns.length && ns.character(at: index + 1) == 40:
+                open += 1
+                deepest = max(deepest, open)
+                index += 2 // skip the '(' so it can't also count as a plain paren
+            case 41:
+                open = max(0, open - 1)
+                index += 1
+            default:
+                index += 1
+            }
+        }
+        return deepest
+    }
+
+    /// A token as the user wrote it, *unquoted* — the caller supplies the quotes.
+    /// These used to come back pre-quoted (`"')'"`), and the one call site wraps
+    /// them again, so every unexpected-token message read `Unexpected '')''`,
+    /// `Unexpected ''e''`, `Unexpected '']''`.
     private static func describeToken(_ token: Token) -> String {
         switch token {
-        case .number(let value): String(value)
-        case .op(let op): "'\(op)'"
-        case .name(let name): "'\(name)'"
-        case .interpolate(let inner): "'$(\(inner))'"
+        case .number(_, let source): source
+        case .op(let op): op
+        case .name(let name): name
+        case .interpolate(let inner): "$(\(inner))"
         case .string(let value): "\"\(value)\""
-        case .lparen: "'('"
-        case .rparen: "')'"
-        case .lbracket: "'['"
-        case .rbracket: "']'"
-        case .comma: "','"
-        case .not: "'!'"
-        case .invalid(let text): "'\(text)'"
+        case .lparen: "("
+        case .rparen: ")"
+        case .lbracket: "["
+        case .rbracket: "]"
+        case .comma: ","
+        case .not: "!"
+        case .invalid(let text): text
         }
     }
 }
