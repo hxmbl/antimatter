@@ -194,4 +194,4 @@ Every notes app either locks you into a system or makes you pick a mode before y
 
 ## License
 
-No.
+MIT — see [LICENSE](LICENSE).
