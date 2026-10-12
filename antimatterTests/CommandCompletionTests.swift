@@ -1,6 +1,40 @@
+import AppKit
 import Foundation
 import Testing
 @testable import antimatter
+
+@MainActor
+@Suite(.serialized)
+struct CommandCompletionPanelLifecycleTests {
+
+    @Test func monitoringCanRestartAfterDismissal() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        let textView = NSTextView(frame: window.contentView?.bounds ?? .zero)
+        window.contentView = textView
+        let panel = CommandCompletionPanel()
+        let candidates = Array(IntentExecution.dotCommands.prefix(1))
+        let initialOpenPanelCount = CommandCompletionPanel.openPanelCount
+        defer {
+            panel.dismiss()
+            window.orderOut(nil)
+        }
+
+        for _ in 0..<3 {
+            panel.show(in: textView, candidates: candidates, tokenStart: 0, query: ".")
+            #expect(panel.isShown)
+            #expect(panel.hasActiveMonitoring)
+            panel.dismiss()
+            #expect(!panel.isShown)
+            #expect(!panel.hasActiveMonitoring)
+            #expect(CommandCompletionPanel.openPanelCount == initialOpenPanelCount)
+        }
+    }
+}
 
 /// Tests for the AutoReact command-completion candidates and their
 /// snippet scaffolding.

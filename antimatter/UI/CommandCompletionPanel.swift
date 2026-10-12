@@ -189,6 +189,11 @@ final class CommandCompletionPanel {
 
     var isShown: Bool { panel != nil }
 
+    var hasActiveMonitoring: Bool {
+        keyMonitor != nil || mouseMonitor != nil || resignObserver != nil
+            || orderOutObserver != nil || minimizeObserver != nil
+    }
+
     func show(in textView: NSTextView, candidates: [IntentExecution.DotCommand], tokenStart: Int, query: String) {
         guard !candidates.isEmpty, let window = textView.window else { return }
         guard !isTabCycling else { return }
@@ -483,6 +488,9 @@ final class CommandCompletionPanel {
     private func dismissMonitoring() {
         Self.removeMonitors(key: keyMonitor, mouse: mouseMonitor,
                             resign: resignObserver, orderOut: orderOutObserver)
+        keyMonitor = nil
+        mouseMonitor = nil
+        resignObserver = nil
         orderOutObserver = nil
         if let minimizeObserver {
             NotificationCenter.default.removeObserver(minimizeObserver)
