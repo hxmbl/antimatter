@@ -15,6 +15,14 @@ import Testing
 ///
 /// These tests pin the two facts the fix depends on: the trap itself, and that
 /// the marker comparisons now work.
+///
+/// `@MainActor` because `listBulletsAreTintedAsBullets` drives the real
+/// render path: a non-async test otherwise lands on a background cooperative
+/// thread, and `NSTextView`/TextKit work off the main thread is undefined
+/// behaviour that intermittently crashes the test runner itself (an ARM CI
+/// run died that way: "Restarting after unexpected exit, crash, or test
+/// timeout"). The four pure tests don't care which thread they run on.
+@MainActor
 struct UnicharTests {
 
     @Test func unicharFromACharacterStringIsNil() {
