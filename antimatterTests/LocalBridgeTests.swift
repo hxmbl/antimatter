@@ -59,7 +59,13 @@ struct LocalBridgeTests {
 
         try #require(!reply.isEmpty, "bridge closed without a reply")
 
-        let outcome = try JSONDecoder().decode(ActionOutcome.self, from: reply)
+        // The response is the raw HTTP envelope; the JSON body follows the
+        // first blank line.
+        let headerEnd = try #require(
+            reply.range(of: Data("\r\n\r\n".utf8)),
+            "response had no header terminator"
+        )
+        let outcome = try JSONDecoder().decode(ActionOutcome.self, from: reply[headerEnd.upperBound...])
         #expect(outcome == ActionOutcome(ok: true, message: "Appended"))
         #expect(NoteStore.shared.activeNote.text == "split world")
     }
