@@ -103,6 +103,10 @@ final class NoteStore: ObservableObject {
         StorageLocation.directory(named: "notes").appendingPathComponent("notes.json")
     }
 
+    /// Creates a note. Callers that ignore the returned note (the `.new`
+    /// intent in the pane) are the common case; the result matters to
+    /// deep links and the bridge.
+    @discardableResult
     func create(text: String = "") -> Note {
         let note = Note(text: text)
         notes.insert(note, at: 0)

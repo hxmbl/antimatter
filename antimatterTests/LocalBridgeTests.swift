@@ -29,6 +29,70 @@ struct LocalBridgeTests {
         #expect(NoteStore.shared.activeNote.text == "hello world")
     }
 
+    /// A request may arrive split across TCP segments — loopback does not
+    /// guarantee that one `receive` sees it whole. The old single-shot
+    /// receive parsed the first segment alone, cut the URL mid-token, and
+    /// appended "split wo"; the bridge now accumulates until the header
+    /// block is complete. URLSession hands the request to the kernel in one
+    /// write, which would defeat the very case under test, so this uses a
+    /// raw POSIX socket and two delayed writes.
+    @Test func bridgeReassemblesSegmentedRequests() async throws {
+        try await startBridge()
+        defer { LocalBridge.shared.stop() }
+        defer { resetActiveNote() }
+
+        let port = try #require(LocalBridge.shared.activePort)
+
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        try #require(fd >= 0)
+        defer { close(fd) }
+        // Cap the reads so a bridge that never answers fails the test
+        // instead of hanging the suite.
+        var receiveTimeout = timeval(tv_sec: 2, tv_usec: 0)
+        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &receiveTimeout, socklen_t(MemoryLayout<timeval>.size))
+
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = port.bigEndian
+        addr.sin_addr = in_addr(s_addr: INADDR_LOOPBACK.bigEndian)
+        let connectResult = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        try #require(connectResult == 0)
+
+        // One request, two writes, split MID-TOKEN (`world` cut in half).
+        // The second lands long after the first, so a single-shot receive
+        // sees only the fragment "…split%20wo" and answers from it.
+        let first = Array("GET /append?text=split%20wo".utf8)
+        let sent = first.withUnsafeBufferPointer {
+            send(fd, $0.baseAddress, $0.count, 0)
+        }
+        try #require(sent == first.count)
+        try await Task.sleep(for: .milliseconds(150))
+        let second = Array("rld HTTP/1.1\r\n\r\n".utf8)
+        let sent2 = second.withUnsafeBufferPointer {
+            send(fd, $0.baseAddress, $0.count, 0)
+        }
+        try #require(sent2 == second.count)
+
+        // The bridge closes the connection right after responding, which
+        // ends the read.
+        var reply = Data()
+        var chunk = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let n = read(fd, &chunk, chunk.count)
+            guard n > 0 else { break }
+            reply.append(contentsOf: chunk[0..<n])
+        }
+        try #require(!reply.isEmpty, "bridge closed without a reply")
+
+        let outcome = try JSONDecoder().decode(ActionOutcome.self, from: reply)
+        #expect(outcome == ActionOutcome(ok: true, message: "Appended"))
+        #expect(NoteStore.shared.activeNote.text == "split world")
+    }
+
     /// A browser fetch always sends `Sec-Fetch-Site`; such requests must be
     /// refused so a cross-origin page cannot drive the loopback bridge. An
     /// `Origin` check alone was not enough — `GET` with no custom headers is a

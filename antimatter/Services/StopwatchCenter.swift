@@ -139,7 +139,7 @@ final class StopwatchCenter: ObservableObject {
     private func persist() {
         guard let data = try? JSONEncoder().encode(stopwatches) else { return }
         let url = fileURL
-        let validate: (Data) -> Bool = { primary in
+        let validate: @Sendable (Data) -> Bool = { primary in
             (try? JSONDecoder().decode([ActiveStopwatch].self, from: primary)) != nil
         }
         if StorageLocation.isIsolatedRun {

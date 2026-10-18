@@ -373,7 +373,7 @@ final class TimerCenter: ObservableObject {
     private func persist() {
         guard let data = try? JSONEncoder().encode(timers) else { return }
         let url = fileURL
-        let validate: (Data) -> Bool = { primary in
+        let validate: @Sendable (Data) -> Bool = { primary in
             (try? JSONDecoder().decode([ActiveTimer].self, from: primary)) != nil
         }
         if StorageLocation.isIsolatedRun {

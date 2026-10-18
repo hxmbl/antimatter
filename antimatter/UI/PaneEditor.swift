@@ -86,7 +86,12 @@ struct PaneEditor: NSViewRepresentable {
             object: scrollView.contentView,
             queue: .main
         ) { [weak textView] _ in
-            textView?.reportTopTextLevel()
+            // The block is explicitly delivered on `.main` (the `queue:` above),
+            // so the isolated call is honest; without the hop the compiler
+            // flags the text view's MainActor method as reached from nowhere.
+            MainActor.assumeIsolated {
+                textView?.reportTopTextLevel()
+            }
         }
         textView.onTopTextLevelChange = { [weak coordinator = context.coordinator] level in
             coordinator?.topTextLevel.wrappedValue = level

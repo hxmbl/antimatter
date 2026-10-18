@@ -243,7 +243,13 @@ nonisolated enum ExpressionEvaluator {
             case .lparen, .comma, .lbracket:
                 sign = 1
                 expectsOperand = true
-            case .op, .rparen, .rbracket:
+            case .op(let op):
+                // Mirror `numericLiterals`: a binary minus subtracts, so the
+                // following operand counts as negative; any other operator
+                // starts a positive operand.
+                sign = op == "-" ? -1 : 1
+                expectsOperand = true
+            case .rparen, .rbracket:
                 sign = 1
                 expectsOperand = true
             case .invalid:

@@ -349,7 +349,17 @@ enum Markdown {
         }
         guard length >= 3 else { return nil }
         let rest = trimmed(i..<line.upperBound, in: text)
-        return FenceOpen(char: c, length: length, ticks: start..<i, info: rest.isEmpty ? nil : rest)
+        // GFM: the info string's *first word* selects the language; anything
+        // after it is metadata (```` ```swift title=hint ````). Handing the
+        // whole remainder to the language registry made `swift extras` miss
+        // and silently disabled highlighting for the block.
+        var info: Range<String.Index>? = nil
+        if !rest.isEmpty {
+            var end = rest.lowerBound
+            while end < rest.upperBound, !isBlockBreak(text[end]) { end = text.index(after: end) }
+            info = rest.lowerBound..<end
+        }
+        return FenceOpen(char: c, length: length, ticks: start..<i, info: info)
     }
 
     private nonisolated static func fenceClose(_ line: Range<String.Index>, char: Character, minLength: Int, in text: String) -> Range<String.Index>? {
@@ -361,8 +371,13 @@ enum Markdown {
             length += 1
             i = text.index(after: i)
         }
-        guard length >= minLength, i == line.upperBound else { return nil }
-        return start..<i
+        guard length >= minLength else { return nil }
+        // CommonMark: the closing fence may be followed by whitespace only.
+        // A trailing space after the ticks used to fail the `i == end` check
+        // entirely, so the block never closed and every line below it stayed
+        // styled as code for the rest of the note.
+        guard trimmed(i..<line.upperBound, in: text).isEmpty else { return nil }
+        return start..<line.upperBound
     }
 
     private nonisolated static func trimmed(_ range: Range<String.Index>, in text: String) -> Range<String.Index> {

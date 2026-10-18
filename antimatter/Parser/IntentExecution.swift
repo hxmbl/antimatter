@@ -100,13 +100,19 @@ nonisolated enum IntentExecution {
 
         /// The aggregate over the note's numbers, or nil with no data —
         /// an empty note leaves the line alone rather than writing `= nan`.
+        /// A result that isn't finite (an overflowed `1e309` literal in the
+        /// note) is left alone for the same reason: `IntentParser.format`
+        /// renders it as an empty string, which would commit a garbage
+        /// answer that reads as nothing.
         func value(of numbers: [Double]) -> Double? {
             guard !numbers.isEmpty else { return nil }
+            let result: Double
             switch self {
-            case .sum: return numbers.reduce(0, +)
-            case .avg: return numbers.reduce(0, +) / Double(numbers.count)
-            case .count: return Double(numbers.count)
+            case .sum: result = numbers.reduce(0, +)
+            case .avg: result = numbers.reduce(0, +) / Double(numbers.count)
+            case .count: result = Double(numbers.count)
             }
+            return result.isFinite ? result : nil
         }
 
         var name: String {

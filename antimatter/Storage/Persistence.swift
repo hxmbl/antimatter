@@ -64,10 +64,15 @@ enum StorageLocation {
     private nonisolated static let migratedDirectories = InsertOnce()
 
     private final class InsertOnce: @unchecked Sendable {
-        private let mutex = NSLock()
-        private var seen: Set<String> = []
+        // Explicitly nonisolated: this registry is a plain NSLock-guarded
+        // set that `directory(named:)` must be able to touch from any
+        // thread. Under the module's default MainActor isolation the
+        // unannotated members were MainActor-isolated by accident, which
+        // both warns and would trap if a non-main caller ever arrived.
+        nonisolated private let mutex = NSLock()
+        nonisolated(unsafe) private var seen: Set<String> = []
         /// - Returns: true the first time `key` is offered, false after that.
-        func insert(_ key: String) -> Bool {
+        nonisolated func insert(_ key: String) -> Bool {
             mutex.lock()
             defer { mutex.unlock() }
             return seen.insert(key).inserted
@@ -269,12 +274,15 @@ enum Persistence {
 /// One lock per file path, so `Persistence.writeData` is serialized even for
 /// callers that do not go through `SerialDiskWriter`.
 private final class WriteLocks: @unchecked Sendable {
-    static let shared = WriteLocks()
+    // Explicitly nonisolated for the same reason as `InsertOnce` above: the
+    // NSLock already provides the thread safety, and `writeData` is
+    // `nonisolated` and callable from any thread.
+    nonisolated static let shared = WriteLocks()
 
-    private let mutex = NSLock()
-    private var locks: [String: NSLock] = [:]
+    nonisolated private let mutex = NSLock()
+    nonisolated(unsafe) private var locks: [String: NSLock] = [:]
 
-    func lock(for url: URL) -> NSLock {
+    nonisolated func lock(for url: URL) -> NSLock {
         let key = url.path
         mutex.lock()
         defer { mutex.unlock() }
@@ -288,7 +296,7 @@ private final class WriteLocks: @unchecked Sendable {
     }
 
     @discardableResult
-    func withLock<T>(_ url: URL, _ body: () throws -> T) rethrows -> T {
+    nonisolated func withLock<T>(_ url: URL, _ body: () throws -> T) rethrows -> T {
         let lock = lock(for: url)
         lock.lock()
         defer { lock.unlock() }

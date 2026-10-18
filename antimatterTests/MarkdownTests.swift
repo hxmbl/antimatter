@@ -214,6 +214,26 @@ struct MarkdownTests {
         #expect(blocks.count == 3)
     }
 
+    @Test func closingFenceMayTrailWhitespace() {
+        // CommonMark: the closing fence may be followed by spaces or tabs
+        // only. The closer used to require the tick run to end the line
+        // exactly, so one trailing space kept the block open and every line
+        // below it stayed styled as code for the rest of the note.
+        let elements = parse("```swift\nlet x = 1\n``` \nplain")
+        #expect(elements.contains { $0.kind == .codeBlock && $0.range.location == 9 })
+        #expect(elements.contains { $0.kind == .hidden && $0.range.location == 19 })
+        #expect(!elements.contains { $0.kind == .codeBlock && $0.range.location == 24 })
+    }
+
+    @Test func fenceInfoFirstWordSelectsTheLanguage() {
+        // GFM: the first word of the info string names the language; anything
+        // after it is metadata. Handing the whole remainder to the language
+        // registry made `swift extras` miss and silently disable highlighting.
+        let elements = parse("```swift extras\nlet x = 1\n```")
+        #expect(elements.contains { $0.kind == .language && $0.range == NSRange(location: 3, length: 5) })
+        #expect(elements.contains { $0.kind == .codeBlock && $0.range.location == 16 })
+    }
+
 
     @Test func tablesMarkPipesAndBoldTheHeader() {
         let source = "| a | b |\n|---|---|\n| 1 | 2 |"

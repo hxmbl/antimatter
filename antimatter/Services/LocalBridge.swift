@@ -86,27 +86,34 @@ final class LocalBridge {
                 // suite — asks for a listener without having to guess a free port
                 // and then race another process for it.
                 let bound = listener.port?.rawValue ?? chosen.port
+                // Copy the weak reference into a fresh immutable local: the
+                // stored handler must keep capturing `self` weakly (a strong
+                // capture here would cycle self → listener → handler → self),
+                // and the Tasks below need an immutable binding to capture.
+                let owner = self
                 Task { @MainActor in
-                    guard let self, self.listener === listener else { return }
-                    self.activePort = bound
-                    self.isReady = true
+                    guard let owner, owner.listener === listener else { return }
+                    owner.activePort = bound
+                    owner.isReady = true
                     DebugLog.log("bridge listening on 127.0.0.1:\(bound)")
                 }
             case .failed(let error):
+                let owner = self
                 Task { @MainActor in
-                    guard let self, self.listener === listener else { return }
-                    self.isReady = false
-                    self.activePort = nil
-                    self.listener = nil
-                    self.claimedPorts.insert(chosen.port)
+                    guard let owner, owner.listener === listener else { return }
+                    owner.isReady = false
+                    owner.activePort = nil
+                    owner.listener = nil
+                    owner.claimedPorts.insert(chosen.port)
                     DebugLog.log("bridge failed to bind 127.0.0.1:\(chosen.port) — \(error.localizedDescription)")
                 }
             case .cancelled:
+                let owner = self
                 Task { @MainActor in
-                    guard let self, self.listener === listener else { return }
-                    self.isReady = false
-                    self.activePort = nil
-                    self.listener = nil
+                    guard let owner, owner.listener === listener else { return }
+                    owner.isReady = false
+                    owner.activePort = nil
+                    owner.listener = nil
                 }
             default:
                 break
@@ -139,16 +146,46 @@ final class LocalBridge {
 
     private func accept(_ connection: NWConnection) {
         connection.start(queue: queue)
+        receiveRequest(connection, accumulated: Data())
+    }
+
+    /// A request may arrive split across TCP segments — loopback does not
+    /// guarantee that one `receive` sees it whole, and the old single-shot
+    /// receive truncated such requests mid-URL (the extension's command then
+    /// failed or ran with a cut argument). Accumulate until the header block
+    /// is complete instead. GET-only protocol: nothing after the blank line
+    /// matters, and the byte cap bounds memory for a client that streams
+    /// forever. An idle connection behaves exactly as before — `receive`
+    /// stays pending until data or EOF arrives either way.
+    private nonisolated static let maxRequestBytes = 1_048_576
+
+    /// Pure state machine on the connection's queue — no shared state, so it
+    /// is `nonisolated` and every terminal path hops to the MainActor once.
+    private nonisolated func receiveRequest(_ connection: NWConnection, accumulated: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, _ in
-            guard let self, let data, !data.isEmpty else {
+            var next = accumulated
+            if let data, !data.isEmpty { next.append(data) }
+            let payload = next
+            let hasHeader = payload.range(of: Data("\r\n\r\n".utf8)) != nil
+            guard let self else {
                 connection.cancel()
                 return
             }
-            Task { @MainActor in
-                let response = self.response(for: data)
-                connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+            if hasHeader || payload.count > Self.maxRequestBytes || isComplete {
+                // Header complete, cap exceeded, or the client hung up with
+                // an incomplete request: answer with what arrived — the
+                // single-shot behaviour the truncated case used to get.
+                Task { @MainActor in self.respond(connection, request: payload) }
+                return
             }
-            _ = isComplete
+            self.receiveRequest(connection, accumulated: payload)
+        }
+    }
+
+    private func respond(_ connection: NWConnection, request: Data) {
+        Task { @MainActor in
+            let response = self.response(for: request)
+            connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
         }
     }
 

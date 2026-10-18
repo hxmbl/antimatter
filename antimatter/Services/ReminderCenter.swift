@@ -185,7 +185,7 @@ final class ReminderCenter: ObservableObject {
     private func persist() {
         guard let data = try? JSONEncoder().encode(reminders) else { return }
         let url = fileURL
-        let validate: (Data) -> Bool = { primary in
+        let validate: @Sendable (Data) -> Bool = { primary in
             (try? JSONDecoder().decode([ActiveReminder].self, from: primary)) != nil
         }
         if StorageLocation.isIsolatedRun {

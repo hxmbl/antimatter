@@ -604,6 +604,7 @@ final class PaneTextView: NSTextView {
     private var ghostCacheKey: String?
     private var ghostCache: [(lineRange: NSRange, text: String)] = []
 
+    @discardableResult
     private func cachedGhosts(for source: String) -> [(lineRange: NSRange, text: String)] {
         if source != ghostCacheKey {
             ghostCache = Self.resolveGhosts(in: source)

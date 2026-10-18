@@ -601,6 +601,21 @@ struct AggregateTests {
             #expect(IntentExecution.aggregateCommit(kind, keyword: ".sum", in: "", at: NSRange(location: 0, length: 3)) == nil)
         }
     }
+
+    @Test func overflowedLiteralsLeaveTheLineAlone() {
+        // `1e309` parses to infinity, which used to flow straight through the
+        // aggregate: `IntentParser.format` renders an infinite answer as "",
+        // so the line was rewritten to `.sum 1e309 = ` — a committed answer
+        // that reads as nothing. Non-finite results are already left alone
+        // (the nan policy); this extends the same policy to aggregates over
+        // overflowed literals.
+        let note = "1e309\n.sum"
+        #expect(value(.sum, note) == nil)
+        #expect(value(.avg, note) == nil)
+        #expect(IntentExecution.aggregateCommit(.sum, keyword: ".sum", in: note, at: NSRange(location: 6, length: 4)) == nil)
+        // Counting entries is not a sum: an overflowed literal still counts.
+        #expect(value(.count, note) == 1)
+    }
 }
 
 struct ReactiveResultTests {
@@ -692,6 +707,17 @@ struct SignedLiteralTests {
         #expect(ExpressionEvaluator.listLiterals("2 * 3 4") == [2, 3, 4])
         #expect(ExpressionEvaluator.listLiterals("no numbers") == [])
         #expect(ExpressionEvaluator.listLiterals("") == [])
+    }
+
+    @Test func listLiteralsKeepTheBinaryMinusSignToo() {
+        // Regression: the permissive scan used to reset the sign for every
+        // operator, disagreeing with numericLiterals — `.sum 1 - 2 3` counted
+        // the 2 as +2 and answered 6 instead of 2.
+        #expect(ExpressionEvaluator.listLiterals("1 - 2") == [1, -2])
+        #expect(ExpressionEvaluator.listLiterals("1 - 2 3") == [1, -2, 3])
+        // The pinned behaviour above is unchanged.
+        #expect(ExpressionEvaluator.listLiterals("-5 3") == [-5, 3])
+        #expect(ExpressionEvaluator.listLiterals("2 * 3 4") == [2, 3, 4])
     }
 }
 

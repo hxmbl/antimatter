@@ -53,8 +53,10 @@ nonisolated enum UnitConverter {
     }
 
     private static func splitPreservingArrow(_ line: String) -> [String] {
-         // Arrows can sit flush against their operand (`12 kg->lb`, `12kg→lb`)
-         // or be surrounded by spaces, so split around the first arrow.
+         // Arrows can sit flush against the unit on the left (`12 kg->lb`)
+         // or be surrounded by spaces. A fully flush `12kg→lb` does not
+         // parse: `Double("12kg")` fails, so the value and its unit must be
+         // separated for `parse` to see four words.
         var earliest: (lower: String.Index, upper: String.Index)? = nil
         for arrow in arrows {
             if let range = line.range(of: arrow) {
