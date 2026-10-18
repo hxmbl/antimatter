@@ -34,6 +34,112 @@ struct CommandCompletionPanelLifecycleTests {
             #expect(CommandCompletionPanel.openPanelCount == initialOpenPanelCount)
         }
     }
+
+    /// The 1.5.0 crash reached `dismissMonitoring` through both the dismissal
+    /// observers (`didResignKey`/`willClose`/`didMiniaturize`) and a restart
+    /// via `show`. Dismiss through each real notification path, then re-show:
+    /// monitoring must come back completely, and the open-panel census must
+    /// return to its starting value after every cycle.
+    @Test func monitoringSurvivesNotificationDrivenDismissalsAndRestarts() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        let textView = NSTextView(frame: window.contentView?.bounds ?? .zero)
+        window.contentView = textView
+        let panel = CommandCompletionPanel()
+        let candidates = Array(IntentExecution.dotCommands.prefix(1))
+        let initialOpenPanelCount = CommandCompletionPanel.openPanelCount
+        defer {
+            panel.dismiss()
+            window.orderOut(nil)
+        }
+
+        let notificationNames: [Notification.Name] = [
+            NSWindow.didResignKeyNotification,
+            NSWindow.willCloseNotification,
+            NSWindow.didMiniaturizeNotification
+        ]
+        for name in notificationNames {
+            panel.show(in: textView, candidates: candidates, tokenStart: 0, query: ".")
+            #expect(panel.isShown)
+            #expect(panel.hasActiveMonitoring)
+            #expect(CommandCompletionPanel.openPanelCount == initialOpenPanelCount + 1)
+
+            NotificationCenter.default.post(name: name, object: window)
+            #expect(!panel.isShown, "\(name) should dismiss the panel")
+            #expect(!panel.hasActiveMonitoring, "\(name) dismissal should have freed every monitor")
+            #expect(CommandCompletionPanel.openPanelCount == initialOpenPanelCount)
+
+            // The next show must reinstall ALL monitoring rather than inherit
+            // any stale state.
+            panel.show(in: textView, candidates: candidates, tokenStart: 0, query: ".")
+            #expect(panel.isShown)
+            #expect(panel.hasActiveMonitoring)
+            #expect(CommandCompletionPanel.openPanelCount == initialOpenPanelCount + 1)
+            panel.dismiss()
+            #expect(CommandCompletionPanel.openPanelCount == initialOpenPanelCount)
+        }
+    }
+
+    /// A restart (`show` over an already-shown panel) must not orphan the
+    /// previous cycle's monitors or drift the open-panel count. In 1.5.0 the
+    /// guarded restart left stale removed-monitor tokens behind, which the
+    /// next dismissal then re-fed into `NSEvent.removeMonitor`.
+    @Test func reShowOverShownPanelStaysBalanced() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        let textView = NSTextView(frame: window.contentView?.bounds ?? .zero)
+        window.contentView = textView
+        let panel = CommandCompletionPanel()
+        let candidates = Array(IntentExecution.dotCommands.prefix(1))
+        let initialOpenPanelCount = CommandCompletionPanel.openPanelCount
+        defer {
+            panel.dismiss()
+            window.orderOut(nil)
+        }
+
+        for _ in 0..<3 {
+            panel.show(in: textView, candidates: candidates, tokenStart: 0, query: ".")
+            panel.show(in: textView, candidates: candidates, tokenStart: 0, query: ".")
+            panel.show(in: textView, candidates: candidates, tokenStart: 0, query: ".")
+            #expect(panel.isShown)
+            #expect(panel.hasActiveMonitoring)
+            #expect(CommandCompletionPanel.openPanelCount == initialOpenPanelCount + 1)
+            panel.dismiss()
+            #expect(CommandCompletionPanel.openPanelCount == initialOpenPanelCount)
+            #expect(!panel.hasActiveMonitoring)
+        }
+    }
+
+    /// When a pane is torn down mid-cycle without a dismissal (SwiftUI drops
+    /// the editor while the list is up), `deinit` must leave the global census
+    /// and the monitor pool as if the panel had been dismissed.
+    @Test func deinitWithoutDismissKeepsCountHonest() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        let textView = NSTextView(frame: window.contentView?.bounds ?? .zero)
+        window.contentView = textView
+        let candidates = Array(IntentExecution.dotCommands.prefix(1))
+        let initialOpenPanelCount = CommandCompletionPanel.openPanelCount
+        defer { window.orderOut(nil) }
+
+        var panel: CommandCompletionPanel? = CommandCompletionPanel()
+        panel?.show(in: textView, candidates: candidates, tokenStart: 0, query: ".")
+        #expect(CommandCompletionPanel.openPanelCount == initialOpenPanelCount + 1)
+        panel = nil
+        #expect(CommandCompletionPanel.openPanelCount == initialOpenPanelCount)
+    }
 }
 
 /// Tests for the AutoReact command-completion candidates and their

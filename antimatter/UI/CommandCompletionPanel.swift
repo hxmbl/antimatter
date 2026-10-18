@@ -217,7 +217,18 @@ final class CommandCompletionPanel {
         panel.hasShadow = true
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.contentView = NSHostingView(rootView: CommandCompletionListView(model: model, onPick: pick))
+        // `weak self` breaks a cycle. The `pick` method reference kept the
+        // panel alive through the hosting view, and the hosting view lives
+        // inside the NSPanel child window for as long as the pane's window
+        // does. A panel torn down mid-display therefore never actually
+        // deinitialised: its event monitors and window observers stayed
+        // installed past the pane's death, and deinit's census correction
+        // never ran — part of the stale-monitor state behind the 1.5.0
+        // completion-panel crash.
+        panel.contentView = NSHostingView(rootView: CommandCompletionListView(
+            model: model,
+            onPick: { [weak self] index in self?.pick(index) }
+        ))
         panel.setFrame(placedFrame(for: textView, tokenStart: tokenStart, size: size), display: true)
         window.addChildWindow(panel, ordered: .above)
         self.panel = panel
@@ -417,7 +428,17 @@ final class CommandCompletionPanel {
     // MARK: Event plumbing
 
     private func startMonitoring() {
-        guard keyMonitor == nil else { return }
+        // Restart must never inherit half-torn-down monitoring state. The
+        // 1.5.0 build cleared (removed) monitors on dismissal without clearing
+        // every stored token, and a restart then returned early with those
+        // already-removed tokens still in the fields. The next dismissal
+        // handed such a token back to NSEvent.removeMonitor, whose object had
+        // been destroyed after the first removal and whose memory was reused —
+        // the five crash reports land exactly on this path (retaining the
+        // token in dismissMonitoring, or while reading it at the restart
+        // guard). Wipe any such state first so the installs below are always
+        // fresh.
+        dismissMonitoring()
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             let keyCode = event.keyCode
             let handled = MainActor.assumeIsolated {
