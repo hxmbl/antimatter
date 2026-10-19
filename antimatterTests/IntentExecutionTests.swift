@@ -289,6 +289,16 @@ struct ReturnKeyActionTests {
         #expect(IntentExecution.action(forLine: "stats", in: "") == .nothing)
     }
 
+    @Test func versionRewritesToTheAppVersion() {
+        #expect(IntentExecution.action(forLine: ".version", in: "") == .rewriteLine(".version = \(AppVersion.text)"))
+        #expect(IntentExecution.preview(forLine: ".version") == "⏎ .version = \(AppVersion.text)")
+        #expect(IntentExecution.helpText.contains(".version"))
+        #expect(IntentExecution.dotCommands.contains { $0.name == ".version" })
+        #expect(IntentExecution.completions(for: ".ver")?.contains(".version ") == true)
+        // Without the dot it is an ordinary prose line.
+        #expect(IntentExecution.action(forLine: "version", in: "") == .nothing)
+    }
+
     @Test func exitAndQuitQuitTheApp() {
         for line in [".exit", ".quit"] {
             #expect(IntentExecution.action(forLine: line, in: "") == .quit)

@@ -54,6 +54,7 @@ See [aggregates.md](aggregates.md) for arguments and `where`/`if` filters.
 | `.settings` | open the settings window |
 | `.debug` | show diagnostics + event log |
 | `.stats` | show usage statistics |
+| `.version` | show the app version — `.version` → `.version = 1.5.3 (5)` |
 | `.hide` | minimize the pane out of the way |
 | `.exit` / `.quit` | quit Antimatter |
 | `.help` | show the full command reference |

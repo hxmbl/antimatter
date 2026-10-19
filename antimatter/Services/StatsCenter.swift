@@ -117,7 +117,7 @@ final class StatsCenter {
         out.append("  typed         \(grouped(typed)) characters")
         out.append("  deleted       \(grouped(deleted)) characters")
         out.append("  notes         \(notes)\(voided > 0 ? " · \(voided) resting in The Void" : "")")
-        out.append("  version       \(versionText)")
+        out.append("  version       \(AppVersion.text)")
         out.append("  using since   \(sinceText)")
         out.append("")
         out.append("Every character above landed in a note — or never quite did.")
@@ -125,17 +125,6 @@ final class StatsCenter {
     }
 
     // MARK: Formatting
-
-    private var versionText: String {
-        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-        switch (short, build) {
-        case let (short?, build?): return "\(short) (\(build))"
-        case let (short?, nil): return short
-        case let (nil, build?): return build
-        default: return "1.0"
-        }
-    }
 
     private var sinceText: String {
         "\(sinceDateText) · \(Self.durationText(since: installDate, to: Date()))"

@@ -586,6 +586,9 @@ nonisolated enum IntentExecution {
         if trimmed.lowercased() == IntentParser.commandPrefix + "stats" {
             return .showStats
         }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "version" {
+            return .rewriteLine("\(trimmed) = \(AppVersion.text)")
+        }
         if trimmed.lowercased() == IntentParser.commandPrefix + "vars" {
             return .showVariables
         }
@@ -948,6 +951,9 @@ nonisolated enum IntentExecution {
         if trimmed.lowercased() == IntentParser.commandPrefix + "stats" {
             return "⏎ shows your usage statistics"
         }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "version" {
+            return "⏎ \(trimmed) = \(AppVersion.text)"
+        }
         if trimmed.lowercased() == IntentParser.commandPrefix + "vars" {
             return "⏎ lists this note's variable definitions"
         }
@@ -1107,6 +1113,7 @@ nonisolated enum IntentExecution {
         DotCommand(name: ".settings", description: "open the settings window", category: .searchSystem),
         DotCommand(name: ".debug", description: "show diagnostics and the event log", category: .searchSystem),
         DotCommand(name: ".stats", description: "show your usage statistics", category: .searchSystem),
+        DotCommand(name: ".version", description: "show the app version", category: .searchSystem),
         DotCommand(name: ".hide", description: "minimize the pane out of the way", category: .searchSystem),
         DotCommand(name: ".vars", description: "list this note's :name = expression definitions", category: .utilities),
         DotCommand(name: ".exit", description: "quit Antimatter", category: .searchSystem),

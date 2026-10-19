@@ -224,7 +224,7 @@ struct AutoReactCompletionTests {
                      ".count", ".time", ".vars", ".help", ".exit", ".quit",
                      ".new", ".clear", ".switch", ".delete", ".undo", ".redo",
                      ".hide", ".find", ".replace", ".paste", ".settings",
-                     ".debug", ".stats", ".pomodoro", ".remind", ".reminder"] {
+                     ".debug", ".stats", ".pomodoro", ".remind", ".reminder", ".version"] {
             #expect(completable.contains(name), "\(name) works but is not completable")
         }
     }

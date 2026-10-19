@@ -87,6 +87,12 @@ struct ActionRunnerTests {
         #expect(outcome.message.contains("typed"))
     }
 
+    @Test func versionStatesTheAppVersion() {
+        let outcome = ActionRunner.run(".version")
+        #expect(outcome.ok == true)
+        #expect(outcome.message == ".version = \(AppVersion.text)")
+    }
+
     @Test func quitIsDeferredUnderTest() {
         // Terminating inside a test suite would kill the runner; the isolated
         // check turns `.quit` into a benign failure instead.

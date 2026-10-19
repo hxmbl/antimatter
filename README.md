@@ -106,6 +106,7 @@ The `docs/` folder covers the note-processing engine:
 | `.settings` | Open settings |
 | `.debug` | Show diagnostics + event log |
 | `.stats` | Show your usage statistics (typed, deleted, notes, version, time with Antimatter) |
+| `.version` | Show the app version: `.version` → `.version = 1.5.3 (5)` |
 | `.exit` / `.quit` | Quit Antimatter |
 | `.help` | Full-screen command reference |
 
