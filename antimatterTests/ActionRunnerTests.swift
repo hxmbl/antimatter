@@ -88,9 +88,12 @@ struct ActionRunnerTests {
     }
 
     @Test func versionStatesTheAppVersion() {
+        _ = NoteStore.shared.create(text: "")
+        defer { resetActiveNote() }
         let outcome = ActionRunner.run(".version")
         #expect(outcome.ok == true)
         #expect(outcome.message == ".version = \(AppVersion.text)")
+        #expect(NoteStore.shared.activeNote.text == ".version = \(AppVersion.text)")
     }
 
     @Test func quitIsDeferredUnderTest() {
