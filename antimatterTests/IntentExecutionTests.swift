@@ -684,3 +684,103 @@ struct InlineAggregateAndTimeTests {
         #expect(IntentExecution.preview(forLine: ".time")?.contains(".time") == true)
     }
 }
+
+// MARK: - Inline translation
+
+struct InlineTranslationTests {
+
+    private func request(_ text: String, line: String) -> IntentExecution.TranslationRequest? {
+        let range = (text as NSString).range(of: line)
+        guard range.location != NSNotFound else { return nil }
+        return IntentExecution.translationRequest(in: text, at: range)
+    }
+
+    @Test func inlineTokenTranslatesTheTextBeforeIt() {
+        let text = "Bonjour tout le monde .translate"
+        guard let request = request(text, line: text) else {
+            Issue.record(".translate should produce a request")
+            return
+        }
+        #expect(request.range == NSRange(location: 0, length: (text as NSString).length))
+        #expect(request.matched == text)
+        #expect(request.original == "Bonjour tout le monde")
+        #expect(request.source == "Bonjour tout le monde")
+
+        let commit = IntentExecution.translationCommit(for: request, translation: "Hello everyone")
+        #expect(commit.range == request.range)
+        #expect(commit.replacement == "Bonjour tout le monde\nHello everyone")
+    }
+
+    @Test func trailingSpacesAfterTheTokenAreRemoved() {
+        let text = "  Bonjour .translate   "
+        guard let request = request(text, line: text) else {
+            Issue.record(".translate should ignore trailing spaces")
+            return
+        }
+        #expect(request.original == "  Bonjour")
+        let commit = IntentExecution.translationCommit(for: request, translation: " Hello ")
+        #expect(commit.replacement == "  Bonjour\nHello")
+    }
+
+    @Test func theWholeNotePrefixIsTranslated() {
+        let text = "First line\n\nDeuxième .translate"
+        guard let request = request(text, line: "Deuxième .translate") else {
+            Issue.record("multi-line .translate should produce a request")
+            return
+        }
+        #expect(request.original == "First line\n\nDeuxième")
+        #expect(request.source == "First line\n\nDeuxième")
+        #expect(request.range == NSRange(
+            location: 0,
+            length: NSMaxRange((text as NSString).range(of: "Deuxième .translate"))))
+    }
+
+    @Test func aCommandOnItsOwnLineDoesNotLeaveABlankLine() {
+        let text = "Bonjour\n.translate"
+        guard let request = request(text, line: ".translate") else {
+            Issue.record("a command after a line should still translate")
+            return
+        }
+        #expect(request.original == "Bonjour")
+        let commit = IntentExecution.translationCommit(for: request, translation: "Hello")
+        #expect(commit.replacement == "Bonjour\nHello")
+    }
+
+    @Test func emptyInputIsRejected() {
+        for text in [".translate", "   .translate", "\n\n.translate"] {
+            #expect(request(text, line: ".translate") == nil, "`\(text)` has no text to translate")
+        }
+    }
+
+    @Test func theTokenMustEndItsLine() {
+        #expect(request("Bonjour .translate monde", line: "Bonjour .translate monde") == nil)
+        #expect(request("Bonjour .translate.", line: "Bonjour .translate.") == nil)
+    }
+
+    @Test func matchingIsCaseInsensitive() {
+        guard let request = request("Bonjour .TRANSLATE", line: "Bonjour .TRANSLATE") else {
+            Issue.record("uppercase .TRANSLATE should work")
+            return
+        }
+        #expect(request.original == "Bonjour")
+    }
+
+    @Test func carriageReturnAfterTheTokenIsIgnored() {
+        // `caretLineRange` strips `\n` but leaves the `\r` of a CRLF note.
+        let text = "Bonjour .translate\r"
+        guard let request = request(text, line: text) else {
+            Issue.record("a trailing carriage return should not hide the token")
+            return
+        }
+        #expect(request.original == "Bonjour")
+    }
+
+    @Test func returnKeyAndPreviewRecogniseTheToken() {
+        #expect(IntentExecution.action(forLine: "Bonjour .translate") == .translate)
+        #expect(IntentExecution.action(forLine: "Bonjour .TRANSLATE") == .translate)
+        #expect(IntentExecution.action(forLine: "Bonjour .translate monde") == .nothing)
+        #expect(IntentExecution.preview(forLine: "Bonjour .translate")?.contains("translates") == true)
+        #expect(IntentExecution.helpText.contains(".translate"))
+        #expect(IntentExecution.dotCommands.contains { $0.name == ".translate" })
+    }
+}

@@ -33,7 +33,7 @@ struct PaneEditor: NSViewRepresentable {
         textView.insertionPointColor = PaneStyle.textNSColor
         textView.font = .systemFont(ofSize: PaneStyle.fontSize)
         textView.defaultParagraphStyle = Self.paragraphStyle
-        textView.typingAttributes = Self.makeTypingAttributes()
+        textView.typingAttributes = Self.typingAttributes(forCaretAt: 0, in: text)
         textView.linkTextAttributes = Self.linkTextAttributes
         // Markdown source must survive typing verbatim: smart quotes,
         // automatic dashes, replacements, links, data detection, and
@@ -107,6 +107,7 @@ struct PaneEditor: NSViewRepresentable {
         guard let textView = scrollView.documentView as? PaneTextView else { return }
         guard !context.coordinator.referenceViewManager.isInHelpView else { return }
         context.coordinator.applyFontSizeIfChanged(to: textView)
+        context.coordinator.syncTypingAttributes(textView)
         textView.reportTopTextLevel()
         guard textView.string != text else { return }
         let selected = textView.selectedRanges.compactMap { proto -> NSValue? in
@@ -122,6 +123,7 @@ struct PaneEditor: NSViewRepresentable {
             textView.selectedRanges = selected
         }
         context.coordinator.highlighter.render(textView)
+        context.coordinator.syncTypingAttributes(textView)
     }
 
     private static var paragraphStyle: NSParagraphStyle {
@@ -130,12 +132,39 @@ struct PaneEditor: NSViewRepresentable {
         return style
     }
 
-    private static func makeTypingAttributes(fontSize: CGFloat = PaneStyle.fontSize) -> [NSAttributedString.Key: Any] {
+    static func makeTypingAttributes(
+        fontSize: CGFloat = PaneStyle.fontSize,
+        bold: Bool = false,
+        paragraphStyle: NSParagraphStyle? = nil
+    ) -> [NSAttributedString.Key: Any] {
         [
-            .font: NSFont.systemFont(ofSize: fontSize),
+            .font: bold ? NSFont.boldSystemFont(ofSize: fontSize) : NSFont.systemFont(ofSize: fontSize),
             .foregroundColor: PaneStyle.textNSColor,
-            .paragraphStyle: paragraphStyle
+            .paragraphStyle: paragraphStyle ?? Self.paragraphStyle
         ]
+    }
+
+    /// Attributes for the character about to be typed. Styling the caret's
+    /// line synchronously is what keeps heading text from growing only after
+    /// the deferred Markdown pass: the inserted glyph already has the heading
+    /// font, so the line never reflows a beat later.
+    static func typingAttributes(
+        forCaretAt index: Int,
+        in text: String,
+        fontSize: CGFloat = PaneStyle.fontSize
+    ) -> [NSAttributedString.Key: Any] {
+        guard let level = Markdown.headingLevel(at: index, in: text) else {
+            return makeTypingAttributes(fontSize: fontSize)
+        }
+        let headingStyle = MarkdownHighlighter.paragraphStyle(
+            spacingBefore: MarkdownHighlighter.headingSpacingBefore,
+            spacingAfter: MarkdownHighlighter.headingSpacingAfter
+        )
+        return makeTypingAttributes(
+            fontSize: Markdown.headingFontSize(level: level, base: fontSize),
+            bold: true,
+            paragraphStyle: headingStyle
+        )
     }
 
     private static var linkTextAttributes: [NSAttributedString.Key: Any] {
@@ -155,6 +184,7 @@ struct PaneEditor: NSViewRepresentable {
         var clipBoundsObserver: NSObjectProtocol?
         private var deferredPassTask: Task<Void, Never>?
         private var deferredCalculationTask: Task<Void, Never>?
+        private var translationTask: Task<Void, Never>?
         private var pendingRender: DispatchWorkItem?
 
         /// How long typing must pause before the full-document Markdown pass
@@ -194,10 +224,12 @@ struct PaneEditor: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(clipBoundsObserver)
             }
             minuteBoundaryTimer?.cancel()
+            translationTask?.cancel()
         }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
+            syncTypingAttributes(textView)
             (textView as? PaneTextView)?.reportTopTextLevel()
             autoRewritesSuppressed = textView.undoManager?.isUndoing == true
             let newText = textView.string
@@ -256,6 +288,9 @@ struct PaneEditor: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             guard !referenceViewManager.isInHelpView else { return }
+            // Moving from body text into a heading must make the next typed
+            // character use the heading font immediately.
+            syncTypingAttributes(textView)
             scheduleStatusUpdate(textView)
             // A caret move (or a note switch delivered through the selection
             // notification) can repoint the token the panel is completing;
@@ -269,6 +304,11 @@ struct PaneEditor: NSViewRepresentable {
         /// hyphens, flags, and pasted text never turn into unexpected Unicode.
         func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
             guard !referenceViewManager.isInHelpView else { return true }
+            // Newline-bearing replacements (return, paste) establish their own
+            // line; wait for textDidChange before choosing attributes for it.
+            if replacementString?.contains(where: \.isNewline) != true {
+                syncTypingAttributes(textView, at: affectedCharRange.location)
+            }
             recordUsage(affectedCharRange, replacement: replacementString, in: textView)
             if let replacement = replacementString, replacement == "\n" {
                 let ns = textView.string as NSString
@@ -329,9 +369,20 @@ struct PaneEditor: NSViewRepresentable {
             textView.font = .systemFont(ofSize: size)
             textView.textColor = PaneStyle.textNSColor
             textView.insertionPointColor = PaneStyle.textNSColor
-            textView.typingAttributes = PaneEditor.makeTypingAttributes(fontSize: size)
             textView.linkTextAttributes = PaneEditor.linkTextAttributes
             highlighter.render(textView)
+            syncTypingAttributes(textView)
+        }
+
+        /// Keeps the next typed glyph in the same style as the line it lands
+        /// on. Reads one line only; the full Markdown pass stays deferred.
+        func syncTypingAttributes(_ textView: NSTextView, at index: Int? = nil) {
+            let caret = index ?? textView.selectedRange().location
+            textView.typingAttributes = PaneEditor.typingAttributes(
+                forCaretAt: caret,
+                in: textView.string,
+                fontSize: PaneStyle.fontSize
+            )
         }
 
 
@@ -546,6 +597,13 @@ struct PaneEditor: NSViewRepresentable {
                 return true
             case .replaceAll(let find, let replace):
                 performGlobalReplace(find: find, replacement: replace, textView: textView)
+                return true
+            case .translate:
+                guard let request = IntentExecution.translationRequest(in: textView.string, at: contentRange) else {
+                    NoticeCenter.shared.show(".translate needs some text before it.")
+                    return true
+                }
+                startTranslation(request, in: textView)
                 return true
             case .hint(let message):
                 NoticeCenter.shared.show(message)
@@ -846,6 +904,49 @@ struct PaneEditor: NSViewRepresentable {
         private func applyCommit(_ commit: IntentExecution.Commit, to textView: NSTextView) {
             textView.breakUndoCoalescing()
             textView.insertText(commit.replacement, replacementRange: commit.range)
+        }
+
+        /// `.translate` is async because the system may need to load a language
+        /// pack. The token stays in place until the result arrives so a failure
+        /// leaves the line retryable; before applying, the request's exact
+        /// prefix is checked so an edit made while waiting is never clobbered.
+        private func startTranslation(_ request: IntentExecution.TranslationRequest, in textView: NSTextView) {
+            translationTask?.cancel()
+            let noteID = noteStore.activeNoteID
+            NoticeCenter.shared.show("Translating…")
+            translationTask = Task { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                do {
+                    let result = try await TranslationCenter.shared.translate(request.source)
+                    guard !Task.isCancelled else { return }
+                    guard self.noteStore.activeNoteID == noteID else { return }
+
+                    let current = textView.string as NSString
+                    guard NSMaxRange(request.range) <= current.length,
+                          current.substring(with: request.range) == request.matched
+                    else {
+                        NoticeCenter.shared.show("Translation cancelled — the note changed.")
+                        return
+                    }
+                    guard result != request.source else {
+                        NoticeCenter.shared.show("This text is already in \(TranslationCenter.systemLanguageName).")
+                        return
+                    }
+
+                    let commit = IntentExecution.translationCommit(for: request, translation: result)
+                    self.applyCommit(commit, to: textView)
+                    textView.setSelectedRange(NSRange(
+                        location: commit.range.location + (commit.replacement as NSString).length,
+                        length: 0
+                    ))
+                } catch is CancellationError {
+                    // A newer translation or a closed pane; nothing to report.
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    let message = error.localizedDescription
+                    NoticeCenter.shared.show(message.isEmpty ? "Couldn't translate this text." : message)
+                }
+            }
         }
 
         /// Screenshot → text: OCR the dropped image on-device and append it.

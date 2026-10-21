@@ -378,10 +378,104 @@ struct CaretAnimationTests {
         }
     }
 
+    // MARK: Trailing insertion point (the end-of-note offset)
+
+    /// The reported defect: at the end of a non-empty note the caret sat one
+    /// `lineFragmentPadding` to the right of the final glyph. The used rect
+    /// includes that trailing padding, so it has to be subtracted.
+    @Test func caretAtTheEndOfANonEmptyNoteSitsAfterTheLastGlyph() {
+        let padding: CGFloat = 5
+        let text = "hello world"
+        let view = makeLaidOutView(text: text, lineFragmentPadding: padding)
+        guard let layoutManager = view.layoutManager, let container = view.textContainer else {
+            Issue.record("missing text system")
+            return
+        }
+        let lastGlyph = layoutManager.numberOfGlyphs - 1
+        let line = layoutManager.lineFragmentUsedRect(forGlyphAt: lastGlyph, effectiveRange: nil)
+        let expected = view.textContainerOrigin.x + line.maxX - container.lineFragmentPadding
+        guard let actual = view.caretXForTesting(at: (text as NSString).length) else {
+            Issue.record("no caret geometry at the end of the note")
+            return
+        }
+        #expect(abs(actual - expected) < 0.5,
+                "caret at \(actual), expected \(expected) (line maxX \(line.maxX))")
+        #expect(actual < view.textContainerOrigin.x + line.maxX,
+                "caret still includes the trailing line-fragment padding")
+    }
+
+    /// Same check on a wrapped final line: the insertion point must follow the
+    /// last glyph of the fragment, not the fragment's padded edge.
+    @Test func caretAtTheEndOfAWrappedNoteStaysOnTheText() {
+        let padding: CGFloat = 5
+        let text = String(repeating: "word ", count: 120)
+        let view = makeLaidOutView(text: text, width: 180, lineFragmentPadding: padding)
+        guard let layoutManager = view.layoutManager, let container = view.textContainer else {
+            Issue.record("missing text system")
+            return
+        }
+        let lastGlyph = layoutManager.numberOfGlyphs - 1
+        let line = layoutManager.lineFragmentUsedRect(forGlyphAt: lastGlyph, effectiveRange: nil)
+        let expected = view.textContainerOrigin.x + line.maxX - container.lineFragmentPadding
+        guard let actual = view.caretXForTesting(at: (text as NSString).length) else {
+            Issue.record("no caret geometry at the end of the wrapped note")
+            return
+        }
+        #expect(abs(actual - expected) < 0.5,
+                "wrapped caret at \(actual), expected \(expected)")
+    }
+
+    /// A fresh line after a trailing newline is an extra line fragment. Its
+    /// rect starts at the container edge, so the insertion point needs the
+    /// padding added back — the old code left the caret one space to the left.
+    @Test func caretOnAFreshLineSitsAtTheTextOrigin() {
+        let padding: CGFloat = 5
+        let text = "hello\n"
+        let view = makeLaidOutView(text: text, lineFragmentPadding: padding)
+        guard let layoutManager = view.layoutManager, let container = view.textContainer else {
+            Issue.record("missing text system")
+            return
+        }
+        let extra = layoutManager.extraLineFragmentRect
+        #expect(!extra.isEmpty, "expected a trailing extra line fragment")
+        let expected = view.textContainerOrigin.x + extra.minX + container.lineFragmentPadding
+        guard let actual = view.caretXForTesting(at: (text as NSString).length) else {
+            Issue.record("no caret geometry on the fresh line")
+            return
+        }
+        #expect(abs(actual - expected) < 0.5,
+                "fresh-line caret at \(actual), expected \(expected)")
+    }
+
+    /// An empty note is the same extra-line-fragment case with no glyphs.
+    @Test func caretOnAnEmptyNoteSitsAtTheTextOrigin() {
+        let padding: CGFloat = 5
+        let view = makeLaidOutView(text: "", lineFragmentPadding: padding)
+        guard let layoutManager = view.layoutManager, let container = view.textContainer else {
+            Issue.record("missing text system")
+            return
+        }
+        let extra = layoutManager.extraLineFragmentRect
+        #expect(!extra.isEmpty, "expected the empty note's extra line fragment")
+        let expected = view.textContainerOrigin.x + extra.minX + container.lineFragmentPadding
+        guard let actual = view.caretXForTesting(at: 0) else {
+            Issue.record("no caret geometry on the empty note")
+            return
+        }
+        #expect(abs(actual - expected) < 0.5,
+                "empty-note caret at \(actual), expected \(expected)")
+        #expect(expected == container.lineFragmentPadding,
+                "test setup should put the text origin at exactly one padding width")
+    }
+
     /// Builds a real text view and runs a real layout pass, so caret geometry
     /// is measured rather than mocked.
     @MainActor
-    private func makeLaidOutView(text: String, width: CGFloat = 400) -> PaneTextView {
+    private func makeLaidOutView(
+        text: String,
+        width: CGFloat = 400,
+        lineFragmentPadding: CGFloat = 0
+    ) -> PaneTextView {
         let view = PaneTextView()
         // Mirror how the pane actually configures its text system: the
         // container tracks the view's width, so the frame is what decides where
@@ -396,7 +490,7 @@ struct CaretAnimationTests {
             // manager reporting a fragment width of 10 million points.
             container.widthTracksTextView = true
             container.containerSize = NSSize(width: view.frame.width, height: 0)
-            container.lineFragmentPadding = 0
+            container.lineFragmentPadding = lineFragmentPadding
         }
         view.string = text
         guard let container = view.textContainer else { return view }

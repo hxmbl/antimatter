@@ -499,14 +499,18 @@ final class PaneTextView: NSTextView {
         if index == length {
             // There is no glyph at the insertion point after the final
             // character. Use the extra line fragment for an empty trailing
-            // line, otherwise use the last glyph's line fragment. The old
-            // fallback used the whole document's usedRect height, which made
-            // the caret briefly stretch from the new line to the top/bottom
-            // of the note.
+            // line, otherwise ask the layout manager where the last insertion
+            // point on the final line is. Both rects are in text-container
+            // coordinates, which exclude `lineFragmentPadding`: the used rect
+            // ends one padding-width past the final glyph, and the extra
+            // fragment starts one padding-width before the text. The old code
+            // used both raw, so the caret sat one space to the right at the
+            // end of a note and one space to the left on a fresh line.
             let extra = layoutManager.extraLineFragmentRect
             if !extra.isEmpty {
+                let padding = textContainer.lineFragmentPadding
                 return NSRect(
-                    x: textContainerOrigin.x + extra.minX,
+                    x: textContainerOrigin.x + extra.minX + padding,
                     y: textContainerOrigin.y + extra.minY,
                     width: 2,
                     height: extra.height
@@ -514,9 +518,34 @@ final class PaneTextView: NSTextView {
             }
             if layoutManager.numberOfGlyphs > 0 {
                 let lastGlyph = layoutManager.numberOfGlyphs - 1
-                let line = layoutManager.lineFragmentUsedRect(forGlyphAt: lastGlyph, effectiveRange: nil)
+                var lineGlyphs = NSRange(location: 0, length: 0)
+                let line = layoutManager.lineFragmentUsedRect(
+                    forGlyphAt: lastGlyph, effectiveRange: &lineGlyphs)
+                // `getLineFragmentInsertionPoints` returns every caret stop in
+                // the fragment, including the one after the final character.
+                // Prefer it over arithmetic: it accounts for kerning, ligatures,
+                // and writing direction without duplicating layout's math.
+                // The API has no count parameter and fills the caller's buffer,
+                // so size it for the whole fragment. Count characters, not
+                // glyphs: a ligature is one glyph for several characters and
+                // produces one insertion point per character.
+                let lineCharacters = layoutManager.characterRange(
+                    forGlyphRange: lineGlyphs, actualGlyphRange: nil)
+                let capacity = max(2, lineCharacters.length + 2)
+                var positions = [CGFloat](repeating: 0, count: capacity)
+                var indexes = [Int](repeating: 0, count: capacity)
+                let count = layoutManager.getLineFragmentInsertionPoints(
+                    forCharacterAt: max(0, length - 1),
+                    alternatePositions: false,
+                    inDisplayOrder: false,
+                    positions: &positions,
+                    characterIndexes: &indexes
+                )
+                let x = count > 0
+                    ? positions[count - 1]
+                    : line.maxX - textContainer.lineFragmentPadding
                 return NSRect(
-                    x: textContainerOrigin.x + line.maxX,
+                    x: textContainerOrigin.x + x,
                     y: textContainerOrigin.y + line.minY,
                     width: 2,
                     height: line.height

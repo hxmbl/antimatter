@@ -27,6 +27,95 @@ nonisolated enum IntentExecution {
         let replacement: String
     }
 
+    // MARK: Translation
+
+    /// Everything needed to translate the note and put the result underneath
+    /// the original. The command is inline (`Bonjour .translate`), not a line
+    /// of its own, so it has to be found from the caret line's range.
+    struct TranslationRequest: Equatable {
+        /// From the start of the note through the end of the command line.
+        let range: NSRange
+        /// The exact buffer text in `range`, captured so an async result can
+        /// refuse to land on a note the user has edited since.
+        let matched: String
+        /// The note text before `.translate`, with the separating spaces and
+        /// the token removed. This is what stays in the note.
+        let original: String
+        /// The text handed to the translator.
+        let source: String
+    }
+
+    /// The inline `.translate` token at the end of a line, or nil.
+    static func isTranslationLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.lowercased().hasSuffix(IntentParser.commandPrefix + "translate")
+    }
+
+    /// Parses `line` plus everything above it into a translation request.
+    ///
+    /// `.translate` belongs to the text it follows, so the input is the whole
+    /// note prefix — not just the caret line. The replacement range starts at
+    /// the note's beginning for the same reason: applying the request rewrites
+    /// the prefix in one undoable edit and leaves later lines untouched.
+    static func translationRequest(in text: String, at contentRange: NSRange?) -> TranslationRequest? {
+        let ns = text as NSString
+        guard let contentRange, contentRange.length > 0,
+              NSMaxRange(contentRange) <= ns.length
+        else { return nil }
+        let line = ns.substring(with: contentRange) as NSString
+
+        // Ignore trailing spaces after the token; `.translate` must still be
+        // the last thing on the line.
+        var lineEnd = line.length
+        while lineEnd > 0 {
+            let c = line.character(at: lineEnd - 1)
+            guard c == 32 || c == 9 || c == 10 || c == 13 else { break }
+            lineEnd -= 1
+        }
+        let tokenText = IntentParser.commandPrefix + "translate"
+        let tokenLength = (tokenText as NSString).length
+        guard lineEnd >= tokenLength else { return nil }
+        let tokenRange = NSRange(location: lineEnd - tokenLength, length: tokenLength)
+        guard line.substring(with: tokenRange).lowercased() == tokenText else { return nil }
+
+        // Trim only the spaces between the text and the token. Newlines above
+        // the line are part of the note and must survive verbatim.
+        var prefixEnd = tokenRange.location
+        while prefixEnd > 0 {
+            let c = line.character(at: prefixEnd - 1)
+            guard c == 32 || c == 9 else { break }
+            prefixEnd -= 1
+        }
+        var originalEnd = contentRange.location + prefixEnd
+        // A command on its own line is preceded by the newline that ended the
+        // previous line. Leaving that in place would put a blank line between
+        // the original and its translation, so trim the separator as well.
+        while originalEnd > 0 {
+            let c = ns.character(at: originalEnd - 1)
+            guard c == 32 || c == 9 || c == 10 || c == 13 else { break }
+            originalEnd -= 1
+        }
+        let original = ns.substring(to: originalEnd)
+        let source = original.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !source.isEmpty else { return nil }
+
+        let range = NSRange(location: 0, length: NSMaxRange(contentRange))
+        return TranslationRequest(
+            range: range,
+            matched: ns.substring(with: range),
+            original: original,
+            source: source
+        )
+    }
+
+    /// The edit that preserves the original text and places the translation on
+    /// the next line. Translating to the same text would only duplicate the
+    /// note, so callers should treat that as an empty result.
+    static func translationCommit(for request: TranslationRequest, translation: String) -> Commit {
+        let translated = translation.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Commit(range: request.range, replacement: request.original + "\n" + translated)
+    }
+
     // MARK: Commits on return
 
     /// Everything needed to rewrite a segment into `expression = result`,
@@ -479,6 +568,9 @@ nonisolated enum IntentExecution {
         case showFindPanel
         /// Global replace in the current note.
         case replaceAll(find: String, replacement: String)
+        /// Translate the note text above an inline `.translate` and insert the
+        /// result beneath it (handled by the pane, which can edit the text).
+        case translate
         /// Say something through a transient notice instead of acting
         /// (unknown dot-command, missing argument, empty aggregate).
         case hint(String)
@@ -497,6 +589,12 @@ nonisolated enum IntentExecution {
         guard !trimmed.isEmpty, !trimmed.hasSuffix("=") else { return .nothing }
         // A leading backslash marks the line as literal text: no command, no rewrite.
         guard !IntentParser.isEscaped(trimmed) else { return .nothing }
+
+        // Inline command: the text before the token is the input, so this is
+        // checked before the dot-command parsers (which require a line start).
+        if isTranslationLine(trimmed) {
+            return .translate
+        }
 
         if let pomodoro = IntentParser.parsePomodoro(trimmed) {
             return .startPomodoro(workDuration: pomodoro.workDuration, breakDuration: pomodoro.breakDuration, cycles: pomodoro.cycles)
@@ -880,6 +978,9 @@ nonisolated enum IntentExecution {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.hasSuffix("="), !IntentParser.isEscaped(trimmed) else { return nil }
 
+        if isTranslationLine(trimmed) {
+            return "⏎ translates into \(TranslationCenter.systemLanguageName)"
+        }
         if trimmed.lowercased() == IntentParser.commandPrefix + "timer list" {
             return "⏎ lists running timers"
         }
@@ -1116,6 +1217,7 @@ nonisolated enum IntentExecution {
         DotCommand(name: ".version", description: "show the app version", category: .searchSystem),
         DotCommand(name: ".hide", description: "minimize the pane out of the way", category: .searchSystem),
         DotCommand(name: ".vars", description: "list this note's :name = expression definitions", category: .utilities),
+        DotCommand(name: ".translate", description: "translate the text before it into your system language", category: .utilities),
         DotCommand(name: ".exit", description: "quit Antimatter", category: .searchSystem),
         DotCommand(name: ".quit", description: "quit Antimatter (same as .exit)", category: .searchSystem),
         DotCommand(name: ".help", description: "show the command reference", category: .searchSystem),

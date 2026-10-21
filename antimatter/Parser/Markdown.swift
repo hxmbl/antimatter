@@ -57,6 +57,49 @@ enum Markdown {
 
     nonisolated static let maxHeadingLevel = 6
 
+    /// The heading level of the line containing `characterIndex`, or nil.
+    ///
+    /// This mirrors `parseHeading`'s rules without parsing the whole document:
+    /// up to three leading spaces, one to six `#`, then a space, tab, or the
+    /// end of the line. The typing path needs this on every keystroke, so it
+    /// deliberately reads only the one line instead of walking the note.
+    nonisolated static func headingLevel(at characterIndex: Int, in text: String) -> Int? {
+        let ns = text as NSString
+        guard ns.length > 0 else { return nil }
+        // An insertion point at the very end of a note that ends in a newline
+        // belongs to the fresh empty line after it, not to the line the
+        // newline terminates. Clamping to the last character would wrongly
+        // style that fresh line as whatever the preceding line was.
+        if characterIndex >= ns.length {
+            let last = ns.character(at: ns.length - 1)
+            if last == 10 || last == 13 { return nil }
+        }
+        let probe = min(max(characterIndex, 0), ns.length - 1)
+        let line = ns.lineRange(for: NSRange(location: probe, length: 0))
+        // `lineRange` includes the terminator. Headings end at the last
+        // content character, so trim CR/LF before checking the break.
+        var end = NSMaxRange(line)
+        while end > line.location {
+            let c = ns.character(at: end - 1)
+            guard c == 10 || c == 13 else { break }
+            end -= 1
+        }
+        var i = line.location
+        var spaces = 0
+        while i < end, spaces < 3, ns.character(at: i) == 32 {
+            i += 1
+            spaces += 1
+        }
+        var level = 0
+        while i < end, ns.character(at: i) == 35 { // '#'
+            level += 1
+            i += 1
+        }
+        guard (1...maxHeadingLevel).contains(level) else { return nil }
+        guard i == end || ns.character(at: i) == 32 || ns.character(at: i) == 9 else { return nil }
+        return level
+    }
+
 
     nonisolated static func parse(_ text: String) -> [Element] {
         var elements: [Element] = []

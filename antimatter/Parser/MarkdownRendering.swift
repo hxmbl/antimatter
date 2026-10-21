@@ -5,6 +5,12 @@ import Foundation
 /// Renders Markdown styling to an NSTextView. Selection changes never alter
 /// the document's glyph attributes, so caret movement cannot reflow glyphs.
 final class MarkdownHighlighter {
+    /// Heading spacing shared by the renderer and the typing attributes, so a
+    /// character typed into a heading already carries the paragraph style the
+    /// deferred render will apply.
+    static let headingSpacingBefore: CGFloat = 8
+    static let headingSpacingAfter: CGFloat = 3
+
     private var source = ""
     /// The appearance the last render was done for. `refresh` skips work when the
     /// text has not changed, but code-block colours are picked from the live
@@ -30,7 +36,7 @@ final class MarkdownHighlighter {
         storage.setAttributes([
             .font: NSFont.systemFont(ofSize: baseSize),
             .foregroundColor: PaneStyle.textNSColor,
-            .paragraphStyle: paragraphStyle()
+            .paragraphStyle: Self.paragraphStyle()
         ], range: NSRange(location: 0, length: storage.length))
 
         let elements = Markdown.parse(text)
@@ -48,10 +54,10 @@ final class MarkdownHighlighter {
             switch element.kind {
             case .heading(let level):
                 storage.addAttribute(.font, value: NSFont.boldSystemFont(ofSize: Markdown.headingFontSize(level: level, base: baseSize)), range: element.range)
-                storage.addAttribute(.paragraphStyle, value: paragraphStyle(spacingBefore: 8, spacingAfter: 3), range: element.range)
+                storage.addAttribute(.paragraphStyle, value: Self.paragraphStyle(spacingBefore: Self.headingSpacingBefore, spacingAfter: Self.headingSpacingAfter), range: element.range)
             case .quote(let level):
                 storage.addAttribute(.font, value: italicFont(ofSize: contentFontSize(of: element, headings: headings, base: baseSize)), range: element.range)
-                storage.addAttribute(.paragraphStyle, value: paragraphStyle(headIndent: CGFloat(14 * level), firstLineHeadIndent: CGFloat(14 * level)), range: element.range)
+                storage.addAttribute(.paragraphStyle, value: Self.paragraphStyle(headIndent: CGFloat(14 * level), firstLineHeadIndent: CGFloat(14 * level)), range: element.range)
             case .codeBlock:
                 var range = element.range
                 if range.location + range.length < storage.length {
@@ -135,7 +141,7 @@ final class MarkdownHighlighter {
                     storage.addAttribute(.toolTip, value: urlString, range: element.range)
                 }
             case .listItem(let level):
-                storage.addAttribute(.paragraphStyle, value: paragraphStyle(headIndent: CGFloat(16 * level), firstLineHeadIndent: 0), range: element.range)
+                storage.addAttribute(.paragraphStyle, value: Self.paragraphStyle(headIndent: CGFloat(16 * level), firstLineHeadIndent: 0), range: element.range)
             case .hidden, .escape:
                 // Keep the source and its character indexes intact while
                 // making syntax-only characters visually disappear. This is
@@ -306,7 +312,7 @@ final class MarkdownHighlighter {
         return true
     }
 
-    private func paragraphStyle(
+    static func paragraphStyle(
         spacingBefore: CGFloat = 0,
         spacingAfter: CGFloat = 0,
         headIndent: CGFloat = 0,

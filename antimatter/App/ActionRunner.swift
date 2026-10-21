@@ -134,7 +134,7 @@ enum ActionRunner {
             return outcome(true, "Goodbye")
 
         case .showHelp, .showDebug, .showFindPanel, .replaceAll, .showNoteSwitcher, .showVariables, .hide, .undo, .redo,
-             .listTimers, .listReminders, .listStopwatches:
+             .listTimers, .listReminders, .listStopwatches, .translate:
             return outcome(false, "This needs the pane — open it and press return on the line")
 
         case .hint(let message):

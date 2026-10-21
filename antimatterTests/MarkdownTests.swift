@@ -78,6 +78,46 @@ struct MarkdownTests {
         #expect(!containsHeading(parse("#tag")))
     }
 
+    // MARK: Typing-path heading detection
+
+    /// The cheap detector used before each keystroke must agree with the
+    /// parser's heading rules, including the edge cases that decide whether a
+    /// typed character should already be heading-sized.
+    @Test func typingHeadingDetectorMatchesTheParser() {
+        for level in 1...Markdown.maxHeadingLevel {
+            let source = String(repeating: "#", count: level) + " Title"
+            #expect(Markdown.headingLevel(at: 0, in: source) == level)
+        }
+        #expect(Markdown.headingLevel(at: 0, in: "  ## Two") == 2)
+        #expect(Markdown.headingLevel(at: 0, in: "   ### Three") == 3)
+        #expect(Markdown.headingLevel(at: 0, in: "    # code") == nil)
+        #expect(Markdown.headingLevel(at: 0, in: "#tag") == nil)
+        #expect(Markdown.headingLevel(at: 0, in: "####### deep") == nil)
+        #expect(Markdown.headingLevel(at: 0, in: "#") == 1)
+        #expect(Markdown.headingLevel(at: 0, in: "") == nil)
+    }
+
+    @Test func typingHeadingDetectorUsesTheCaretLine() {
+        let text = "plain\n## Heading\nbody"
+        let heading = (text as NSString).range(of: "## Heading")
+        #expect(Markdown.headingLevel(at: heading.location, in: text) == 2)
+        #expect(Markdown.headingLevel(at: heading.location + 5, in: text) == 2)
+        #expect(Markdown.headingLevel(at: 0, in: text) == nil)
+        #expect(Markdown.headingLevel(at: (text as NSString).length, in: text) == nil)
+    }
+
+    @Test func typingHeadingDetectorHandlesCRLF() {
+        let text = "# Heading\r\nbody"
+        #expect(Markdown.headingLevel(at: 2, in: text) == 1)
+        #expect(Markdown.headingLevel(at: (text as NSString).length, in: text) == nil)
+    }
+
+    @Test func freshLineAfterAHeadingIsNotAHeading() {
+        let text = "# Heading\n"
+        #expect(Markdown.headingLevel(at: (text as NSString).length, in: text) == nil)
+        #expect(Markdown.headingLevel(at: (text as NSString).length - 1, in: text) == 1)
+    }
+
     @Test func headingHashesAreHidden() {
         let elements = parse("## Hi")
         #expect(elements[0].kind == .heading(level: 2))
