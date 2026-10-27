@@ -110,6 +110,7 @@ The `docs/` folder covers the note-processing engine:
 | `.translate` | Translate the text before it into your system language: `Bonjour .translate` adds the translation on the next line |
 | `.exit` / `.quit` | Quit Antimatter |
 | `.help` | Full-screen command reference |
+| `.view` | Read the current note without editing (`j`/`k`, `Ctrl+d`/`Ctrl+u`, `g`/`G`, `q` to return) |
 
 Not sure which command does what? Type `.` — a native completion window lists them as you type. Type `:` and it lists your note's variables.
 
