@@ -59,6 +59,7 @@ See [aggregates.md](aggregates.md) for arguments and `where`/`if` filters.
 | `.hide` | minimize the pane out of the way |
 | `.exit` / `.quit` | quit Antimatter |
 | `.help` | show the full command reference |
+| `.view` | view the current note read-only; use Vim-style navigation and `q` to return |
 
 ## Automatic lines (no command needed)
 
