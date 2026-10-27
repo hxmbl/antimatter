@@ -70,6 +70,41 @@ final class ReferenceViewManager {
         status.wrappedValue = FooterStatus(preview: "q/Esc close · j/k lines · f/b pages · gg/G top/bottom", answerToCopy: nil)
     }
 
+    /// Enter a read-only view of the current note. The `.view` command line is
+    /// omitted from the displayed copy but remains in the snapshot, so leaving
+    /// view mode restores the note byte-for-byte and never mutates NoteStore.
+    func enterView(_ textView: NSTextView, excluding commandRange: NSRange?) {
+        let container = textView.textContainer
+        helpSnapshot = (
+            textView.string,
+            textView.selectedRange(),
+            textView.font ?? .systemFont(ofSize: PaneStyle.fontSize),
+            textView.isHorizontallyResizable,
+            container?.widthTracksTextView ?? false,
+            container?.containerSize ?? .zero,
+            textView.isEditable
+        )
+        helpTextView = textView
+        isInHelpView = true
+        textView.isEditable = false
+        (textView as? PaneTextView)?.isReferenceMode = true
+
+        if let commandRange, commandRange.location != NSNotFound,
+           NSMaxRange(commandRange) <= (textView.string as NSString).length {
+            // Assigning .string doesn't emit textDidChange, so this temporary
+            // display-only removal cannot write into NoteStore.
+            textView.string = (textView.string as NSString).replacingCharacters(in: commandRange, with: "")
+        }
+        // Unlike .help, .view keeps the note's native rendering and layout.
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+        textView.window?.makeFirstResponder(textView)
+        status.wrappedValue = FooterStatus(
+            preview: "──── VIEW MODE ────  ·  j/k scroll  ·  Ctrl+d/u half-page  ·  g/G top/bottom  ·  q quit",
+            answerToCopy: nil
+        )
+    }
+
     /// Restore the stashed note and normal editing.
     func exit() {
         guard isInHelpView,
