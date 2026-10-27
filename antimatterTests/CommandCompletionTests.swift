@@ -221,7 +221,7 @@ struct AutoReactCompletionTests {
                      ".stopwatch list", ".reminder list", ".reminder cancel all",
                      ".export notes", ".export obsidian", ".export json",
                      ".export csv", ".sum", ".avg", ".total", ".average",
-                     ".count", ".time", ".vars", ".help", ".exit", ".quit",
+                     ".count", ".time", ".vars", ".help", ".view", ".exit", ".quit",
                      ".new", ".clear", ".switch", ".delete", ".undo", ".redo",
                      ".hide", ".find", ".replace", ".paste", ".settings",
                      ".debug", ".stats", ".pomodoro", ".remind", ".reminder",
