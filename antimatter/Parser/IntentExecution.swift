@@ -542,6 +542,8 @@ nonisolated enum IntentExecution {
         case export(ExportDestination)
         /// Expand `.help` into the command reference block.
         case showHelp
+        /// Temporarily show the current note as a read-only, keyboard-navigable view.
+        case showView
         /// Open the app's settings window (`.settings`).
         case showSettings
         /// Expand `.debug` into a diagnostics + log reference block.
@@ -674,6 +676,9 @@ nonisolated enum IntentExecution {
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "help" {
             return .showHelp
+        }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "view" {
+            return .showView
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "settings" {
             return .showSettings
@@ -1043,6 +1048,9 @@ nonisolated enum IntentExecution {
         if trimmed.lowercased() == IntentParser.commandPrefix + "help" {
             return "⏎ opens the reference (press q to close)"
         }
+        if trimmed.lowercased() == IntentParser.commandPrefix + "view" {
+            return "⏎ opens a read-only view (press q to return)"
+        }
         if trimmed.lowercased() == IntentParser.commandPrefix + "settings" {
             return "⏎ opens the settings window"
         }
@@ -1221,6 +1229,7 @@ nonisolated enum IntentExecution {
         DotCommand(name: ".exit", description: "quit Antimatter", category: .searchSystem),
         DotCommand(name: ".quit", description: "quit Antimatter (same as .exit)", category: .searchSystem),
         DotCommand(name: ".help", description: "show the command reference", category: .searchSystem),
+        DotCommand(name: ".view", description: "read the current note without editing", category: .searchSystem),
     ]
 
     // MARK: Command completion
