@@ -56,7 +56,6 @@ See [aggregates.md](aggregates.md) for arguments and `where`/`if` filters.
 | `.stats` | show usage statistics |
 | `.version` | show the app version — `.version` → `.version = 1.5.31 (5)` |
 | `.translate` | translate the text before it into your system language — `Bonjour .translate` adds `Hello` on the next line |
-| `.hide` | minimize the pane out of the way |
 | `.exit` / `.quit` | quit Antimatter |
 | `.help` | show the full command reference |
 | `.view` | view the current note read-only; use Vim-style navigation and `q` to return |

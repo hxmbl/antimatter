@@ -102,7 +102,6 @@ The `docs/` folder covers the note-processing engine:
 | `.export csv` | Save the note's variables as CSV |
 | `.find` | Open the find bar (also `⌘F`) |
 | `.replace find → replace` | Global replace in the note |
-| `.hide` | Minimize the pane out of the way |
 | `.settings` | Open settings |
 | `.debug` | Show diagnostics + event log |
 | `.stats` | Show your usage statistics (typed, deleted, notes, version, time with Antimatter) |
