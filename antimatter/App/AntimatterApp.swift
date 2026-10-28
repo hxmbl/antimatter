@@ -12,6 +12,7 @@ struct AntimatterApp: App {
         Window("Antimatter", id: PaneStyle.windowIdentifier) {
             ContentView()
                 .containerBackground(.clear, for: .window)
+                .background(SettingsOpenBridge())
                 .onReceive(NotificationCenter.default.publisher(for:  NSApplication.didBecomeActiveNotification)) { _ in
                     if PaneStyle.displayMode == .dock {
                         PaneHotKey.shared.revealPane()
@@ -50,6 +51,7 @@ struct AntimatterApp: App {
         }
         Settings {
             SettingsView()
+                .onDisappear { SettingsOpener.shared.settingsDidClose() }
         }
     }
 }
@@ -134,6 +136,9 @@ enum LaunchPreferences {
                 window.orderOut(nil)
             }
         }
+        // Drop any Settings-only elevation flag so a later Settings close
+        // doesn't re-apply `.accessory` after the user chose Dock.
+        SettingsOpener.shared.noteActivationPolicyApplied()
     }
 
     static func appearanceChanged(_ value: String) {
@@ -189,11 +194,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PaneHotKey.shared.revealPane()
     }
 
-    @objc func openSettings(_ sender: Any?) {
-        NSApplication.shared.activate()
-        let modern = Selector(("showSettingsWindow:"))
-        if !NSApplication.shared.sendAction(modern, to: nil, from: nil) {
-            NSApplication.shared.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-        }
+    /// Opens Settings via the SwiftUI scene bridge. Returns whether a bridge
+    /// was installed — callers surface a notice when this is `false`.
+    @objc @discardableResult
+    func openSettings(_ sender: Any?) -> Bool {
+        SettingsOpener.shared.open()
     }
 }
