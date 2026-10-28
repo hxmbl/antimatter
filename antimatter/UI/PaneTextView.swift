@@ -903,10 +903,9 @@ final class PaneTextView: NSTextView {
     /// Without a menu bar, the pane's right-click menu is the escape hatch.
     override func menu(for event: NSEvent) -> NSMenu? {
         guard let menu = super.menu(for: event) else { return nil }
-        let appDelegate = NSApplication.shared.delegate as? AppDelegate
         menu.addItem(.separator())
-        let settings = NSMenuItem(title: "Settings…", action: #selector(AppDelegate.openSettings(_:)), keyEquivalent: "")
-        settings.target = appDelegate
+        let settings = NSMenuItem(title: "Settings…", action: #selector(SettingsOpener.openSettings(_:)), keyEquivalent: "")
+        settings.target = SettingsOpener.shared
         menu.addItem(settings)
         let reveal = NSMenuItem(title: "Reveal Scratchpad in Finder", action: #selector(revealScratchpad(_:)), keyEquivalent: "")
         reveal.target = self

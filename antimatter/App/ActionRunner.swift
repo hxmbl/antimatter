@@ -97,8 +97,7 @@ enum ActionRunner {
             }
 
         case .showSettings:
-            let opened = (NSApplication.shared.delegate as? AppDelegate)?.openSettings(nil) ?? false
-            return opened
+            return SettingsOpener.shared.open()
                 ? outcome(true, "Settings opened")
                 : outcome(false, "Couldn't open Settings")
 

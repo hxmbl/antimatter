@@ -9,10 +9,22 @@ struct AntimatterApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
+        // Bridge Window must be declared before `Settings` so
+        // `@Environment(\.openSettings)` resolves. It uses a non-pane id so
+        // menu-bar mode won't `orderOut` it with the scratchpad windows.
+        // Title deliberately avoids "Settings"/"Preferences" so the finder
+        // in SettingsOpener doesn't mistake this host for the real scene.
+        Window("Settings Bridge", id: "antimatter.settingsBridge") {
+            SettingsOpenBridge()
+        }
+        .windowResizability(.contentSize)
+        .defaultSize(width: 320, height: 200)
+        .windowStyle(.hiddenTitleBar)
+        .commandsRemoved()
+
         Window("Antimatter", id: PaneStyle.windowIdentifier) {
             ContentView()
                 .containerBackground(.clear, for: .window)
-                .background(SettingsOpenBridge())
                 .onReceive(NotificationCenter.default.publisher(for:  NSApplication.didBecomeActiveNotification)) { _ in
                     if PaneStyle.displayMode == .dock {
                         PaneHotKey.shared.revealPane()
@@ -194,10 +206,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PaneHotKey.shared.revealPane()
     }
 
-    /// Opens Settings via the SwiftUI scene bridge. Returns whether a bridge
-    /// was installed — callers surface a notice when this is `false`.
-    @objc @discardableResult
-    func openSettings(_ sender: Any?) -> Bool {
-        SettingsOpener.shared.open()
-    }
 }
