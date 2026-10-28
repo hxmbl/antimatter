@@ -6,11 +6,15 @@ enum PaneStyle {
     enum DisplayMode: String, CaseIterable {
         case dock = "dock"
         case menuBar = "menuBar"
-        case dropdown = "dropdown"
     }
 
     static var displayMode: DisplayMode {
         let raw = UserDefaults.standard.string(forKey: "pane.displayMode") ?? "menuBar"
+        // Migrate legacy "dropdown" mode to "menuBar"
+        if raw == "dropdown" {
+            UserDefaults.standard.set("menuBar", forKey: "pane.displayMode")
+            return .menuBar
+        }
         return DisplayMode(rawValue: raw) ?? .menuBar
     }
 

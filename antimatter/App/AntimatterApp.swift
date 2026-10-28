@@ -125,7 +125,7 @@ enum LaunchPreferences {
             // Switching back to Dock leaves the SwiftUI pane window ordered
             // out from a previous accessory-mode session; bring it forward.
             PaneHotKey.shared.revealPane()
-        case .menuBar, .dropdown:
+        case .menuBar:
             NSApp.setActivationPolicy(.accessory)
             MenuBarController.shared.setup()
             // The SwiftUI pane window would otherwise float in addition to the

@@ -159,7 +159,7 @@ final class PaneHotKey {
         switch mode {
         case .dock:
             // In dock mode, only non-panel windows are considered valid panes.
-            // Hide any stale menu-bar/dropdown panels first.
+            // Hide any stale menu-bar panels first.
             for window in NSApplication.shared.windows where WindowManager.isPane(window) && window is NSPanel {
                 window.orderOut(nil)
             }
@@ -173,8 +173,8 @@ final class PaneHotKey {
             } else {
                 openWindow?()
             }
-        case .menuBar, .dropdown:
-            // Hide any stale dock windows before toggling the menu-bar/dropdown panel.
+        case .menuBar:
+            // Hide any stale dock windows before toggling the menu-bar panel.
             for window in NSApplication.shared.windows where WindowManager.isPane(window) && !(window is NSPanel) {
                 window.orderOut(nil)
             }
@@ -188,7 +188,7 @@ final class PaneHotKey {
         switch mode {
         case .dock:
             NSApplication.shared.activate()
-            // In dock mode, hide any stale menu-bar/dropdown panels before showing the dock window.
+            // In dock mode, hide any stale menu-bar panels before showing the dock window.
             for window in NSApplication.shared.windows where WindowManager.isPane(window) && window is NSPanel {
                 window.orderOut(nil)
             }
@@ -200,8 +200,8 @@ final class PaneHotKey {
             } else {
                 openWindow?()
             }
-        case .menuBar, .dropdown:
-            // Hide any stale dock windows before showing the menu-bar/dropdown panel.
+        case .menuBar:
+            // Hide any stale dock windows before showing the menu-bar panel.
             for window in NSApplication.shared.windows where WindowManager.isPane(window) && !(window is NSPanel) {
                 window.orderOut(nil)
             }

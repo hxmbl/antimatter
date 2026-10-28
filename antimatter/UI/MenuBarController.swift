@@ -105,18 +105,10 @@ final class MenuBarController: NSObject {
         if panel == nil { createPanel() }
         guard let panel else { return }
 
-        let mode = PaneStyle.displayMode
         let fallbackVisibleFrame = NSScreen.main?.visibleFrame
             ?? NSScreen.screens.first?.visibleFrame
 
-        if mode == .dropdown {
-            if let screenFrame = screenForStatusItem?.visibleFrame ?? fallbackVisibleFrame {
-                panel.setFrameOrigin(NSPoint(
-                    x: screenFrame.midX - panel.frame.width / 2,
-                    y: screenFrame.maxY - panel.frame.height - 8
-                ))
-            }
-        } else if let button = statusItem?.button, let window = button.window {
+        if let button = statusItem?.button, let window = button.window {
             let buttonRect = window.convertToScreen(button.frame)
             panel.setFrameOrigin(NSPoint(
                 x: buttonRect.midX - panel.frame.width / 2,
@@ -133,11 +125,7 @@ final class MenuBarController: NSObject {
             ))
         }
 
-        // `.dropdown` is a palette, not a sticky note: it has to get out of the
-        // way when the user clicks into another app. Forcing
-        // `hidesOnDeactivate = false` left a floating-level 400×500 panel
-        // sitting over every other app, swallowing their clicks.
-        panel.hidesOnDeactivate = (mode == .dropdown)
+        panel.hidesOnDeactivate = true
         NSApp.activate(ignoringOtherApps: true)
         panel.orderFrontRegardless()
         panel.makeKey()
@@ -202,7 +190,7 @@ final class MenuBarController: NSObject {
     /// view's `q/Esc close`, and `PaneTextView.keyDown`'s
     /// `dismissActiveDotcommands()`. Because it never consulted
     /// `PaneStyle.hidesOnEscape`, the Settings toggle was a no-op in menu-bar
-    /// and dropdown modes.
+    /// mode.
     private func installEscapeMonitor(for panel: NSPanel) {
         keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak panel] event in
             guard let panel,
