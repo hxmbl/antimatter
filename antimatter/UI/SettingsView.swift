@@ -54,7 +54,6 @@ struct SettingsView: View {
                 Picker("Show as", selection: $displayMode) {
                     Text("Dock").tag("dock")
                     Text("Menu Bar").tag("menuBar")
-                    Text("Dropdown").tag("dropdown")
                 }
                 .pickerStyle(.segmented)
                 .onChange(of: displayMode) { _, _ in
@@ -63,7 +62,7 @@ struct SettingsView: View {
             } header: {
                 Label("General", systemImage: "gearshape")
             } footer: {
-                Text("Automatic follows your Mac's look; Light or Dark pins the app to that style. Show as picks where Antimatter lives: a Dock window, a panel that drops from the menu-bar icon, or a Dropdown panel that drops from the top of the screen and closes when you click away.")
+                Text("Automatic follows your Mac's look; Light or Dark pins the app to that style. Show as picks where Antimatter lives: a Dock window or a panel that drops from the menu-bar icon.")
             }
 
             Section {

@@ -42,7 +42,7 @@ final class WindowManager {
     }
 
     /// `frontmostPane` restricted to real dock windows (the ⌘N ones). The
-    /// menu-bar/dropdown panel is an `NSPanel` and must never answer for one.
+    /// menu-bar panel is an `NSPanel` and must never answer for one.
     var frontmostDockPane: NSWindow? {
         let app = NSApplication.shared
         if let key = app.keyWindow, Self.isPane(key), !(key is NSPanel) { return key }
@@ -103,7 +103,7 @@ final class WindowManager {
     func closeKeyWindow() {
         guard PaneStyle.displayMode == .dock else { return }
         // Only close real dock windows. `keyPane` falls back to
-        // `frontmostPane`, which can answer with the menu-bar/dropdown `NSPanel`
+        // `frontmostPane`, which can answer with the menu-bar `NSPanel`
         // — closing that would silently dismiss the accessory panel instead of
         // the note window the user can actually see.
         if let window = frontmostDockPane {

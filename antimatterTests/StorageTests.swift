@@ -692,7 +692,7 @@ struct PaneWindowTests {
     }
 }
 
-/// Settings offers Dock / Menu Bar / Dropdown tags; a tag that drifts from
+/// Settings offers Dock / Menu Bar tags; a tag that drifts from
 /// `PaneStyle.DisplayMode` becomes a dead mode only reachable by hand-editing
 /// defaults.
 @MainActor
@@ -701,8 +701,9 @@ struct DisplayModeTests {
         for mode in PaneStyle.DisplayMode.allCases {
             #expect(PaneStyle.DisplayMode(rawValue: mode.rawValue) == mode)
         }
-        #expect(PaneStyle.DisplayMode.allCases.count == 3)
-        #expect(PaneStyle.DisplayMode(rawValue: "dropdown") == .dropdown)
+        #expect(PaneStyle.DisplayMode.allCases.count == 2)
+        #expect(PaneStyle.DisplayMode(rawValue: "dock") == .dock)
+        #expect(PaneStyle.DisplayMode(rawValue: "menuBar") == .menuBar)
         #expect(PaneStyle.DisplayMode(rawValue: "not-a-mode") == nil)
     }
 }

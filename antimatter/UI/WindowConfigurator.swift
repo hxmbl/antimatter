@@ -204,7 +204,7 @@ enum PaneWindowStyler {
             for window in NSApplication.shared.windows where WindowManager.isPane(window) {
                 applyLive(to: window)
             }
-        case .menuBar, .dropdown:
+        case .menuBar:
             guard let window = MenuBarController.shared.panel else { return }
             applyLive(to: window)
         }
