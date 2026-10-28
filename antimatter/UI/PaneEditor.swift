@@ -567,6 +567,9 @@ struct PaneEditor: NSViewRepresentable {
             case .showHelp:
                 referenceViewManager.enter(textView, content: IntentExecution.helpText)
                 return true
+            case .showView:
+                referenceViewManager.enterView(textView, excluding: contentRange)
+                return true
             case .showSettings:
                 (NSApplication.shared.delegate as? AppDelegate)?.openSettings(nil)
             case .showDebug:

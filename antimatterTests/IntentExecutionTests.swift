@@ -217,6 +217,14 @@ struct ReturnKeyActionTests {
         }
     }
 
+    @Test func viewOpensReadOnlyNoteMode() {
+        #expect(IntentExecution.action(forLine: ".view", in: "note body") == .showView)
+        #expect(IntentExecution.preview(forLine: ".view") == "⏎ opens a read-only view (press q to return)")
+        #expect(IntentExecution.dotCommands.contains { $0.name == ".view" })
+        #expect(IntentExecution.helpText.contains(".view"))
+        #expect(IntentExecution.action(forLine: "view", in: "note body") == .nothing)
+    }
+
     @Test func helpExpandsIntoTheCommandReference() {
         if case .showHelp = IntentExecution.action(forLine: ".help", in: "") {} else {
             Issue.record(".help should show the reference block")
