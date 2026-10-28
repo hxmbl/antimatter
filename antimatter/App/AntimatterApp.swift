@@ -9,6 +9,19 @@ struct AntimatterApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
+        // Bridge Window must be declared before `Settings` so
+        // `@Environment(\.openSettings)` resolves. It uses a non-pane id so
+        // menu-bar mode won't `orderOut` it with the scratchpad windows.
+        // Title deliberately avoids "Settings"/"Preferences" so the finder
+        // in SettingsOpener doesn't mistake this host for the real scene.
+        Window("Settings Bridge", id: "antimatter.settingsBridge") {
+            SettingsOpenBridge()
+        }
+        .windowResizability(.contentSize)
+        .defaultSize(width: 320, height: 200)
+        .windowStyle(.hiddenTitleBar)
+        .commandsRemoved()
+
         Window("Antimatter", id: PaneStyle.windowIdentifier) {
             ContentView()
                 .containerBackground(.clear, for: .window)
@@ -50,6 +63,7 @@ struct AntimatterApp: App {
         }
         Settings {
             SettingsView()
+                .onDisappear { SettingsOpener.shared.settingsDidClose() }
         }
     }
 }
@@ -134,6 +148,9 @@ enum LaunchPreferences {
                 window.orderOut(nil)
             }
         }
+        // Drop any Settings-only elevation flag so a later Settings close
+        // doesn't re-apply `.accessory` after the user chose Dock.
+        SettingsOpener.shared.noteActivationPolicyApplied()
     }
 
     static func appearanceChanged(_ value: String) {
@@ -189,11 +206,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PaneHotKey.shared.revealPane()
     }
 
-    @objc func openSettings(_ sender: Any?) {
-        NSApplication.shared.activate()
-        let modern = Selector(("showSettingsWindow:"))
-        if !NSApplication.shared.sendAction(modern, to: nil, from: nil) {
-            NSApplication.shared.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-        }
-    }
 }

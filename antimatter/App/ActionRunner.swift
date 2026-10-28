@@ -97,8 +97,9 @@ enum ActionRunner {
             }
 
         case .showSettings:
-            (NSApplication.shared.delegate as? AppDelegate)?.openSettings(nil)
-            return outcome(true, "Settings opened")
+            return SettingsOpener.shared.open()
+                ? outcome(true, "Settings opened")
+                : outcome(false, "Couldn't open Settings")
 
         case .insertAggregate(let kind):
             guard let value = kind.value(of: IntentExecution.aggregateNumbers(forLine: trimmed, in: buffer)) else {

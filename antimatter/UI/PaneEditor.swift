@@ -571,7 +571,11 @@ struct PaneEditor: NSViewRepresentable {
                 referenceViewManager.enterView(textView, excluding: contentRange)
                 return true
             case .showSettings:
-                (NSApplication.shared.delegate as? AppDelegate)?.openSettings(nil)
+                let opened = SettingsOpener.shared.open()
+                if !opened {
+                    NoticeCenter.shared.show("Couldn't open Settings.")
+                }
+                return true
             case .showDebug:
                 referenceViewManager.enter(textView, content: DebugReport.generate())
                 return true
