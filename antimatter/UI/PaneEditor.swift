@@ -588,9 +588,6 @@ struct PaneEditor: NSViewRepresentable {
             case .quit:
                 NSApplication.shared.terminate(nil)
                 return true
-            case .hide:
-                textView.window?.miniaturize(nil)
-                return true
             case .undo:
                 textView.undoManager?.undo()
                 return true

@@ -223,7 +223,7 @@ struct AutoReactCompletionTests {
                      ".export csv", ".sum", ".avg", ".total", ".average",
                      ".count", ".time", ".vars", ".help", ".view", ".exit", ".quit",
                      ".new", ".clear", ".switch", ".delete", ".undo", ".redo",
-                     ".hide", ".find", ".replace", ".paste", ".settings",
+                      ".find", ".replace", ".paste", ".settings",
                      ".debug", ".stats", ".pomodoro", ".remind", ".reminder",
                      ".version", ".translate"] {
             #expect(completable.contains(name), "\(name) works but is not completable")

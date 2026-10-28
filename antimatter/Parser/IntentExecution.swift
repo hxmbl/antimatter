@@ -554,8 +554,6 @@ nonisolated enum IntentExecution {
         case showVariables
         /// Quit Antimatter cleanly (`.exit` / `.quit`).
         case quit
-        /// Minimize the pane out of the way (`.hide`).
-        case hide
         /// Undo the last edit (`.undo`).
         case undo
         /// Redo the last undone edit (`.redo`).
@@ -699,9 +697,6 @@ nonisolated enum IntentExecution {
             || trimmed.lowercased() == IntentParser.commandPrefix + "quit"
         {
             return .quit
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "hide" {
-            return .hide
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "undo" {
             return .undo
@@ -1071,9 +1066,6 @@ nonisolated enum IntentExecution {
         {
             return "⏎ quits Antimatter"
         }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "hide" {
-            return "⏎ hides the pane"
-        }
         if trimmed.lowercased() == IntentParser.commandPrefix + "undo" {
             return "⏎ undoes the last edit"
         }
@@ -1223,7 +1215,6 @@ nonisolated enum IntentExecution {
         DotCommand(name: ".debug", description: "show diagnostics and the event log", category: .searchSystem),
         DotCommand(name: ".stats", description: "show your usage statistics", category: .searchSystem),
         DotCommand(name: ".version", description: "show the app version", category: .searchSystem),
-        DotCommand(name: ".hide", description: "minimize the pane out of the way", category: .searchSystem),
         DotCommand(name: ".vars", description: "list this note's :name = expression definitions", category: .utilities),
         DotCommand(name: ".translate", description: "translate the text before it into your system language", category: .utilities),
         DotCommand(name: ".exit", description: "quit Antimatter", category: .searchSystem),
