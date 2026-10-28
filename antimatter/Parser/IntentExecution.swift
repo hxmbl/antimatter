@@ -5,7 +5,7 @@ import Foundation
 /// Glue layer between raw typing and executed intents.
 nonisolated enum IntentExecution {
 
-    // MARK: Caret line
+    // MARK: zline
 
     /// The line under the caret with its trailing newline removed.
     static func caretLineRange(in text: String, selection: NSRange) -> NSRange? {
