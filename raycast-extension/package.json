@@ -58,9 +58,7 @@
     "@raycast/api": {
       "esbuild": "0.28.1"
     },
-    "@typescript-eslint/typescript-estree": {
-      "minimatch": "9.0.7"
-    }
+    "minimatch": "^11.0.1"
   },
   "scripts": {
     "build": "ray build --skip-types -e dist -o dist",
