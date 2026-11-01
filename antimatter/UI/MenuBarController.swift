@@ -125,7 +125,7 @@ final class MenuBarController: NSObject {
             ))
         }
 
-        panel.hidesOnDeactivate = true
+        panel.hidesOnDeactivate = false
         NSApp.activate(ignoringOtherApps: true)
         panel.orderFrontRegardless()
         panel.makeKey()
