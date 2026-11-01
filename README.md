@@ -89,8 +89,6 @@ The `docs/` folder covers the note-processing engine:
 | `.new` | Create a new, empty note (swipe left/right to switch) |
 | `.clear` | Clear the current note |
 | `.switch` | Switch to another note (quick switcher menu) |
-| `.undo` | Undo the last edit |
-| `.redo` | Redo the last undone edit |
 | `.sum` / `.total` | Sum the note's numbers, arguments, or a filtered set: `.sum 10 20 30` → 60, `.sum 1..10` → 55, `.sum where it > 10` |
 | `.avg` / `.average` | Average the note's numbers (or `.avg 10 20 30`) |
 | `.count` | Count the note's numbers (or `.count 10 20 30`, `.count 1..50 if it % 2 == 0`) |
