@@ -222,7 +222,7 @@ struct AutoReactCompletionTests {
                      ".export notes", ".export obsidian", ".export json",
                      ".export csv", ".sum", ".avg", ".total", ".average",
                      ".count", ".time", ".vars", ".help", ".view", ".exit", ".quit",
-                     ".new", ".clear", ".switch", ".delete", ".undo", ".redo",
+                     ".new", ".clear", ".switch", ".delete",
                       ".find", ".replace", ".paste", ".settings",
                      ".debug", ".stats", ".pomodoro", ".remind", ".reminder",
                      ".version", ".translate"] {

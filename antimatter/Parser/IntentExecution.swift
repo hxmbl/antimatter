@@ -554,10 +554,6 @@ nonisolated enum IntentExecution {
         case showVariables
         /// Quit Antimatter cleanly (`.exit` / `.quit`).
         case quit
-        /// Undo the last edit (`.undo`).
-        case undo
-        /// Redo the last undone edit (`.redo`).
-        case redo
         /// Expand `.timer list` into the running-timers report.
         case listTimers
         /// Expand `.reminder list` into the pending-reminders report.
@@ -697,12 +693,6 @@ nonisolated enum IntentExecution {
             || trimmed.lowercased() == IntentParser.commandPrefix + "quit"
         {
             return .quit
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "undo" {
-            return .undo
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "redo" {
-            return .redo
         }
         if trimmed.lowercased() == IntentParser.commandPrefix + "find" {
             return .showFindPanel
@@ -1066,12 +1056,6 @@ nonisolated enum IntentExecution {
         {
             return "⏎ quits Antimatter"
         }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "undo" {
-            return "⏎ undoes the last edit"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "redo" {
-            return "⏎ redoes the last undone edit"
-        }
         if trimmed.lowercased() == IntentParser.commandPrefix + "find" {
             return "⏎ opens the find bar"
         }
@@ -1170,8 +1154,6 @@ nonisolated enum IntentExecution {
         DotCommand(name: ".clear", description: "clear the current note", category: .noteManagement),
         DotCommand(name: ".switch", description: "switch to another note", category: .noteManagement),
         DotCommand(name: ".delete", description: "delete the current note", category: .noteManagement),
-        DotCommand(name: ".undo", description: "undo the last edit", category: .noteManagement),
-        DotCommand(name: ".redo", description: "redo the last undone edit", category: .noteManagement),
         DotCommand(name: ".timer", description: "start a countdown — .timer <duration> [label]",
                    snippet: ".timer <duration> ", category: .timers),
         DotCommand(name: ".timer cancel all", description: "cancel every running timer",

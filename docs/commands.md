@@ -12,7 +12,6 @@ the completion panel lists every command as you type the leading `.`.
 | `.clear` | clear the current note |
 | `.switch` | switch to another note |
 | `.delete` | delete the current note |
-| `.undo` / `.redo` | undo / redo the last edit |
 | `.paste` | stream clipboard copies into the note |
 | `.export notes` | send the note to Apple Notes |
 | `.export obsidian` | save the note as markdown in a vault |

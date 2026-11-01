@@ -588,12 +588,6 @@ struct PaneEditor: NSViewRepresentable {
             case .quit:
                 NSApplication.shared.terminate(nil)
                 return true
-            case .undo:
-                textView.undoManager?.undo()
-                return true
-            case .redo:
-                textView.undoManager?.redo()
-                return true
             case .showFindPanel:
                 let item = NSMenuItem()
                 item.tag = Int(NSTextFinder.Action.showFindInterface.rawValue)
