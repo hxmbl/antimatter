@@ -115,15 +115,29 @@ struct PaneEditor: NSViewRepresentable {
             guard range.location != NSNotFound else { return nil }
             let length = (text as NSString).length
             if range.location > length { range.location = length; range.length = 0 }
-            if range.length > length - range.location { range.length = length - range.location }
+            if range.length > length - range.location { range.length = length - range.length }
             return NSValue(range: range)
         }
+        
+        // Capture scroll position before render
+        let scrollView = textView.enclosingScrollView
+        let wasNearBottom = context.coordinator.isNearBottom(textView)
+        let topVisibleIndex = context.coordinator.topVisibleCharacterIndex(textView)
+        
         textView.string = text
         if !selected.isEmpty {
             textView.selectedRanges = selected
         }
         context.coordinator.highlighter.render(textView)
         context.coordinator.syncTypingAttributes(textView)
+        
+        // Restore scroll position after render
+        context.coordinator.restoreScrollPosition(
+            textView: textView,
+            scrollView: scrollView,
+            wasNearBottom: wasNearBottom,
+            topVisibleIndex: topVisibleIndex
+        )
     }
 
     private static var paragraphStyle: NSParagraphStyle {
@@ -262,14 +276,157 @@ struct PaneEditor: NSViewRepresentable {
         /// catches up. Text appended while the pass is pending is picked up by
         /// `refresh`, which re-renders whenever `textView.string` has drifted
         /// from the last render's source.
+        ///
+        /// After rendering, the viewport is re-anchored to maintain the visible
+        /// text position (for reading) and caret visibility (for editing).
         private func scheduleRender(_ textView: NSTextView) {
             pendingRender?.cancel()
             let render = DispatchWorkItem { [weak self, weak textView] in
                 guard let self, let textView else { return }
+                // Capture the scroll position before rendering to restore it after
+                let scrollView = textView.enclosingScrollView
+                let wasNearBottom = self.isNearBottom(textView)
+                let topVisibleIndex = self.topVisibleCharacterIndex(textView)
+                
                 self.highlighter.refresh(textView)
+                
+                // Restore viewport anchoring after reflow
+                self.restoreScrollPosition(
+                    textView: textView,
+                    scrollView: scrollView,
+                    wasNearBottom: wasNearBottom,
+                    topVisibleIndex: topVisibleIndex
+                )
             }
             pendingRender = render
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.renderIdleDelay, execute: render)
+        }
+
+        /// Returns true if the caret is near the bottom of the visible area.
+        /// Used to decide whether to scroll to keep the caret visible after reflow.
+        func isNearBottom(_ textView: NSTextView) -> Bool {
+            guard let scrollView = textView.enclosingScrollView else { return false }
+            let caretRect = PaneTextView.caretRect(for: textView, at: textView.selectedRange().location)
+            guard !caretRect.isEmpty else { return false }
+            
+            let contentView = scrollView.contentView
+            let visibleRect = contentView.visibleRect
+            let caretBottom = caretRect.maxY
+            let visibleBottom = visibleRect.maxY
+            
+            // If caret is in the bottom 20% of visible area or below it
+            return caretBottom >= visibleBottom - visibleRect.height * 0.2
+        }
+
+        /// Returns the character index at the top of the visible area.
+        /// Used to restore the same text at the top after reflow.
+        func topVisibleCharacterIndex(_ textView: NSTextView) -> Int? {
+            guard let scrollView = textView.enclosingScrollView,
+                  let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer
+            else { return nil }
+            
+            let contentView = scrollView.contentView
+            let visibleRect = contentView.visibleRect
+            let textContainerOrigin = textView.textContainerOrigin
+            
+            // Convert visible rect to text container coordinates
+            let containerVisibleRect = NSRect(
+                x: visibleRect.minX - textContainerOrigin.x,
+                y: visibleRect.minY - textContainerOrigin.y,
+                width: visibleRect.width,
+                height: visibleRect.height
+            )
+            
+            // Ensure layout is up to date
+            layoutManager.ensureLayout(for: textContainer)
+            
+            // Find the character index at the top of the visible area
+            var fraction: CGFloat = 0
+            let glyphIndex = layoutManager.glyphIndex(
+                for: NSPoint(x: containerVisibleRect.minX, y: containerVisibleRect.minY),
+                in: textContainer,
+                fractionOfDistanceThroughGlyph: &fraction
+            )
+            guard glyphIndex != NSNotFound else { return nil }
+            
+            let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+            return characterIndex != NSNotFound ? characterIndex : nil
+        }
+
+        /// Restores the scroll position after Markdown rendering to maintain
+        /// visible text anchor (for reading) and caret visibility (for editing).
+        func restoreScrollPosition(
+            textView: NSTextView,
+            scrollView: NSScrollView?,
+            wasNearBottom: Bool,
+            topVisibleIndex: Int?
+        ) {
+            guard let scrollView = scrollView else { return }
+            
+            // Ensure layout is up to date
+            guard let textContainer = textView.textContainer else { return }
+            textView.layoutManager?.ensureLayout(for: textContainer)
+            
+            if wasNearBottom {
+                // If editing near the bottom, scroll to keep caret visible
+                scrollCaretToVisible(textView, scrollView: scrollView)
+            } else if let topVisibleIndex = topVisibleIndex {
+                // If reading, restore the same character at the top
+                scrollToCharacterIndex(topVisibleIndex, textView: textView, scrollView: scrollView)
+            }
+        }
+
+        /// Scrolls the caret to be visible in the scroll view.
+        func scrollCaretToVisible(_ textView: NSTextView, scrollView: NSScrollView) {
+            let caretRect = PaneTextView.caretRect(for: textView, at: textView.selectedRange().location)
+            guard !caretRect.isEmpty else { return }
+            
+            // Convert caret rect to scroll view coordinates
+            let textContainerOrigin = textView.textContainerOrigin
+            let caretRectInContainer = NSRect(
+                x: caretRect.minX - textContainerOrigin.x,
+                y: caretRect.minY - textContainerOrigin.y,
+                width: caretRect.width,
+                height: caretRect.height
+            )
+            
+            // Ask the scroll view to make this rect visible
+            scrollView.scrollToVisible(caretRectInContainer)
+        }
+
+        /// Scrolls to place a specific character index at the top of the visible area.
+        func scrollToCharacterIndex(_ index: Int, textView: NSTextView, scrollView: NSScrollView) {
+            guard let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer
+            else { return }
+            
+            layoutManager.ensureLayout(for: textContainer)
+            
+            let clampedIndex = min(max(index, 0), textView.string.count)
+            let glyphIndex = layoutManager.glyphIndexForCharacter(at: clampedIndex)
+            guard glyphIndex != NSNotFound else { return }
+            
+            let glyphRect = layoutManager.boundingRect(forGlyphRange: NSRange(location: glyphIndex, length: 1), in: textContainer)
+            
+            // Convert to text container coordinates and add padding for better visibility
+            let textContainerOrigin = textView.textContainerOrigin
+            let targetPoint = NSPoint(
+                x: glyphRect.minX + textContainerOrigin.x,
+                y: glyphRect.minY + textContainerOrigin.y
+            )
+            
+            // Scroll to place this point at the top
+            let contentView = scrollView.contentView
+            var newOrigin = contentView.bounds.origin
+            newOrigin.y = targetPoint.y
+            
+            // Clamp to valid scroll range
+            let contentSize = scrollView.contentSize
+            let visibleSize = scrollView.frame.size
+            newOrigin.y = max(0, min(newOrigin.y, contentSize.height - visibleSize.height))
+            
+            contentView.scroll(to: newOrigin)
         }
 
         /// Footer state is SwiftUI state; defer until AppKit finishes delivering
@@ -370,8 +527,22 @@ struct PaneEditor: NSViewRepresentable {
             textView.textColor = PaneStyle.textNSColor
             textView.insertionPointColor = PaneStyle.textNSColor
             textView.linkTextAttributes = PaneEditor.linkTextAttributes
+            
+            // Capture scroll position before render
+            let scrollView = textView.enclosingScrollView
+            let wasNearBottom = isNearBottom(textView)
+            let topVisibleIndex = topVisibleCharacterIndex(textView)
+            
             highlighter.render(textView)
             syncTypingAttributes(textView)
+            
+            // Restore scroll position after render
+            restoreScrollPosition(
+                textView: textView,
+                scrollView: scrollView,
+                wasNearBottom: wasNearBottom,
+                topVisibleIndex: topVisibleIndex
+            )
         }
 
         /// Keeps the next typed glyph in the same style as the line it lands

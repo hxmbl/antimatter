@@ -309,6 +309,75 @@ final class PaneTextView: NSTextView {
         caretRect(for: index)
     }
 
+    /// Static helper to get the caret rect for a character index in any NSTextView.
+    /// This is used by PaneEditor to compute scroll positions.
+    static func caretRect(for textView: NSTextView, at index: Int) -> NSRect {
+        guard let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer
+        else { return .zero }
+        
+        let textContainerOrigin = textView.textContainerOrigin
+        let length = textView.textStorage?.length ?? 0
+        let clampedIndex = min(max(index, 0), length)
+        layoutManager.ensureLayout(for: textContainer)
+
+        if clampedIndex == length {
+            // Caret at end of document
+            let extra = layoutManager.extraLineFragmentRect
+            if !extra.isEmpty {
+                let padding = textContainer.lineFragmentPadding
+                return NSRect(
+                    x: textContainerOrigin.x + extra.minX + padding,
+                    y: textContainerOrigin.y + extra.minY,
+                    width: 2,
+                    height: extra.height
+                )
+            }
+            if layoutManager.numberOfGlyphs > 0 {
+                let lastGlyph = layoutManager.numberOfGlyphs - 1
+                var lineGlyphs = NSRange(location: 0, length: 0)
+                let line = layoutManager.lineFragmentUsedRect(
+                    forGlyphAt: lastGlyph, effectiveRange: &lineGlyphs)
+                let lineCharacters = layoutManager.characterRange(
+                    forGlyphRange: lineGlyphs, actualGlyphRange: nil)
+                let capacity = max(2, lineCharacters.length + 2)
+                var positions = [CGFloat](repeating: 0, count: capacity)
+                var indexes = [Int](repeating: 0, count: capacity)
+                let count = layoutManager.getLineFragmentInsertionPoints(
+                    forCharacterAt: max(0, length - 1),
+                    alternatePositions: false,
+                    inDisplayOrder: false,
+                    positions: &positions,
+                    characterIndexes: &indexes
+                )
+                let x = count > 0
+                    ? positions[count - 1]
+                    : line.maxX - textContainer.lineFragmentPadding
+                return NSRect(
+                    x: textContainerOrigin.x + x,
+                    y: textContainerOrigin.y + line.minY,
+                    width: 2,
+                    height: line.height
+                )
+            }
+        }
+
+        let glyph = clampedIndex < layoutManager.numberOfGlyphs
+            ? layoutManager.glyphIndexForCharacter(at: clampedIndex)
+            : layoutManager.numberOfGlyphs
+        guard glyph < layoutManager.numberOfGlyphs else {
+            return .zero
+        }
+        let line = layoutManager.lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
+        let location = layoutManager.location(forGlyphAt: glyph)
+        return NSRect(
+            x: textContainerOrigin.x + location.x,
+            y: textContainerOrigin.y + line.minY,
+            width: 2,
+            height: line.height
+        )
+    }
+
     /// The ghost values currently cached, and how many whole-note resolves have
     /// happened. `draw(_:)` runs on every caret frame and blink tick, so the
     /// cache is what keeps typing off an O(note) resolve per frame.
