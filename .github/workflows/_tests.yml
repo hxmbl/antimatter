@@ -1,7 +1,11 @@
 name: Tests
 
 on:
-  workflow_call:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -30,7 +34,7 @@ jobs:
 
   test-apple-silicon:
     name: Build and run tests (Apple Silicon)
-    runs-on: macos-26
+    runs-on: macos-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
