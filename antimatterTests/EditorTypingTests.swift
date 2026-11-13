@@ -58,6 +58,21 @@ struct EditorTypingAttributesTests {
         #expect((attributes[.font] as? NSFont)?.pointSize == 13)
     }
 
+    @Test func selectionRangeIsClampedToTheNewTextLength() {
+        #expect(
+            PaneEditor.clampedSelectionRange(NSRange(location: 90, length: 20), toUTF16Length: 100)
+                == NSRange(location: 90, length: 10)
+        )
+        #expect(
+            PaneEditor.clampedSelectionRange(NSRange(location: 110, length: 20), toUTF16Length: 100)
+                == NSRange(location: 100, length: 0)
+        )
+        #expect(
+            PaneEditor.clampedSelectionRange(NSRange(location: NSNotFound, length: 0), toUTF16Length: 100)
+                == nil
+        )
+    }
+
     /// End-to-end through the coordinator: the character inserted at the end
     /// of a heading is already heading-sized, without waiting for `render`.
     @Test func typedCharacterLandsWithHeadingAttributes() {

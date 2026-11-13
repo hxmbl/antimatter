@@ -110,12 +110,12 @@ struct PaneEditor: NSViewRepresentable {
         context.coordinator.syncTypingAttributes(textView)
         textView.reportTopTextLevel()
         guard textView.string != text else { return }
+        let textLength = (text as NSString).length
         let selected = textView.selectedRanges.compactMap { proto -> NSValue? in
-            var range = proto.rangeValue
-            guard range.location != NSNotFound else { return nil }
-            let length = (text as NSString).length
-            if range.location > length { range.location = length; range.length = 0 }
-            if range.length > length - range.location { range.length = length - range.length }
+            guard let range = Self.clampedSelectionRange(
+                proto.rangeValue,
+                toUTF16Length: textLength
+            ) else { return nil }
             return NSValue(range: range)
         }
         
@@ -138,6 +138,19 @@ struct PaneEditor: NSViewRepresentable {
             wasNearBottom: wasNearBottom,
             topVisibleIndex: topVisibleIndex
         )
+    }
+
+    static func clampedSelectionRange(_ range: NSRange, toUTF16Length length: Int) -> NSRange? {
+        guard range.location != NSNotFound else { return nil }
+        var clamped = range
+        if clamped.location > length {
+            clamped.location = length
+            clamped.length = 0
+        }
+        if clamped.length > length - clamped.location {
+            clamped.length = length - clamped.location
+        }
+        return clamped
     }
 
     private static var paragraphStyle: NSParagraphStyle {
