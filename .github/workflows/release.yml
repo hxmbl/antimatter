@@ -1,0 +1,321 @@
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    name: Tests
+    uses: ./.github/workflows/_tests.yml
+
+  build-universal:
+    name: Build universal macOS app
+    needs: [tests]
+    if: ${{ needs.tests.result == 'success' }}
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Build Release app (universal)
+        run: |
+          set -euo pipefail
+          echo "==> Building universal Release app (arm64 + x86_64)"
+          xcodebuild build \
+            -project antimatter.xcodeproj \
+            -scheme antimatter \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath .release-build \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Validate app bundle and architectures
+        run: |
+          set -euo pipefail
+          APP=".release-build/Build/Products/Release/antimatter.app"
+          EXECUTABLE="$APP/Contents/MacOS/antimatter"
+          PLIST="$APP/Contents/Info.plist"
+
+          echo "==> Validating app bundle structure"
+          test -d "$APP" || { echo "::error::App bundle not found"; exit 1; }
+          test -f "$EXECUTABLE" || { echo "::error::Executable not found"; exit 1; }
+          test -f "$PLIST" || { echo "::error::Info.plist not found"; exit 1; }
+
+          echo "==> Verifying executable architectures"
+          ARCHS="$(lipo -archs "$EXECUTABLE")"
+          echo "Architectures: $ARCHS"
+          echo "$ARCHS" | grep -qw arm64 || { echo "::error::arm64 slice missing"; exit 1; }
+          echo "$ARCHS" | grep -qw x86_64 || { echo "::error::x86_64 slice missing"; exit 1; }
+
+          echo "==> Performing basic bundle validation"
+          /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP" \
+            || echo "Unsigned build; codesign verification unavailable."
+          plutil -lint "$PLIST" >/dev/null
+
+          echo "Build validation passed."
+
+      - name: Package app
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          ZIP_NAME="Antimatter-${GITHUB_REF_NAME}.zip"
+          ZIP_PATH="dist/$ZIP_NAME"
+
+          echo "==> Packaging $ZIP_PATH"
+          ditto -c -k --sequesterRsrc --keepParent \
+            .release-build/Build/Products/Release/antimatter.app \
+            "$ZIP_PATH"
+
+          test -s "$ZIP_PATH" || { echo "::error::ZIP is missing or empty"; exit 1; }
+
+          echo "==> Generating checksum"
+          (
+            cd dist
+            shasum -a 256 "$ZIP_NAME" > "$ZIP_NAME.sha256"
+          )
+
+          test -s "$ZIP_PATH.sha256" || { echo "::error::Checksum file is missing or empty"; exit 1; }
+
+          ls -lh "$ZIP_PATH" "$ZIP_PATH.sha256"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: antimatter-macos-universal-${{ github.ref_name }}
+          path: |
+            dist/Antimatter-${{ github.ref_name }}.zip
+            dist/Antimatter-${{ github.ref_name }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [tests, build-universal]
+    if: ${{ needs.tests.result == 'success' && needs.build-universal.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download packaged app
+        uses: actions/download-artifact@v4
+        with:
+          name: antimatter-macos-universal-${{ github.ref_name }}
+          path: dist
+
+      - name: Verify downloaded artifact
+        run: |
+          set -euo pipefail
+
+          ZIP_NAME="Antimatter-${GITHUB_REF_NAME}.zip"
+          CHECKSUM_NAME="$ZIP_NAME.sha256"
+
+          test -s "dist/$ZIP_NAME" || {
+            echo "::error::Expected artifact not found: dist/$ZIP_NAME"
+            exit 1
+          }
+
+          test -s "dist/$CHECKSUM_NAME" || {
+            echo "::error::Checksum file not found: dist/$CHECKSUM_NAME"
+            exit 1
+          }
+
+          echo "==> Verifying downloaded ZIP against checksum"
+          (
+            cd dist
+            sha256sum -c "$CHECKSUM_NAME"
+          )
+
+      - name: Ensure GitHub Release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+
+          echo "==> Checking for existing GitHub Release: $TAG"
+
+          set +e
+          OUTPUT="$(gh release view "$TAG" --json tagName,url 2>&1)"
+          STATUS=$?
+          set -e
+
+          if [ "$STATUS" -eq 0 ]; then
+            echo "Release already exists for $TAG"
+            echo "$OUTPUT"
+            exit 0
+          fi
+
+          echo "$OUTPUT"
+
+          if printf '%s\n' "$OUTPUT" | grep -Fxiq 'release not found'; then
+            echo "No existing release found; creating release."
+            gh release create "$TAG" --verify-tag --generate-notes
+            echo "Release created for $TAG"
+            exit 0
+          fi
+
+          echo "::error::Unable to determine release state for $TAG."
+          echo "::error::Refusing to create or modify a release after an ambiguous API/authentication failure."
+          exit 1
+
+      - name: Upload assets to GitHub Release (safe/idempotent)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          TAG="${GITHUB_REF_NAME}"
+          ZIP_NAME="Antimatter-${TAG}.zip"
+          CHECKSUM_NAME="$ZIP_NAME.sha256"
+
+          ZIP="dist/$ZIP_NAME"
+          CHECKSUM="dist/$CHECKSUM_NAME"
+
+          EXISTING_DIR="dist/existing"
+          EXISTING_ZIP="$EXISTING_DIR/$ZIP_NAME"
+          EXISTING_CHECKSUM="$EXISTING_DIR/$CHECKSUM_NAME"
+
+          test -s "$ZIP" || {
+            echo "::error::Local ZIP is missing: $ZIP"
+            exit 1
+          }
+
+          test -s "$CHECKSUM" || {
+            echo "::error::Local checksum is missing: $CHECKSUM"
+            exit 1
+          }
+
+          LOCAL_SHA="$(sha256sum "$ZIP" | awk '{print $1}')"
+          echo "Local ZIP SHA-256: $LOCAL_SHA"
+
+          echo "==> Checking existing release assets"
+          EXISTING_NAMES="$(gh release view "$TAG" --json assets --jq '.assets[].name')" || {
+            echo "::error::Unable to query existing release assets."
+            exit 1
+          }
+
+          printf '%s\n' "$EXISTING_NAMES"
+
+          # Start with a clean directory. Keep the downloaded ZIP here
+          # throughout the rest of the publishing process.
+          rm -rf "$EXISTING_DIR"
+          mkdir -p "$EXISTING_DIR"
+
+          echo "==> Handling ZIP asset"
+
+          if printf '%s\n' "$EXISTING_NAMES" | grep -Fxq "$ZIP_NAME"; then
+            echo "ZIP already exists; downloading for comparison."
+
+            gh release download "$TAG" \
+              --pattern "$ZIP_NAME" \
+              --dir "$EXISTING_DIR"
+
+            test -s "$EXISTING_ZIP" || {
+              echo "::error::Existing ZIP could not be downloaded."
+              exit 1
+            }
+
+            EXISTING_SHA="$(sha256sum "$EXISTING_ZIP" | awk '{print $1}')"
+            echo "Existing ZIP SHA-256: $EXISTING_SHA"
+
+            if [ "$LOCAL_SHA" != "$EXISTING_SHA" ]; then
+              echo "::error::Existing ZIP differs from the newly built ZIP."
+              echo "::error::Local:    $LOCAL_SHA"
+              echo "::error::Existing: $EXISTING_SHA"
+              echo "::error::Refusing to replace an already-published asset."
+              exit 1
+            fi
+
+            echo "Existing ZIP matches; skipping upload."
+          else
+            echo "ZIP does not exist; uploading."
+            gh release upload "$TAG" "$ZIP"
+            echo "ZIP upload completed."
+
+            # Download the newly published ZIP too, so checksum
+            # verification below always checks the actual release asset.
+            gh release download "$TAG" \
+              --pattern "$ZIP_NAME" \
+              --dir "$EXISTING_DIR"
+
+            test -s "$EXISTING_ZIP" || {
+              echo "::error::Could not retrieve newly uploaded ZIP for verification."
+              exit 1
+            }
+
+            EXISTING_SHA="$(sha256sum "$EXISTING_ZIP" | awk '{print $1}')"
+
+            if [ "$LOCAL_SHA" != "$EXISTING_SHA" ]; then
+              echo "::error::Downloaded release ZIP does not match the local build."
+              exit 1
+            fi
+          fi
+
+          echo "==> Handling checksum asset"
+
+          # Refresh asset state after the ZIP operation.
+          EXISTING_NAMES_AFTER="$(gh release view "$TAG" --json assets --jq '.assets[].name')" || {
+            echo "::error::Unable to re-query release assets."
+            exit 1
+          }
+
+          if printf '%s\n' "$EXISTING_NAMES_AFTER" | grep -Fxq "$CHECKSUM_NAME"; then
+            echo "Checksum already exists; downloading for comparison."
+
+            # Do not delete EXISTING_DIR here: it contains the ZIP
+            # required to validate the checksum.
+            gh release download "$TAG" \
+              --pattern "$CHECKSUM_NAME" \
+              --dir "$EXISTING_DIR"
+
+            test -s "$EXISTING_CHECKSUM" || {
+              echo "::error::Existing checksum could not be downloaded."
+              exit 1
+            }
+
+            echo "==> Comparing existing checksum with newly generated checksum"
+            if ! cmp -s "$CHECKSUM" "$EXISTING_CHECKSUM"; then
+              echo "::error::Existing checksum differs from the newly generated checksum."
+              echo "::error::Refusing to preserve or replace a potentially stale checksum."
+              exit 1
+            fi
+
+            echo "==> Validating existing release ZIP against its checksum"
+            (
+              cd "$EXISTING_DIR"
+              sha256sum -c "$CHECKSUM_NAME"
+            ) || {
+              echo "::error::Existing checksum does not validate the existing release ZIP."
+              exit 1
+            }
+
+            echo "Existing checksum matches the new build and validates the release ZIP."
+            echo "Skipping checksum upload."
+          else
+            echo "Checksum does not exist; uploading."
+            gh release upload "$TAG" "$CHECKSUM"
+            echo "Checksum upload completed."
+          fi
+
+          echo "==> Final release asset state"
+          gh release view "$TAG" \
+            --json tagName,url,assets \
+            --jq '{tagName,url,assets:[.assets[].name]}'

@@ -1,0 +1,48 @@
+name: Tests
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test-intel:
+    name: Build and run tests (Intel)
+    runs-on: macos-26-intel
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Ad-hoc signing (CODE_SIGN_IDENTITY=-) is enough for a hosted macOS test
+      # run; it embeds entitlements without needing a developer account.
+      - name: Build and test
+        run: |
+          set -euo pipefail
+          echo "==> Running tests on Intel (x86_64)"
+          xcodebuild test \
+            -project antimatter.xcodeproj \
+            -scheme antimatter \
+            -destination 'platform=macOS,arch=x86_64' \
+            -derivedDataPath .ci-build-intel \
+            CODE_SIGN_IDENTITY="-"
+
+  test-apple-silicon:
+    name: Build and run tests (Apple Silicon)
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Build and test
+        run: |
+          set -euo pipefail
+          echo "==> Running tests on Apple Silicon (arm64)"
+          xcodebuild test \
+            -project antimatter.xcodeproj \
+            -scheme antimatter \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath .ci-build-arm64 \
+            CODE_SIGN_IDENTITY="-"
