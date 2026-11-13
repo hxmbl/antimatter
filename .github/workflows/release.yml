@@ -14,14 +14,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  tests:
-    name: Tests
-    uses: ./.github/workflows/_tests.yml
+  test:
+    name: Test
+    uses: ./.github/workflows/test.yml
 
   build-universal:
     name: Build universal macOS app
-    needs: [tests]
-    if: ${{ needs.tests.result == 'success' }}
+    needs: [test]
+    if: ${{ needs.test.result == 'success' }}
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -105,8 +105,8 @@ jobs:
 
   publish-release:
     name: Publish GitHub Release
-    needs: [tests, build-universal]
-    if: ${{ needs.tests.result == 'success' && needs.build-universal.result == 'success' }}
+    needs: [test, build-universal]
+    if: ${{ needs.test.result == 'success' && needs.build-universal.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
