@@ -1,6 +1,6 @@
 # Antimatter
 
-![Build & Test](https://github.com/hxmbl/antimatter/actions/workflows/build.yml/badge.svg)
+![Build & Test](https://github.com/hxmbl/antimatter/actions/workflows/test.yml/badge.svg)
 
 A tiny, local, command-aware notes app for macOS. Not a filing system — a place to dump whatever's in your head and get something back.
 
