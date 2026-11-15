@@ -443,6 +443,12 @@ final class PaneTextView: NSTextView {
     /// `hasActiveCaret` being false means there is no caret to show (inactive
     /// window, a selection, IME composition), so stop rather than animate
     /// against nothing.
+    /// Re-targets the caret after a layout pass that may have moved its glyph
+    /// without changing the selection (deferred Markdown styling, resize).
+    func refreshCaretAfterLayout() {
+        if selectedRange().length == 0 { updateCaret() } else { stopCaretAnimation() }
+    }
+
     private func updateCaret() {
         guard hasActiveCaret else {
             stopCaretAnimation()

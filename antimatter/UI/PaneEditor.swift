@@ -321,14 +321,11 @@ struct PaneEditor: NSViewRepresentable {
             guard let scrollView = textView.enclosingScrollView else { return false }
             let caretRect = PaneTextView.caretRect(for: textView, at: textView.selectedRange().location)
             guard !caretRect.isEmpty else { return false }
-            
-            let contentView = scrollView.contentView
-            let visibleRect = contentView.visibleRect
-            let caretBottom = caretRect.maxY
-            let visibleBottom = visibleRect.maxY
-            
-            // If caret is in the bottom 20% of visible area or below it
-            return caretBottom >= visibleBottom - visibleRect.height * 0.2
+            // Both rects are in the text view's (document) coordinates.
+            return ScrollAnchor.caretIsNearBottom(
+                caret: caretRect,
+                visible: scrollView.contentView.documentVisibleRect
+            )
         }
 
         /// Returns the character index at the top of the visible area.
@@ -388,24 +385,21 @@ struct PaneEditor: NSViewRepresentable {
                 // If reading, restore the same character at the top
                 scrollToCharacterIndex(topVisibleIndex, textView: textView, scrollView: scrollView)
             }
+
+            // Reflow can move the caret's glyph without changing its character
+            // index, so nothing else re-targets the custom caret layer.
+            (textView as? PaneTextView)?.refreshCaretAfterLayout()
         }
 
         /// Scrolls the caret to be visible in the scroll view.
         func scrollCaretToVisible(_ textView: NSTextView, scrollView: NSScrollView) {
+            // `caretRect` is already in the text view's coordinates (it includes
+            // `textContainerOrigin`), which is what the document view's own
+            // `scrollToVisible` expects. The scroll view's `scrollToVisible`
+            // would read it in the scroll view's coordinates instead.
             let caretRect = PaneTextView.caretRect(for: textView, at: textView.selectedRange().location)
             guard !caretRect.isEmpty else { return }
-            
-            // Convert caret rect to scroll view coordinates
-            let textContainerOrigin = textView.textContainerOrigin
-            let caretRectInContainer = NSRect(
-                x: caretRect.minX - textContainerOrigin.x,
-                y: caretRect.minY - textContainerOrigin.y,
-                width: caretRect.width,
-                height: caretRect.height
-            )
-            
-            // Ask the scroll view to make this rect visible
-            scrollView.scrollToVisible(caretRectInContainer)
+            textView.scrollToVisible(caretRect)
         }
 
         /// Scrolls to place a specific character index at the top of the visible area.
@@ -413,33 +407,28 @@ struct PaneEditor: NSViewRepresentable {
             guard let layoutManager = textView.layoutManager,
                   let textContainer = textView.textContainer
             else { return }
-            
+
             layoutManager.ensureLayout(for: textContainer)
-            
-            let clampedIndex = min(max(index, 0), textView.string.count)
-            let glyphIndex = layoutManager.glyphIndexForCharacter(at: clampedIndex)
-            guard glyphIndex != NSNotFound else { return }
-            
-            let glyphRect = layoutManager.boundingRect(forGlyphRange: NSRange(location: glyphIndex, length: 1), in: textContainer)
-            
-            // Convert to text container coordinates and add padding for better visibility
-            let textContainerOrigin = textView.textContainerOrigin
-            let targetPoint = NSPoint(
-                x: glyphRect.minX + textContainerOrigin.x,
-                y: glyphRect.minY + textContainerOrigin.y
-            )
-            
-            // Scroll to place this point at the top
+            let glyphCount = layoutManager.numberOfGlyphs
+            guard glyphCount > 0 else { return }
+
+            // Layout indices are UTF-16, not Swift `Character`s.
+            let length = (textView.string as NSString).length
+            let clampedIndex = min(max(index, 0), max(length - 1, 0))
+            let glyphIndex = min(layoutManager.glyphIndexForCharacter(at: clampedIndex), glyphCount - 1)
+
+            let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+            let targetY = lineRect.minY + textView.textContainerOrigin.y
+
             let contentView = scrollView.contentView
             var newOrigin = contentView.bounds.origin
-            newOrigin.y = targetPoint.y
-            
-            // Clamp to valid scroll range
-            let contentSize = scrollView.contentSize
-            let visibleSize = scrollView.frame.size
-            newOrigin.y = max(0, min(newOrigin.y, contentSize.height - visibleSize.height))
-            
+            newOrigin.y = ScrollAnchor.clampedOriginY(
+                target: targetY,
+                documentHeight: textView.frame.height,
+                viewportHeight: contentView.bounds.height
+            )
             contentView.scroll(to: newOrigin)
+            scrollView.reflectScrolledClipView(contentView)
         }
 
         /// Footer state is SwiftUI state; defer until AppKit finishes delivering
