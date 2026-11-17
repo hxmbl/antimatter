@@ -244,8 +244,8 @@ enum Persistence {
     ///
     /// Rotation is atomic with respect to the primary: the previous generation
     /// is written to `.bak` with an atomic replace instead of
-    /// remove-then-copy, so a crash mid-rotation used to leave *no* backup and
-    /// a concurrent reader could catch a half-written one. A per-path lock
+    /// remove-then-copy, so a crash mid-rotation cannot leave *no* backup and
+    /// a concurrent reader cannot observe a half-written one. A per-path lock
     /// keeps the read-rotate-write pair a critical section even when two
     /// writers bypass `SerialDiskWriter`.
     @discardableResult

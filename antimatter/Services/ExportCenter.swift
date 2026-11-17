@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 /// Where `.export` can send the note. Apple Notes and Obsidian are local.
 /// `json` and `csv` serialize the note text plus the variable table, so a
-/// scratchpad of live `:name = expression` values can leave the app.
+/// note with live `:name = expression` values can leave the app.
 enum ExportDestination: String, CaseIterable {
     case appleNotes = "notes"
     case obsidian
@@ -12,7 +12,7 @@ enum ExportDestination: String, CaseIterable {
     case csv
 }
 
-/// Local exports of the scratchpad note — no network.
+/// Local exports of a note — no network.
 ///
 /// * **Apple Notes** — the whole note becomes one new note via AppleScript.
 /// * **Obsidian** — the note is written as a markdown file into the vault
@@ -23,7 +23,7 @@ enum ExportDestination: String, CaseIterable {
 @MainActor
 enum ExportCenter {
 
-    /// Performs the export. `text` should be the current scratchpad contents.
+    /// Performs the export. `text` should be the current note contents.
     /// Returns a short user-visible outcome for a notice, or throws a
     /// localized error for the caller to surface.
     static func export(_ destination: ExportDestination, text: String) throws -> String {
@@ -110,7 +110,7 @@ enum ExportCenter {
     // MARK: JSON & CSV
 
     /// The JSON payload: the note text and every variable with its typed
-    /// value (`1.5`, `true`, `"hi"`, `[1, 2, 3]`), so an exported scratchpad
+    /// value (`1.5`, `true`, `"hi"`, `[1, 2, 3]`), so an exported note
     /// can be machine-read elsewhere.
     private static func exportToJSON(_ text: String) throws -> String {
         let table = VariableTable.scan(text)

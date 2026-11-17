@@ -353,8 +353,8 @@ final class TimerCenter: ObservableObject {
 
 
     private func load() {
-        // Same recovery rule as the scratchpad: a corrupt or missing primary
-        // falls back to the last good generation in timers.json.bak.
+        // Same recovery rule as other persisted stores: a corrupt or missing
+        // primary falls back to the last good generation in timers.json.bak.
         for url in [fileURL, Persistence.backupURL(for: fileURL)] {
             guard let data = try? Data(contentsOf: url),
                   let stored = try? JSONDecoder().decode([ActiveTimer].self, from: data)

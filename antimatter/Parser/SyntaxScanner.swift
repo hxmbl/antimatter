@@ -361,24 +361,6 @@ enum SyntaxScanner {
             return NSRange(location: i, length: 1)
         }
 
-        // Task list markers
-        if char == 0x5B { // [x] or [ ]
-            return NSRange(location: i, length: 1)
-        }
-
-        // Horizontal rule with ---
-        if char == 0x2D {
-            var j = i
-            var dashCount = 0
-            while j < length && nsCode.character(at: j) == 0x2D {
-                dashCount += 1
-                j += 1
-            }
-            if dashCount >= 3 && (j >= length || nsCode.character(at: j) == 0x20) {
-                return NSRange(location: i, length: dashCount)
-            }
-        }
-
         return nil
     }
 }
