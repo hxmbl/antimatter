@@ -187,7 +187,8 @@ final class NoteStore: ObservableObject {
 
     /// Re-points `activeNoteID` at a note that actually exists. Cheap, and
     /// called from every path that can remove or replace notes wholesale —
-    /// including `CloudKitSync.pull()`, which swaps the whole stack out.
+    /// including CloudKit sync pull (`CloudKitSync.pull()`), which swaps the
+    /// whole stack out.
     func repairActiveNotePointer() {
         guard !notes.contains(where: { $0.id == activeNoteID }) else { return }
         activeNoteID = notes.first?.id ?? create().id

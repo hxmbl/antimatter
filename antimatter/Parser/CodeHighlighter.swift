@@ -12,7 +12,8 @@ enum CodeHighlighter {
     // *token* — thousands of times for a single code block — and every colour
     // below rebuilt its `NSColor` on every access.
 
-    /// Colorful, Xcode/GitHub-inspired palette. Adapts to light/dark appearance.
+    /// Reports whether the effective appearance is dark, used to select
+    /// the light or dark token colors below.
     private static var isDark: Bool {
         NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
     }
@@ -94,8 +95,6 @@ enum CodeHighlighter {
             return highlighted
         }
 
-        // Resolved once per call; every colour below used to re-read the
-        // appearance and rebuild its NSColor on each token.
         let dark = isDark
         let nsCode = code as NSString
         let length = nsCode.length

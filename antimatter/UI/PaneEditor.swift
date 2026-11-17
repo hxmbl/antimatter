@@ -119,7 +119,6 @@ struct PaneEditor: NSViewRepresentable {
             return NSValue(range: range)
         }
         
-        // Capture scroll position before render
         let scrollView = textView.enclosingScrollView
         let wasNearBottom = context.coordinator.isNearBottom(textView)
         let topVisibleIndex = context.coordinator.topVisibleCharacterIndex(textView)
@@ -131,7 +130,6 @@ struct PaneEditor: NSViewRepresentable {
         context.coordinator.highlighter.render(textView)
         context.coordinator.syncTypingAttributes(textView)
         
-        // Restore scroll position after render
         context.coordinator.restoreScrollPosition(
             textView: textView,
             scrollView: scrollView,
@@ -296,14 +294,12 @@ struct PaneEditor: NSViewRepresentable {
             pendingRender?.cancel()
             let render = DispatchWorkItem { [weak self, weak textView] in
                 guard let self, let textView else { return }
-                // Capture the scroll position before rendering to restore it after
                 let scrollView = textView.enclosingScrollView
                 let wasNearBottom = self.isNearBottom(textView)
                 let topVisibleIndex = self.topVisibleCharacterIndex(textView)
                 
                 self.highlighter.refresh(textView)
                 
-                // Restore viewport anchoring after reflow
                 self.restoreScrollPosition(
                     textView: textView,
                     scrollView: scrollView,
@@ -530,7 +526,6 @@ struct PaneEditor: NSViewRepresentable {
             textView.insertionPointColor = PaneStyle.textNSColor
             textView.linkTextAttributes = PaneEditor.linkTextAttributes
             
-            // Capture scroll position before render
             let scrollView = textView.enclosingScrollView
             let wasNearBottom = isNearBottom(textView)
             let topVisibleIndex = topVisibleCharacterIndex(textView)
@@ -538,7 +533,6 @@ struct PaneEditor: NSViewRepresentable {
             highlighter.render(textView)
             syncTypingAttributes(textView)
             
-            // Restore scroll position after render
             restoreScrollPosition(
                 textView: textView,
                 scrollView: scrollView,
@@ -891,7 +885,8 @@ struct PaneEditor: NSViewRepresentable {
         }
 
 
-        /// Auto-open the completion panel once per `.partial` token.
+        /// Auto-open or sync the completion panel for the current completable
+        /// dot-command token.
         private func scheduleCompletion(_ textView: NSTextView) {
             completionTask?.cancel()
             // A live command token opens the panel at once; anything else waits
