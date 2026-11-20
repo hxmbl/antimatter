@@ -792,3 +792,139 @@ struct InlineTranslationTests {
         #expect(IntentExecution.dotCommands.contains { $0.name == ".translate" })
     }
 }
+
+/// Tests for the single command registry: dispatch and preview read from the
+/// same declaration as completion, help and the deep-link allowlist, and
+/// command heads match whole words only.
+struct CommandRegistryTests {
+
+    // MARK: Word-boundary heads (the .timerx bug)
+
+    @Test func timerLookalikeGetsTheUnknownCommandHint() {
+        // `.timerx` used to enter the timer family's `hasPrefix(".timer")`
+        // gate and answer with the timer usage hint.
+        #expect(IntentExecution.action(forLine: ".timerx", in: "") == .hint("Not a command — try `.help`"))
+    }
+
+    @Test func stopwatchLookalikeGetsTheUnknownCommandHint() {
+        #expect(IntentExecution.action(forLine: ".stopwatchx", in: "") == .hint("Not a command — try `.help`"))
+    }
+
+    @Test func reminderLookalikeGetsTheUnknownCommandHint() {
+        // The gate was `hasPrefix(".remind")`, so `.remindxyz` got the
+        // reminder usage hint — and `.remindme in 10 mins stretch` could
+        // even start a reminder.
+        #expect(IntentExecution.action(forLine: ".remindxyz", in: "") == .hint("Not a command — try `.help`"))
+        if case .startReminder = IntentExecution.action(forLine: ".remindme in 10 mins stretch", in: "") {
+            Issue.record("a .remind lookalike must never start a reminder")
+        }
+    }
+
+    @Test func lookalikesPreviewNothing() {
+        #expect(IntentExecution.preview(forLine: ".timerx") == nil)
+        #expect(IntentExecution.preview(forLine: ".stopwatchx") == nil)
+    }
+
+    // MARK: Real commands still dispatch and preview
+
+    @Test func timerFamilyStillDispatches() {
+        if case .startTimer = IntentExecution.action(forLine: ".timer 5", in: "") {} else {
+            Issue.record(".timer 5 should start a timer")
+        }
+        #expect(IntentExecution.action(forLine: ".timer cancel all", in: "") == .cancelAllTimers)
+        #expect(IntentExecution.action(forLine: ".timer list", in: "") == .listTimers)
+        #expect(IntentExecution.preview(forLine: ".timer 5") == "⏎ starts a timer")
+        #expect(IntentExecution.preview(forLine: ".timer list") == "⏎ lists running timers")
+        #expect(IntentExecution.preview(forLine: ".timer cancel all") == "⏎ cancels all running timers")
+    }
+
+    @Test func stopwatchAndReminderFamiliesStillDispatch() {
+        #expect(IntentExecution.action(forLine: ".stopwatch", in: "") == .startStopwatch(""))
+        #expect(IntentExecution.action(forLine: ".stopwatch cancel all", in: "") == .cancelStopwatches)
+        #expect(IntentExecution.action(forLine: ".stopwatch list", in: "") == .listStopwatches)
+        #expect(IntentExecution.action(forLine: ".reminder cancel all", in: "") == .cancelAllReminders)
+        #expect(IntentExecution.action(forLine: ".remind list", in: "") == .listReminders)
+        #expect(IntentExecution.preview(forLine: ".stopwatch") == "⏎ starts a stopwatch")
+        #expect(IntentExecution.preview(forLine: ".reminder list") == "⏎ lists upcoming reminders")
+    }
+
+    @Test func singleWordCommandsStillDispatch() {
+        #expect(IntentExecution.action(forLine: ".new", in: "") == .newNote)
+        #expect(IntentExecution.action(forLine: ".clear", in: "") == .clearNote)
+        #expect(IntentExecution.action(forLine: ".switch", in: "") == .showNoteSwitcher)
+        #expect(IntentExecution.action(forLine: ".delete", in: "") == .deleteNote)
+        #expect(IntentExecution.action(forLine: ".help", in: "") == .showHelp)
+        #expect(IntentExecution.action(forLine: ".view", in: "") == .showView)
+        #expect(IntentExecution.action(forLine: ".settings", in: "") == .showSettings)
+        #expect(IntentExecution.action(forLine: ".debug", in: "") == .showDebug)
+        #expect(IntentExecution.action(forLine: ".stats", in: "") == .showStats)
+        #expect(IntentExecution.action(forLine: ".vars", in: "") == .showVariables)
+        #expect(IntentExecution.action(forLine: ".exit", in: "") == .quit)
+        #expect(IntentExecution.action(forLine: ".quit", in: "") == .quit)
+        #expect(IntentExecution.action(forLine: ".find", in: "") == .showFindPanel)
+        #expect(IntentExecution.action(forLine: ".paste", in: "") == .startPasteStream)
+    }
+
+    @Test func exportAndReplaceStillDispatch() {
+        #expect(IntentExecution.action(forLine: ".export obsidian", in: "") == .export(.obsidian))
+        #expect(IntentExecution.action(forLine: ".export", in: "") == .hint("Export where? — `.export notes`, `.export obsidian`, `.export json`, or `.export csv`"))
+        #expect(IntentExecution.action(forLine: ".replace foo → bar", in: "") == .replaceAll(find: "foo", replacement: "bar"))
+        #expect(IntentExecution.action(forLine: ".replace", in: "") == .hint("Not a command — try `.help`"))
+        #expect(IntentExecution.preview(forLine: ".export json") == "⏎ exports the note to JSON")
+    }
+
+    // MARK: One registry drives every surface
+
+    @Test func completionVocabularyIsDerivedFromTheRegistry() {
+        #expect(IntentExecution.dotCommands.count == 38)
+        #expect(IntentExecution.dotCommands == IntentExecution.commandSpecs.flatMap(\.completions))
+    }
+
+    @Test func everySingleWordCommandDispatches() {
+        // A command completion teaches must never land on the generic
+        // unknown-command hint. Multi-word entries need their arguments;
+        // bare `.replace` intentionally stays unknown (see
+        // exportAndReplaceStillDispatch), as before.
+        let unknown: IntentExecution.LineAction = .hint("Not a command — try `.help`")
+        let intentionallyUnknown: Set<String> = [".replace"]
+        for command in IntentExecution.dotCommands
+            where !command.name.contains(" ") && !intentionallyUnknown.contains(command.name) {
+            #expect(IntentExecution.action(forLine: command.name, in: "") != unknown,
+                    "\(command.name) should dispatch")
+        }
+    }
+
+    @Test func helpTextCoversEveryCommand() {
+        for command in IntentExecution.dotCommands {
+            #expect(IntentExecution.helpText.contains(command.name),
+                    "\(command.name) should appear in .help")
+        }
+    }
+
+    // MARK: Deep-link allowlist is derived, and unchanged
+
+    @Test func deepLinkHeadsMatchTheLegacyAllowlist() {
+        #expect(IntentExecution.deepLinkSafeHeads == [
+            ".timer", ".pomodoro", ".stopwatch", ".stopwatch cancel",
+            ".remind", ".reminder cancel", ".cancel",
+            ".new", ".help", ".stats", ".time", ".date",
+            ".sum", ".avg", ".count", ".math", ".currency",
+            ".debug", ".settings", ".find", ".replace", ".switch",
+        ])
+    }
+
+    @Test func deepLinkSafetyStillHolds() {
+        #expect(DeepLinkRouter.isSafeCommand(".timer 25 soup"))
+        #expect(DeepLinkRouter.isSafeCommand(".stopwatch cancel all"))
+        #expect(!DeepLinkRouter.isSafeCommand(".exit"))
+        #expect(!DeepLinkRouter.isSafeCommand(".quit"))
+        #expect(!DeepLinkRouter.isSafeCommand(".clear"))
+        #expect(!DeepLinkRouter.isSafeCommand(".delete"))
+        #expect(!DeepLinkRouter.isSafeCommand(".export json"))
+        // Aliases were never allowlisted; that is unchanged.
+        #expect(!DeepLinkRouter.isSafeCommand(".total"))
+        #expect(!DeepLinkRouter.isSafeCommand(".average"))
+        // Whole-word matching keeps lookalikes out.
+        #expect(!DeepLinkRouter.isSafeCommand(".timerx"))
+    }
+}

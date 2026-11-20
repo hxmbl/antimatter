@@ -586,128 +586,18 @@ nonisolated enum IntentExecution {
         // A leading backslash marks the line as literal text: no command, no rewrite.
         guard !IntentParser.isEscaped(trimmed) else { return .nothing }
 
-        // Inline command: the text before the token is the input, so this is
-        // checked before the dot-command parsers (which require a line start).
-        if isTranslationLine(trimmed) {
-            return .translate
+        // Dot-commands dispatch through the registry, so what return does,
+        // what the footer previews, what completion teaches, what `.help`
+        // prints and what a deep link may invoke all come from one
+        // declaration per family. Heads match whole words only: `.timerx` is
+        // not `.timer` and falls through to the unknown-command hint below
+        // (it used to get the timer family's usage hint).
+        for spec in commandSpecs {
+            if let outcome = spec.action(trimmed, line, buffer) {
+                return outcome
+            }
         }
 
-        if let pomodoro = IntentParser.parsePomodoro(trimmed) {
-            return .startPomodoro(workDuration: pomodoro.workDuration, breakDuration: pomodoro.breakDuration, cycles: pomodoro.cycles)
-        }
-        if trimmed.lowercased().hasPrefix(IntentParser.commandPrefix + "timer") {
-            if IntentParser.isTimerCancel(trimmed) {
-                return .cancelAllTimers
-            }
-            if trimmed.lowercased() == IntentParser.commandPrefix + "timer list" {
-                return .listTimers
-            }
-            if let timer = IntentParser.parseTimer(trimmed) {
-                return .startTimer(timer)
-            }
-            return .hint(".timer needs a duration — e.g. `.timer 25`")
-        }
-        if trimmed.lowercased().hasPrefix(IntentParser.commandPrefix + "stopwatch") {
-            if IntentParser.isStopwatchCancel(trimmed) {
-                return .cancelStopwatches
-            }
-            if trimmed.lowercased() == IntentParser.commandPrefix + "stopwatch list" {
-                return .listStopwatches
-            }
-            if IntentParser.stopwatchLabel(trimmed).lowercased().hasPrefix("cancel") {
-                return .hint(".stopwatch cancel takes no further arguments")
-            }
-            return .startStopwatch(IntentParser.stopwatchLabel(trimmed))
-        }
-        if trimmed.lowercased().hasPrefix(ReminderIntent.command) {
-            if ReminderIntent.isCancelAll(trimmed) {
-                return .cancelAllReminders
-            }
-            if trimmed.lowercased() == IntentParser.commandPrefix + "reminder list"
-                || trimmed.lowercased() == IntentParser.commandPrefix + "remind list"
-            {
-                return .listReminders
-            }
-            if let reminder = ReminderIntent.parse(trimmed) {
-                return .startReminder(reminder)
-            }
-            return .hint(".remind needs a time and a message — e.g. `.remind in 10 mins stand up`")
-        }
-        if let parts = AggregateKind.split(trimmed) {
-            guard let buffer else { return .nothing }
-            let numbers = aggregateNumbers(forLine: trimmed, in: buffer)
-            guard !numbers.isEmpty else {
-                let whereTo = parts.args.isEmpty
-                    ? "in the note to \(parts.kind.name)"
-                    : "after `\(parts.command)` to \(parts.kind.name)"
-                return .hint("No numbers \(whereTo)")
-            }
-            return .insertAggregate(parts.kind)
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "time" {
-            return .rewriteLine(TimeIntent.commit(trimmed))
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "export" {
-            return .hint("Export where? — `.export notes`, `.export obsidian`, `.export json`, or `.export csv`")
-        }
-        if let destination = exportDestination(from: trimmed) {
-            return .export(destination)
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "paste" {
-            return .startPasteStream
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "new" {
-            return .newNote
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "clear" {
-            return .clearNote
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "switch" {
-            return .showNoteSwitcher
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "delete" {
-            return .deleteNote
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "help" {
-            return .showHelp
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "view" {
-            return .showView
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "settings" {
-            return .showSettings
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "debug" {
-            return .showDebug
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "stats" {
-            return .showStats
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "version" {
-            return .rewriteLine("\(trimmed) = \(AppVersion.text)")
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "vars" {
-            return .showVariables
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "exit"
-            || trimmed.lowercased() == IntentParser.commandPrefix + "quit"
-        {
-            return .quit
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "find" {
-            return .showFindPanel
-        }
-        if trimmed.lowercased().hasPrefix(IntentParser.commandPrefix + "replace ") {
-            let rest = String(trimmed.dropFirst((IntentParser.commandPrefix + "replace ").count))
-            if let arrow = replaceArrowRange(in: rest) {
-                let find = String(rest[..<arrow.lowerBound])
-                let replace = String(rest[arrow.upperBound...])
-                if !find.isEmpty {
-                    return .replaceAll(find: find, replacement: replace)
-                }
-            }
-            return .hint(".replace needs a pattern — `.replace find → replace`")
-        }
         if let replacement = DateIntent.commit(line) {
             return .rewriteLine(replacement)
         }
@@ -968,108 +858,14 @@ nonisolated enum IntentExecution {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.hasSuffix("="), !IntentParser.isEscaped(trimmed) else { return nil }
 
-        if isTranslationLine(trimmed) {
-            return "⏎ translates into \(TranslationCenter.systemLanguageName)"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "timer list" {
-            return "⏎ lists running timers"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "stopwatch list" {
-            return "⏎ lists stopwatches"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "reminder list"
-            || trimmed.lowercased() == IntentParser.commandPrefix + "remind list"
-        {
-            return "⏎ lists upcoming reminders"
-        }
-        if IntentParser.isTimerCancel(trimmed) {
-            return "⏎ cancels all running timers"
-        }
-        if IntentParser.parsePomodoro(trimmed) != nil {
-            return "⏎ starts a pomodoro cycle"
-        }
-        if IntentParser.parseTimer(trimmed) != nil {
-            return "⏎ starts a timer"
-        }
-        if IntentParser.isStopwatchCancel(trimmed) {
-            return "⏎ cancels all stopwatches"
-        }
-        if IntentParser.isStopwatch(trimmed) {
-            return "⏎ starts a stopwatch"
-        }
-        if ReminderIntent.isCancelAll(trimmed) {
-            return "⏎ cancels all reminders"
-        }
-        if trimmed.lowercased().hasPrefix(ReminderIntent.command),
-           let reminder = ReminderIntent.parse(trimmed)
-        {
-            return "⏎ reminder in \(ReminderCenter.format(reminder.date.timeIntervalSinceNow))"
-        }
-        if let parts = AggregateKind.split(trimmed), let buffer {
-            guard let value = parts.kind.value(of: aggregateNumbers(forLine: trimmed, in: buffer)) else { return nil }
-            return "⏎ \(trimmed) = \(IntentParser.format(value))"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "time" {
-            return "⏎ .time = \(TimeIntent.format(Date()))"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "paste" {
-            return "⏎ begins paste stream"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "new" {
-            return "⏎ creates a new, empty note"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "clear" {
-            return "⏎ clears the note"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "switch" {
-            return "⏎ switches to another note"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "delete" {
-            return "⏎ deletes the note"
-        }
-        if let destination = exportDestination(from: trimmed) {
-            return "⏎ exports the note to \(destinationTitle(destination))"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "help" {
-            return "⏎ opens the reference (press q to close)"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "view" {
-            return "⏎ opens a read-only view (press q to return)"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "settings" {
-            return "⏎ opens the settings window"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "debug" {
-            return "⏎ shows diagnostics and the event log"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "stats" {
-            return "⏎ shows your usage statistics"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "version" {
-            return "⏎ \(trimmed) = \(AppVersion.text)"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "vars" {
-            return "⏎ lists this note's variable definitions"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "exit"
-            || trimmed.lowercased() == IntentParser.commandPrefix + "quit"
-        {
-            return "⏎ quits Antimatter"
-        }
-        if trimmed.lowercased() == IntentParser.commandPrefix + "find" {
-            return "⏎ opens the find bar"
-        }
-        if trimmed.lowercased().hasPrefix(IntentParser.commandPrefix + "replace ") {
-            let rest = String(trimmed.dropFirst((IntentParser.commandPrefix + "replace ").count))
-            if let arrow = replaceArrowRange(in: rest) {
-                let find = String(rest[..<arrow.lowerBound])
-                let replace = String(rest[arrow.upperBound...])
-                if !find.isEmpty {
-                    return "⏎ replace \"\(find)\" → \"\(replace)\""
-                }
+        // Same registry as `action`: the preview can never describe an
+        // outcome the dispatcher would not produce.
+        for spec in commandSpecs {
+            if let preview = spec.preview(trimmed, line, buffer) {
+                return preview
             }
-            return nil
         }
+
         if let replacement = DateIntent.commit(line) {
             return "⏎ " + replacement.trimmingCharacters(in: .whitespaces)
         }
@@ -1147,63 +943,468 @@ nonisolated enum IntentExecution {
         }
     }
 
-    /// Completion vocabulary for typing after a `.` — teaches the commands
-    /// at the moment of use, with no chrome.
-    static let dotCommands: [DotCommand] = [
-        DotCommand(name: ".new", description: "create a new, empty note", category: .noteManagement),
-        DotCommand(name: ".clear", description: "clear the current note", category: .noteManagement),
-        DotCommand(name: ".switch", description: "switch to another note", category: .noteManagement),
-        DotCommand(name: ".delete", description: "delete the current note", category: .noteManagement),
-        DotCommand(name: ".timer", description: "start a countdown — .timer <duration> [label]",
-                   snippet: ".timer <duration> ", category: .timers),
-        DotCommand(name: ".timer cancel all", description: "cancel every running timer",
-                   snippet: ".timer cancel all ", category: .timers),
-        DotCommand(name: ".timer list", description: "show running timers and leftovers",
-                   snippet: ".timer list ", category: .timers),
-        DotCommand(name: ".stopwatch", description: "start a stopwatch — .stopwatch [label]",
-                   snippet: ".stopwatch ", category: .timers),
-        DotCommand(name: ".stopwatch cancel all", description: "cancel every running stopwatch",
-                   snippet: ".stopwatch cancel all ", category: .timers),
-        DotCommand(name: ".stopwatch list", description: "show stopwatch readings",
-                   snippet: ".stopwatch list ", category: .timers),
-        DotCommand(name: ".remind", description: "set a natural-language reminder",
-                   snippet: ".remind <what> <when> ", category: .timers),
-        DotCommand(name: ".reminder", description: "cancel reminders — .reminder cancel all",
-                   snippet: ".reminder cancel all ", category: .timers),
-        DotCommand(name: ".reminder list", description: "show pending reminders",
-                   snippet: ".reminder list ", category: .timers),
-        DotCommand(name: ".reminder cancel all", description: "cancel every pending reminder",
-                   snippet: ".reminder cancel all ", category: .timers),
-        DotCommand(name: ".pomodoro", description: "start a pomodoro cycle",
-                   snippet: ".pomodoro 25/5/4 ", category: .timers),
-        DotCommand(name: ".paste", description: "stream clipboard into the note", category: .noteManagement),
-        DotCommand(name: ".export notes", description: "send the note to Apple Notes", category: .noteManagement),
-        DotCommand(name: ".export obsidian", description: "save the note as markdown in a vault", category: .noteManagement),
-        DotCommand(name: ".export json", description: "save note + variable values as JSON", category: .noteManagement),
-        DotCommand(name: ".export csv", description: "save variable values as a CSV table", category: .noteManagement),
-        DotCommand(name: ".sum", description: "sum numbers — .sum [10 20 30]",
-                   snippet: ".sum ", category: .math),
-        DotCommand(name: ".avg", description: "average numbers — .avg [10 20 30]",
-                   snippet: ".avg ", category: .math),
-        DotCommand(name: ".total", description: "sum numbers — same as `.sum`", category: .math),
-        DotCommand(name: ".average", description: "average numbers — same as `.avg`", category: .math),
-        DotCommand(name: ".count", description: "count numbers — .count [10 20 30]",
-                   snippet: ".count ", category: .math),
-        DotCommand(name: ".time", description: "stamp the current time", category: .utilities),
-        DotCommand(name: ".find", description: "open the find bar", category: .searchSystem),
-        DotCommand(name: ".replace", description: "global replace (`.replace find → replace`)",
-                   snippet: ".replace <find> → <replace> ", category: .searchSystem),
-        DotCommand(name: ".settings", description: "open the settings window", category: .searchSystem),
-        DotCommand(name: ".debug", description: "show diagnostics and the event log", category: .searchSystem),
-        DotCommand(name: ".stats", description: "show your usage statistics", category: .searchSystem),
-        DotCommand(name: ".version", description: "show the app version", category: .searchSystem),
-        DotCommand(name: ".vars", description: "list this note's :name = expression definitions", category: .utilities),
-        DotCommand(name: ".translate", description: "translate the text before it into your system language", category: .utilities),
-        DotCommand(name: ".exit", description: "quit Antimatter", category: .searchSystem),
-        DotCommand(name: ".quit", description: "quit Antimatter (same as .exit)", category: .searchSystem),
-        DotCommand(name: ".help", description: "show the command reference", category: .searchSystem),
-        DotCommand(name: ".view", description: "read the current note without editing", category: .searchSystem),
+    /// One command family's single declaration: what completion teaches,
+    /// what `.help` prints, what return does (`action`), what the footer
+    /// previews (`preview`), and what an external caller may invoke
+    /// (`deepLinkHeads`). Everything that knows a command's shape reads from
+    /// `commandSpecs`, so a command cannot drift between surfaces — the
+    /// `.timerx` bug was exactly that drift: dispatch gated on
+    /// `hasPrefix(".timer")` while parsing gated on the whole word, so a
+    /// non-command got the timer usage hint instead of "Not a command".
+    struct CommandSpec {
+        /// What return does for a line in this family: the outcome, `.nothing`
+        /// to consume the line quietly, or nil to fall through to the next
+        /// family and then the shared date/unit/calculation fallbacks.
+        typealias ActionMatcher = @Sendable (_ trimmed: String, _ line: String, _ buffer: String?) -> LineAction?
+        /// The footer preview for the same line; nil falls through identically.
+        typealias PreviewMatcher = @Sendable (_ trimmed: String, _ line: String, _ buffer: String?) -> String?
+
+        /// Completion entries the family offers (drives `dotCommands`, hence help).
+        let completions: [DotCommand]
+        /// Heads an external caller (deep links, the loopback bridge) may use,
+        /// matched as whole words: the command head, or head plus first
+        /// argument (`.stopwatch cancel`). Empty means the family is not
+        /// externally callable at all — the rule for anything destructive
+        /// (delete, clear), disruptive (quit, paste), or side-effecting
+        /// beyond the app (export, translate).
+        let deepLinkHeads: [String]
+        let action: ActionMatcher
+        let preview: PreviewMatcher
+    }
+
+    /// The lowercased first word of a trimmed line: the only shape a command
+    /// head may be matched with. Prefix matching (`hasPrefix(".timer")`) let
+    /// `.timerx` into the timer family, where it got the wrong hint.
+    static func headWord(_ trimmed: String) -> String {
+        trimmed.prefix { !$0.isWhitespace }.lowercased()
+    }
+
+    /// A spec for a whole-line command with no arguments (`.new`, `.help`).
+    private static func exactSpec(
+        _ command: DotCommand,
+        deepLinkHeads: [String] = [],
+        outcome: LineAction,
+        previewText: String
+    ) -> CommandSpec {
+        let name = command.name
+        return CommandSpec(
+            completions: [command],
+            deepLinkHeads: deepLinkHeads,
+            action: { trimmed, _, _ in
+                trimmed.lowercased() == name ? outcome : nil
+            },
+            preview: { trimmed, _, _ in
+                trimmed.lowercased() == name ? previewText : nil
+            }
+        )
+    }
+
+    /// The registry. Order among families is presentation order (completion
+    /// and `.help`), not dispatch priority: every family's gate is exclusive
+    /// (an exact whole-line match, a word-boundary head, or `.translate`'s
+    /// line suffix), so no two families can claim the same line.
+    static let commandSpecs: [CommandSpec] = [
+        exactSpec(
+            DotCommand(name: ".new", description: "create a new, empty note", category: .noteManagement),
+            deepLinkHeads: ["\(IntentParser.commandPrefix)new"],
+            outcome: .newNote,
+            previewText: "⏎ creates a new, empty note"
+        ),
+        exactSpec(
+            DotCommand(name: ".clear", description: "clear the current note", category: .noteManagement),
+            outcome: .clearNote,
+            previewText: "⏎ clears the note"
+        ),
+        exactSpec(
+            DotCommand(name: ".switch", description: "switch to another note", category: .noteManagement),
+            deepLinkHeads: ["\(IntentParser.commandPrefix)switch"],
+            outcome: .showNoteSwitcher,
+            previewText: "⏎ switches to another note"
+        ),
+        exactSpec(
+            DotCommand(name: ".delete", description: "delete the current note", category: .noteManagement),
+            outcome: .deleteNote,
+            previewText: "⏎ deletes the note"
+        ),
+        CommandSpec(
+            completions: [
+                DotCommand(name: ".timer", description: "start a countdown — .timer <duration> [label]",
+                           snippet: ".timer <duration> ", category: .timers),
+                DotCommand(name: ".timer cancel all", description: "cancel every running timer",
+                           snippet: ".timer cancel all ", category: .timers),
+                DotCommand(name: ".timer list", description: "show running timers and leftovers",
+                           snippet: ".timer list ", category: .timers),
+            ],
+            deepLinkHeads: ["\(IntentParser.commandPrefix)timer"],
+            action: { trimmed, _, _ in
+                guard headWord(trimmed) == IntentParser.commandPrefix + "timer" else { return nil }
+                if IntentParser.isTimerCancel(trimmed) {
+                    return .cancelAllTimers
+                }
+                if trimmed.lowercased() == IntentParser.commandPrefix + "timer list" {
+                    return .listTimers
+                }
+                if let timer = IntentParser.parseTimer(trimmed) {
+                    return .startTimer(timer)
+                }
+                return .hint(".timer needs a duration — e.g. `.timer 25`")
+            },
+            preview: { trimmed, _, _ in
+                guard headWord(trimmed) == IntentParser.commandPrefix + "timer" else { return nil }
+                if trimmed.lowercased() == IntentParser.commandPrefix + "timer list" {
+                    return "⏎ lists running timers"
+                }
+                if IntentParser.isTimerCancel(trimmed) {
+                    return "⏎ cancels all running timers"
+                }
+                if IntentParser.parseTimer(trimmed) != nil {
+                    return "⏎ starts a timer"
+                }
+                return nil
+            }
+        ),
+        CommandSpec(
+            completions: [
+                DotCommand(name: ".stopwatch", description: "start a stopwatch — .stopwatch [label]",
+                           snippet: ".stopwatch ", category: .timers),
+                DotCommand(name: ".stopwatch cancel all", description: "cancel every running stopwatch",
+                           snippet: ".stopwatch cancel all ", category: .timers),
+                DotCommand(name: ".stopwatch list", description: "show stopwatch readings",
+                           snippet: ".stopwatch list ", category: .timers),
+            ],
+            deepLinkHeads: [
+                "\(IntentParser.commandPrefix)stopwatch",
+                "\(IntentParser.commandPrefix)stopwatch cancel",
+            ],
+            action: { trimmed, _, _ in
+                guard headWord(trimmed) == IntentParser.commandPrefix + "stopwatch" else { return nil }
+                if IntentParser.isStopwatchCancel(trimmed) {
+                    return .cancelStopwatches
+                }
+                if trimmed.lowercased() == IntentParser.commandPrefix + "stopwatch list" {
+                    return .listStopwatches
+                }
+                if IntentParser.stopwatchLabel(trimmed).lowercased().hasPrefix("cancel") {
+                    return .hint(".stopwatch cancel takes no further arguments")
+                }
+                return .startStopwatch(IntentParser.stopwatchLabel(trimmed))
+            },
+            preview: { trimmed, _, _ in
+                guard headWord(trimmed) == IntentParser.commandPrefix + "stopwatch" else { return nil }
+                if trimmed.lowercased() == IntentParser.commandPrefix + "stopwatch list" {
+                    return "⏎ lists stopwatches"
+                }
+                if IntentParser.isStopwatchCancel(trimmed) {
+                    return "⏎ cancels all stopwatches"
+                }
+                if IntentParser.isStopwatch(trimmed) {
+                    return "⏎ starts a stopwatch"
+                }
+                return nil
+            }
+        ),
+        CommandSpec(
+            completions: [
+                DotCommand(name: ".remind", description: "set a natural-language reminder",
+                           snippet: ".remind <what> <when> ", category: .timers),
+                DotCommand(name: ".reminder", description: "cancel reminders — .reminder cancel all",
+                           snippet: ".reminder cancel all ", category: .timers),
+                DotCommand(name: ".reminder list", description: "show pending reminders",
+                           snippet: ".reminder list ", category: .timers),
+                DotCommand(name: ".reminder cancel all", description: "cancel every pending reminder",
+                           snippet: ".reminder cancel all ", category: .timers),
+            ],
+            deepLinkHeads: [
+                "\(IntentParser.commandPrefix)remind",
+                "\(IntentParser.commandPrefix)reminder cancel",
+            ],
+            action: { trimmed, _, _ in
+                let head = headWord(trimmed)
+                guard head == IntentParser.commandPrefix + "remind"
+                    || head == IntentParser.commandPrefix + "reminder"
+                else { return nil }
+                if ReminderIntent.isCancelAll(trimmed) {
+                    return .cancelAllReminders
+                }
+                if trimmed.lowercased() == IntentParser.commandPrefix + "reminder list"
+                    || trimmed.lowercased() == IntentParser.commandPrefix + "remind list"
+                {
+                    return .listReminders
+                }
+                if let reminder = ReminderIntent.parse(trimmed) {
+                    return .startReminder(reminder)
+                }
+                return .hint(".remind needs a time and a message — e.g. `.remind in 10 mins stand up`")
+            },
+            preview: { trimmed, _, _ in
+                let head = headWord(trimmed)
+                guard head == IntentParser.commandPrefix + "remind"
+                    || head == IntentParser.commandPrefix + "reminder"
+                else { return nil }
+                if trimmed.lowercased() == IntentParser.commandPrefix + "reminder list"
+                    || trimmed.lowercased() == IntentParser.commandPrefix + "remind list"
+                {
+                    return "⏎ lists upcoming reminders"
+                }
+                if ReminderIntent.isCancelAll(trimmed) {
+                    return "⏎ cancels all reminders"
+                }
+                if let reminder = ReminderIntent.parse(trimmed) {
+                    return "⏎ reminder in \(ReminderCenter.format(reminder.date.timeIntervalSinceNow))"
+                }
+                return nil
+            }
+        ),
+        CommandSpec(
+            completions: [
+                DotCommand(name: ".pomodoro", description: "start a pomodoro cycle",
+                           snippet: ".pomodoro 25/5/4 ", category: .timers),
+            ],
+            deepLinkHeads: ["\(IntentParser.commandPrefix)pomodoro"],
+            action: { trimmed, _, _ in
+                guard headWord(trimmed) == IntentParser.commandPrefix + "pomodoro" else { return nil }
+                guard let pomodoro = IntentParser.parsePomodoro(trimmed) else {
+                    return .hint(".pomodoro needs a pattern — e.g. `.pomodoro 25/5/4`")
+                }
+                return .startPomodoro(workDuration: pomodoro.workDuration, breakDuration: pomodoro.breakDuration, cycles: pomodoro.cycles)
+            },
+            preview: { trimmed, _, _ in
+                IntentParser.parsePomodoro(trimmed) != nil ? "⏎ starts a pomodoro cycle" : nil
+            }
+        ),
+        exactSpec(
+            DotCommand(name: ".paste", description: "stream clipboard into the note", category: .noteManagement),
+            outcome: .startPasteStream,
+            previewText: "⏎ begins paste stream"
+        ),
+        CommandSpec(
+            completions: [
+                DotCommand(name: ".export notes", description: "send the note to Apple Notes", category: .noteManagement),
+                DotCommand(name: ".export obsidian", description: "save the note as markdown in a vault", category: .noteManagement),
+                DotCommand(name: ".export json", description: "save note + variable values as JSON", category: .noteManagement),
+                DotCommand(name: ".export csv", description: "save variable values as a CSV table", category: .noteManagement),
+            ],
+            // Export writes to other apps and the filesystem: never from a URL.
+            deepLinkHeads: [],
+            action: { trimmed, _, _ in
+                if trimmed.lowercased() == IntentParser.commandPrefix + "export" {
+                    return .hint("Export where? — `.export notes`, `.export obsidian`, `.export json`, or `.export csv`")
+                }
+                if let destination = exportDestination(from: trimmed) {
+                    return .export(destination)
+                }
+                return nil
+            },
+            preview: { trimmed, _, _ in
+                guard let destination = exportDestination(from: trimmed) else { return nil }
+                return "⏎ exports the note to \(destinationTitle(destination))"
+            }
+        ),
+        CommandSpec(
+            completions: [
+                DotCommand(name: ".sum", description: "sum numbers — .sum [10 20 30]",
+                           snippet: ".sum ", category: .math),
+                DotCommand(name: ".avg", description: "average numbers — .avg [10 20 30]",
+                           snippet: ".avg ", category: .math),
+                DotCommand(name: ".total", description: "sum numbers — same as `.sum`", category: .math),
+                DotCommand(name: ".average", description: "average numbers — same as `.avg`", category: .math),
+                DotCommand(name: ".count", description: "count numbers — .count [10 20 30]",
+                           snippet: ".count ", category: .math),
+            ],
+            // `.total` and `.average` stay typeable aliases but are not
+            // externally callable heads — the allowlist names only the
+            // canonical forms, as it always has.
+            deepLinkHeads: [
+                "\(IntentParser.commandPrefix)sum",
+                "\(IntentParser.commandPrefix)avg",
+                "\(IntentParser.commandPrefix)count",
+            ],
+            action: { trimmed, _, buffer in
+                guard let parts = AggregateKind.split(trimmed) else { return nil }
+                guard let buffer else { return .nothing }
+                let numbers = aggregateNumbers(forLine: trimmed, in: buffer)
+                guard !numbers.isEmpty else {
+                    let whereTo = parts.args.isEmpty
+                        ? "in the note to \(parts.kind.name)"
+                        : "after `\(parts.command)` to \(parts.kind.name)"
+                    return .hint("No numbers \(whereTo)")
+                }
+                return .insertAggregate(parts.kind)
+            },
+            preview: { trimmed, _, buffer in
+                guard let parts = AggregateKind.split(trimmed), let buffer,
+                      let value = parts.kind.value(of: aggregateNumbers(forLine: trimmed, in: buffer))
+                else { return nil }
+                return "⏎ \(trimmed) = \(IntentParser.format(value))"
+            }
+        ),
+        CommandSpec(
+            completions: [
+                DotCommand(name: ".time", description: "stamp the current time", category: .utilities),
+            ],
+            deepLinkHeads: ["\(IntentParser.commandPrefix)time"],
+            action: { trimmed, _, _ in
+                trimmed.lowercased() == IntentParser.commandPrefix + "time"
+                    ? .rewriteLine(TimeIntent.commit(trimmed))
+                    : nil
+            },
+            preview: { trimmed, _, _ in
+                trimmed.lowercased() == IntentParser.commandPrefix + "time"
+                    ? "⏎ .time = \(TimeIntent.format(Date()))"
+                    : nil
+            }
+        ),
+        exactSpec(
+            DotCommand(name: ".find", description: "open the find bar", category: .searchSystem),
+            deepLinkHeads: ["\(IntentParser.commandPrefix)find"],
+            outcome: .showFindPanel,
+            previewText: "⏎ opens the find bar"
+        ),
+        CommandSpec(
+            completions: [
+                DotCommand(name: ".replace", description: "global replace (`.replace find → replace`)",
+                           snippet: ".replace <find> → <replace> ", category: .searchSystem),
+            ],
+            deepLinkHeads: ["\(IntentParser.commandPrefix)replace"],
+            action: { trimmed, _, _ in
+                guard trimmed.lowercased().hasPrefix(IntentParser.commandPrefix + "replace ") else { return nil }
+                let rest = String(trimmed.dropFirst((IntentParser.commandPrefix + "replace ").count))
+                if let arrow = replaceArrowRange(in: rest) {
+                    let find = String(rest[..<arrow.lowerBound])
+                    let replace = String(rest[arrow.upperBound...])
+                    if !find.isEmpty {
+                        return .replaceAll(find: find, replacement: replace)
+                    }
+                }
+                return .hint(".replace needs a pattern — `.replace find → replace`")
+            },
+            preview: { trimmed, _, _ in
+                guard trimmed.lowercased().hasPrefix(IntentParser.commandPrefix + "replace ") else { return nil }
+                let rest = String(trimmed.dropFirst((IntentParser.commandPrefix + "replace ").count))
+                if let arrow = replaceArrowRange(in: rest) {
+                    let find = String(rest[..<arrow.lowerBound])
+                    let replace = String(rest[arrow.upperBound...])
+                    if !find.isEmpty {
+                        return "⏎ replace \"\(find)\" → \"\(replace)\""
+                    }
+                }
+                return nil
+            }
+        ),
+        exactSpec(
+            DotCommand(name: ".settings", description: "open the settings window", category: .searchSystem),
+            deepLinkHeads: ["\(IntentParser.commandPrefix)settings"],
+            outcome: .showSettings,
+            previewText: "⏎ opens the settings window"
+        ),
+        exactSpec(
+            DotCommand(name: ".debug", description: "show diagnostics and the event log", category: .searchSystem),
+            deepLinkHeads: ["\(IntentParser.commandPrefix)debug"],
+            outcome: .showDebug,
+            previewText: "⏎ shows diagnostics and the event log"
+        ),
+        exactSpec(
+            DotCommand(name: ".stats", description: "show your usage statistics", category: .searchSystem),
+            deepLinkHeads: ["\(IntentParser.commandPrefix)stats"],
+            outcome: .showStats,
+            previewText: "⏎ shows your usage statistics"
+        ),
+        CommandSpec(
+            completions: [
+                DotCommand(name: ".version", description: "show the app version", category: .searchSystem),
+            ],
+            deepLinkHeads: [],
+            action: { trimmed, _, _ in
+                trimmed.lowercased() == IntentParser.commandPrefix + "version"
+                    ? .rewriteLine("\(trimmed) = \(AppVersion.text)")
+                    : nil
+            },
+            preview: { trimmed, _, _ in
+                trimmed.lowercased() == IntentParser.commandPrefix + "version"
+                    ? "⏎ \(trimmed) = \(AppVersion.text)"
+                    : nil
+            }
+        ),
+        exactSpec(
+            DotCommand(name: ".vars", description: "list this note's :name = expression definitions", category: .utilities),
+            outcome: .showVariables,
+            previewText: "⏎ lists this note's variable definitions"
+        ),
+        CommandSpec(
+            completions: [
+                DotCommand(name: ".translate", description: "translate the text before it into your system language", category: .utilities),
+            ],
+            // Translation reaches the network: never from a URL.
+            deepLinkHeads: [],
+            action: { trimmed, _, _ in
+                // Inline command: the text before the token is the input, so
+                // the match is the line's *suffix*, not its head word.
+                isTranslationLine(trimmed) ? .translate : nil
+            },
+            preview: { trimmed, _, _ in
+                isTranslationLine(trimmed) ? "⏎ translates into \(TranslationCenter.systemLanguageName)" : nil
+            }
+        ),
+        CommandSpec(
+            completions: [
+                DotCommand(name: ".exit", description: "quit Antimatter", category: .searchSystem),
+                DotCommand(name: ".quit", description: "quit Antimatter (same as .exit)", category: .searchSystem),
+            ],
+            // Never externally callable: a URL that can quit the app is a
+            // denial of service. `.exit` was once allowlisted while `.quit`
+            // was not, and since the two are exact synonyms the policy was
+            // trivially bypassable; neither has heads now.
+            deepLinkHeads: [],
+            action: { trimmed, _, _ in
+                let head = trimmed.lowercased()
+                return head == IntentParser.commandPrefix + "exit"
+                    || head == IntentParser.commandPrefix + "quit" ? .quit : nil
+            },
+            preview: { trimmed, _, _ in
+                let head = trimmed.lowercased()
+                return head == IntentParser.commandPrefix + "exit"
+                    || head == IntentParser.commandPrefix + "quit" ? "⏎ quits Antimatter" : nil
+            }
+        ),
+        exactSpec(
+            DotCommand(name: ".help", description: "show the command reference", category: .searchSystem),
+            deepLinkHeads: ["\(IntentParser.commandPrefix)help"],
+            outcome: .showHelp,
+            previewText: "⏎ opens the reference (press q to close)"
+        ),
+        exactSpec(
+            DotCommand(name: ".view", description: "read the current note without editing", category: .searchSystem),
+            outcome: .showView,
+            previewText: "⏎ opens a read-only view (press q to return)"
+        ),
+        // Heads with no dot-command family of their own: `.date`, `.math`
+        // and `.currency` resolve through the shared date/unit/calculation
+        // fallbacks, and `.cancel` is accepted but lands on the
+        // unknown-command hint. They stay registered so the deep-link
+        // allowlist admits exactly the links it always has — the set is
+        // derived from here, never restated by hand.
+        CommandSpec(
+            completions: [],
+            deepLinkHeads: [
+                "\(IntentParser.commandPrefix)cancel",
+                "\(IntentParser.commandPrefix)date",
+                "\(IntentParser.commandPrefix)math",
+                "\(IntentParser.commandPrefix)currency",
+            ],
+            action: { _, _, _ in nil },
+            preview: { _, _, _ in nil }
+        ),
     ]
+
+    /// Completion vocabulary for typing after a `.` — teaches the commands
+    /// at the moment of use, with no chrome. Derived from `commandSpecs`, so
+    /// adding a family to the registry is the *only* way in, and no surface
+    /// can forget it.
+    static let dotCommands: [DotCommand] = commandSpecs.flatMap(\.completions)
+
+    /// Every head an external caller may invoke, collected from the registry.
+    /// `DeepLinkRouter`'s allowlist is this set — same source of truth.
+    nonisolated static let deepLinkSafeHeads: Set<String> = Set(commandSpecs.flatMap(\.deepLinkHeads))
 
     // MARK: Command completion
 
