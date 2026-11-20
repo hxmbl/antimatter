@@ -1232,10 +1232,13 @@ nonisolated enum IntentExecution {
                 return .insertAggregate(parts.kind)
             },
             preview: { trimmed, _, buffer in
-                guard let parts = AggregateKind.split(trimmed), let buffer,
-                      let value = parts.kind.value(of: aggregateNumbers(forLine: trimmed, in: buffer))
-                else { return nil }
-                return "⏎ \(trimmed) = \(IntentParser.format(value))"
+                guard let parts = AggregateKind.split(trimmed), let buffer else { return nil }
+                let numbers = aggregateNumbers(forLine: trimmed, in: buffer)
+                guard let value = parts.kind.value(of: numbers) else { return nil }
+                // The count earns its place in the footer: `.sum = 46` alone
+                // can't say whether it read two numbers or two hundred.
+                let noun = numbers.count == 1 ? "number" : "numbers"
+                return "⏎ \(trimmed) = \(IntentParser.format(value)) · \(numbers.count) \(noun)"
             }
         ),
         CommandSpec(

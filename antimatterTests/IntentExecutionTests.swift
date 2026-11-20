@@ -363,7 +363,7 @@ struct LivePreviewTests {
     }
 
     @Test func aggregatesPreviewOnlyWithNumbers() {
-        #expect(IntentExecution.preview(forLine: ".sum", in: "12\n34\n.sum") == "⏎ .sum = 46")
+        #expect(IntentExecution.preview(forLine: ".sum", in: "12\n34\n.sum") == "⏎ .sum = 46 · 2 numbers")
         #expect(IntentExecution.preview(forLine: ".sum", in: "just words") == nil)
     }
 
@@ -635,7 +635,7 @@ struct TimeReevaluationTests {
 struct InlineAggregateAndTimeTests {
 
     @Test func inlineSumWinsOverTheNote() {
-        #expect(IntentExecution.preview(forLine: ".sum 10 20 30", in: "999") == "⏎ .sum 10 20 30 = 60")
+        #expect(IntentExecution.preview(forLine: ".sum 10 20 30", in: "999") == "⏎ .sum 10 20 30 = 60 · 3 numbers")
         let commit = IntentExecution.aggregateCommit(
             .sum, keyword: ".sum 10 20 30",
             in: "999\n.sum 10 20 30",
@@ -644,22 +644,22 @@ struct InlineAggregateAndTimeTests {
     }
 
     @Test func inlineAvgAndCountWorkTheSameWay() {
-        #expect(IntentExecution.preview(forLine: ".avg 10 20 30", in: "999") == "⏎ .avg 10 20 30 = 20")
-        #expect(IntentExecution.preview(forLine: ".count 10 20 30", in: "999") == "⏎ .count 10 20 30 = 3")
-        #expect(IntentExecution.preview(forLine: ".total 10 20 30", in: "999") == "⏎ .total 10 20 30 = 60")
-        #expect(IntentExecution.preview(forLine: ".average 10 20 30", in: "999") == "⏎ .average 10 20 30 = 20")
+        #expect(IntentExecution.preview(forLine: ".avg 10 20 30", in: "999") == "⏎ .avg 10 20 30 = 20 · 3 numbers")
+        #expect(IntentExecution.preview(forLine: ".count 10 20 30", in: "999") == "⏎ .count 10 20 30 = 3 · 3 numbers")
+        #expect(IntentExecution.preview(forLine: ".total 10 20 30", in: "999") == "⏎ .total 10 20 30 = 60 · 3 numbers")
+        #expect(IntentExecution.preview(forLine: ".average 10 20 30", in: "999") == "⏎ .average 10 20 30 = 20 · 3 numbers")
     }
 
     @Test func bareAggregatesStillReadTheWholeNote() {
-        #expect(IntentExecution.preview(forLine: ".sum", in: "5\n10\n.sum") == "⏎ .sum = 15")
-        #expect(IntentExecution.preview(forLine: ".count", in: "5\n10\n.count") == "⏎ .count = 2")
+        #expect(IntentExecution.preview(forLine: ".sum", in: "5\n10\n.sum") == "⏎ .sum = 15 · 2 numbers")
+        #expect(IntentExecution.preview(forLine: ".count", in: "5\n10\n.count") == "⏎ .count = 2 · 2 numbers")
     }
 
     @Test func inlineArgumentsStayTiedToTheCommand() {
         // `sum` without the dot is prose even with numbers after it.
         #expect(IntentExecution.action(forLine: "sum 10 20", in: "sum 10 20") == .nothing)
         // Numbers elsewhere in a note don't leak into explicit arguments.
-        #expect(IntentExecution.preview(forLine: ".sum", in: "10\n.sum") == "⏎ .sum = 10")
+        #expect(IntentExecution.preview(forLine: ".sum", in: "10\n.sum") == "⏎ .sum = 10 · 1 number")
     }
 
     @Test func nonNumericArgumentsHint() {
