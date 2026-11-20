@@ -55,6 +55,10 @@ The `docs/` folder covers the note-processing engine:
 - **A smooth, quiet caret** — glides between positions on a faint, fading spline (like the iPhone's text cursor) instead of teleporting; still the same accessible insertion point underneath.
 - **Typing that stays literal** — punctuation is never silently rewritten while you type. URLs with `utm_*`, `fbclid`, `gclid` & friends lose their tracking parameters only when rendered as links.
 
+### One window, one store
+
+Antimatter has exactly one window. The retired ⌘N extra-window path is gone; on first launch after upgrading, each old per-window store (`window-*.json`) is folded into the main notes file, with the originals renamed aside (`*.json.migrated`), never deleted.
+
 ### Time
 
 - `.timer 5`, `.timer 90s`, `.timer 1h 20m stand up` — countdown chips float in the corner, a sound plays on completion, a notification carries the label (click it to reopen the pane). Unfinished timers survive relaunches. Max 30 days. `.timer cancel all` clears. `.timer list` shows running timers.

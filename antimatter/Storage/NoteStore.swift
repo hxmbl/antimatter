@@ -118,7 +118,50 @@ final class NoteStore: ObservableObject {
                 activeNoteID = notes[0].id
             }
         }
+        importLegacyWindowStores()
         isInitialized = true
+    }
+
+    /// Leftovers of the retired ⌘N extra-window feature: each extra window
+    /// wrote its own `window-<uuid>.json` next to `notes.json`. Fold their
+    /// notes and trash into the single store once, renaming each consumed
+    /// file aside (never deleting it) so a bad merge can still be recovered
+    /// by hand.
+    private func importLegacyWindowStores() {
+        let directory = fileURL.deletingLastPathComponent()
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else { return }
+        var importedNotes: [Note] = []
+        var importedTrash: [Note] = []
+        for entry in entries.sorted() where entry.hasPrefix("window-") && entry.hasSuffix(".json") {
+            let url = directory.appendingPathComponent(entry)
+            guard let data = Persistence.readData(from: url) else { continue }
+            let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data)
+            let windowNotes = snapshot?.notes ?? (try? JSONDecoder().decode([Note].self, from: data)) ?? []
+            for var note in windowNotes where !note.text.isEmpty {
+                let slotTaken = { (candidate: Note) in
+                    candidate.isSlot && candidate.slotIndex == note.slotIndex
+                }
+                if note.isSlot && (notes.contains(where: slotTaken) || importedNotes.contains(where: slotTaken)) {
+                    // A slot can only be pinned once; the note survives the
+                    // collision as an ordinary one.
+                    note.isSlot = false
+                    note.slotIndex = -1
+                }
+                importedNotes.append(note)
+            }
+            importedTrash.append(contentsOf: (snapshot?.trash ?? []).filter { !$0.text.isEmpty })
+            // Rename aside, never delete.
+            let retired = url.appendingPathExtension("migrated")
+            try? FileManager.default.removeItem(at: retired)
+            try? FileManager.default.moveItem(at: url, to: retired)
+        }
+        guard !importedNotes.isEmpty || !importedTrash.isEmpty else { return }
+        notes.append(contentsOf: importedNotes)
+        trash.append(contentsOf: importedTrash)
+        for note in importedNotes {
+            pendingPushIDs.insert(note.id)
+        }
+        flush()
     }
 
     nonisolated static func defaultFileURL() -> URL {

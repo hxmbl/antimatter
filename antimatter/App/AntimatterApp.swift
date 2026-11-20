@@ -35,8 +35,6 @@ struct AntimatterApp: App {
         .windowBackgroundDragBehavior(.enabled)
         .commands {
             CommandGroup(after: .newItem) {
-                Button("New Window") { WindowManager.shared.createNewWindow() }
-                    .keyboardShortcut("n", modifiers: .command)
                 Button("Close Window") { WindowManager.shared.closeKeyWindow() }
                     .keyboardShortcut("w", modifiers: .command)
                 Button("Reveal Notes in Finder") {
@@ -201,17 +199,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // `NoteStore.shared` is not the whole story: ⌘N windows each own a
-        // private store (`WindowManager.createNewWindow`), and those were only
-        // ever flushed from `NSWindow.willCloseNotification` — which AppKit posts
-        // when a window is *closed*, not for windows simply abandoned at
-        // termination. Typing in an extra window and quitting inside the 350 ms
-        // debounce lost those keystrokes.
+        // Quitting inside the 350 ms save debounce must not lose the last
+        // keystrokes: prune and flush the single store synchronously.
         NoteStore.shared.pruneEmptyNotes(keepActive: false)
         NoteStore.shared.flush()
-        for store in WindowManager.shared.liveStores where store !== NoteStore.shared {
-            store.flush()
-        }
         StatsCenter.shared.flush()
     }
 
