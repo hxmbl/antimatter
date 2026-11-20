@@ -580,52 +580,55 @@ struct TimeReevaluationTests {
         #expect(!IntentExecution.containsTimeExpressions("time"))
     }
 
-    @Test func staleTimeCommitsUpdatesCommittedTimeLines() {
-        let now = Date()
-        let earlier = now.addingTimeInterval(-120)
-        let text = ".time = \(TimeIntent.format(earlier))"
-        let commits = IntentExecution.staleTimeCommits(in: text, now: now)
+    /// The clock is render-only now: instead of rewriting `.time = <stamp>`
+    /// to the current minute, normalization strips the stored stamp to bare
+    /// `.time` once, and the ghost keeps the line live.
+    @Test func timeNormalizationStripsStoredStamps() {
+        let text = ".time = \(TimeIntent.format(Date().addingTimeInterval(-120)))"
+        let commits = IntentExecution.timeNormalizationCommits(in: text)
         #expect(commits.count == 1)
-        #expect(commits.first?.replacement == ".time = \(TimeIntent.format(now))")
+        #expect(commits.first?.replacement == ".time")
     }
 
-    @Test func staleTimeCommitsIgnoresUncommittedTimeLines() {
-        let text = ".time"
-        let commits = IntentExecution.staleTimeCommits(in: text)
-        #expect(commits.isEmpty, "Uncommitted .time should not generate commits")
+    @Test func timeNormalizationIgnoresBareTimeLines() {
+        #expect(IntentExecution.timeNormalizationCommits(in: ".time").isEmpty,
+                "A bare .time is already normalized")
     }
 
-    @Test func staleTimeCommitsIgnoresNonTimeLines() {
-        let text = ".timer 5\n.sum\n384 * 27 = 10368"
-        let commits = IntentExecution.staleTimeCommits(in: text)
-        #expect(commits.isEmpty, "Non-.time lines should not generate time commits")
+    @Test func timeNormalizationIgnoresNonTimeLines() {
+        let text = ".timer 5\n.sum\n384 * 27 = 10368\n:time = 4"
+        #expect(IntentExecution.timeNormalizationCommits(in: text).isEmpty,
+                "Non-.time lines should not generate normalization commits")
     }
 
-    @Test func staleTimeCommitsPreservesIndentation() {
-        let now = Date()
-        let text = "  .time = \(TimeIntent.format(now.addingTimeInterval(-120)))"
-        let commits = IntentExecution.staleTimeCommits(in: text, now: now)
+    @Test func timeNormalizationPreservesIndentation() {
+        let text = "  .time = \(TimeIntent.format(Date().addingTimeInterval(-120)))"
+        let commits = IntentExecution.timeNormalizationCommits(in: text)
         #expect(commits.count == 1)
-        #expect(commits.first?.replacement.hasPrefix("  .time = ") == true)
+        #expect(commits.first?.replacement == "  .time")
     }
 
-    @Test func staleTimeCommitsHandlesMultipleTimeLines() {
-        let now = Date()
-        let stamp = TimeIntent.format(now.addingTimeInterval(-120))
+    @Test func timeNormalizationHandlesMultipleTimeLines() {
+        let stamp = TimeIntent.format(Date().addingTimeInterval(-120))
         let text = ".time = \(stamp)\nsome text\n.time = \(stamp)"
-        let commits = IntentExecution.staleTimeCommits(in: text, now: now)
-        #expect(commits.count == 2)
+        #expect(IntentExecution.timeNormalizationCommits(in: text).count == 2)
     }
 
-    @Test func staleTimeCommitsHandlesMixedContent() {
-        let now = Date()
-        let stamp = TimeIntent.format(now.addingTimeInterval(-120))
+    @Test func timeNormalizationHandlesMixedContent() {
+        let stamp = TimeIntent.format(Date().addingTimeInterval(-120))
         let text = ".timer 5\n.time = \(stamp)\n384 * 27 = 10368\n.time = \(stamp)"
-        let commits = IntentExecution.staleTimeCommits(in: text, now: now)
+        let commits = IntentExecution.timeNormalizationCommits(in: text)
         #expect(commits.count == 2)
         for commit in commits {
-            #expect(commit.replacement.hasPrefix(".time = "))
+            #expect(commit.replacement == ".time")
         }
+    }
+
+    @Test func normalizedNotesStayUntouchedByTheClock() {
+        // The regression this replaces: a committed `.time` rewrote the note
+        // every minute. After normalization there is nothing left to commit,
+        // whatever the clock says.
+        #expect(IntentExecution.timeNormalizationCommits(in: ".time\nnotes").isEmpty)
     }
 }
 
@@ -670,20 +673,22 @@ struct InlineAggregateAndTimeTests {
         #expect(message.contains("No numbers"))
     }
 
-    @Test func timeCommandRewritesTheLine() {
-        guard case .rewriteLine(let replacement) = IntentExecution.action(forLine: ".time", in: "") else {
-            Issue.record(".time should rewrite the line")
-            return
-        }
-        #expect(replacement.hasPrefix(".time = "))
-        #expect(replacement.range(of: #":\d{2} (AM|PM)$"#, options: .regularExpression) != nil)
+    @Test func bareTimeLineIsLeftAlone() {
+        // The live clock is a render-only ghost; return just lands a newline.
+        #expect(IntentExecution.action(forLine: ".time", in: "") == .nothing)
     }
 
-    @Test func timeFormatAndIndentSurvive() {
+    @Test func storedStampIsNormalizedOnTouch() {
+        #expect(IntentExecution.action(forLine: ".time = 2:31 PM", in: "") == .rewriteLine(".time"))
+        #expect(IntentExecution.action(forLine: "  .time = 2:31 PM", in: "") == .rewriteLine("  .time"))
+    }
+
+    @Test func timeFormatAndNormalizationSurvive() {
         let fixed = Date(timeIntervalSince1970: 0)
         let stamp = TimeIntent.format(fixed)
         #expect(stamp.range(of: #"^\d{1,2}:\d{2} (AM|PM)$"#, options: .regularExpression) != nil)
-        #expect(TimeIntent.commit("  .time", now: fixed).hasPrefix("  .time = "))
+        #expect(TimeIntent.normalized("  .time = \(stamp)") == "  .time")
+        #expect(TimeIntent.normalized(".time") == nil)
     }
 
     @Test func timeAppearsInDiscovery() {

@@ -114,3 +114,57 @@ struct VariableGhostTests {
         #expect(view.ghostResolveCountForTesting == 0)
     }
 }
+
+/// `.time` lines ghost the live clock: the note stores bare `.time` and the
+/// current time is formatted at draw time, so the document is never
+/// rewritten to stay current (the old per-minute self-rewrite).
+struct TimeGhostTests {
+
+    private func laidOutView(text: String) -> PaneTextView {
+        let view = PaneTextView()
+        view.frame = NSRect(x: 0, y: 0, width: 400, height: 4000)
+        view.font = .systemFont(ofSize: 13)
+        view.textContainerInset = NSSize(width: 0, height: 0)
+        view.isHorizontallyResizable = false
+        if let container = view.textContainer {
+            container.widthTracksTextView = true
+            container.containerSize = NSSize(width: view.frame.width, height: 0)
+            container.lineFragmentPadding = 0
+        }
+        view.string = text
+        if let container = view.textContainer {
+            view.layoutManager?.ensureLayout(for: container)
+        }
+        return view
+    }
+
+    @Test func bareTimeLineGhostsTheClock() {
+        let view = laidOutView(text: "notes\n.time\nmore")
+        let ghosts = view.resolveGhostsForTesting()
+        #expect(ghosts.count == 1)
+        let ghost = ghosts.first
+        #expect(ghost?.text.range(of: #"^\d{1,2}:\d{2} (AM|PM)$"#, options: .regularExpression) != nil,
+                "the ghost should be the live clock, got \(ghost?.text ?? "nil")")
+    }
+
+    @Test func ghostSitsOnTheTimeLine() {
+        let note = "notes\n.time\nmore"
+        let view = laidOutView(text: note)
+        let ghosts = view.resolveGhostsForTesting()
+        let lines = ghosts.map { ((note as NSString).substring(with: $0.lineRange) as NSString)
+            .trimmingCharacters(in: .whitespacesAndNewlines) }
+        #expect(lines == [".time"])
+    }
+
+    @Test func unnormalizedStampLineStillGhosts() {
+        // An older build's `.time = 2:31 PM` ghosts the live clock too; the
+        // pane strips the stored stamp separately, once.
+        let view = laidOutView(text: ".time = 2:31 PM")
+        #expect(view.resolveGhostsForTesting().count == 1)
+    }
+
+    @Test func nonTimeLinesDoNotGhostTheClock() {
+        let view = laidOutView(text: "time\n.timer 5\n.timepiece\n:time = 4")
+        #expect(view.resolveGhostsForTesting().isEmpty)
+    }
+}

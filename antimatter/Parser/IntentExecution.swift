@@ -410,29 +410,23 @@ nonisolated enum IntentExecution {
         return false
     }
 
-    /// Committed `.time` lines whose stored timestamp has drifted (minute boundary crossed).
-    static func staleTimeCommits(in text: String, now: Date = Date()) -> [Commit] {
+    /// Legacy `.time = <stamp>` lines to strip back to bare `.time`.
+    /// Older builds stored the wall-clock stamp in the note and rewrote it
+    /// every minute; the clock is a render-only ghost now, so the stored
+    /// answer is normalized away once and the document is never touched by
+    /// time again.
+    static func timeNormalizationCommits(in text: String) -> [Commit] {
         let ns = text as NSString
         var commits: [Commit] = []
-        let newTimestamp = TimeIntent.format(now)
         for fullRange in VariableTable.lineRanges(ns) {
             guard let lineRange = strippedLineRange(fullRange, in: ns) else { continue }
             let line = ns.substring(with: lineRange)
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard trimmed.contains(" = ") else { continue }
-
-            let parts = trimmed.components(separatedBy: " = ")
-            guard parts.count >= 2 else { continue }
-            let command = parts[0].trimmingCharacters(in: .whitespaces)
-            guard command.lowercased() == IntentParser.commandPrefix + "time" else { continue }
-
-            let storedTimestamp = parts[1].trimmingCharacters(in: .whitespaces)
-            guard newTimestamp != storedTimestamp else { continue }
-
+            guard trimmed.lowercased().hasPrefix(IntentParser.commandPrefix + "time =") else { continue }
             let indent = String(line.prefix(while: { $0 == " " || $0 == "\t" }))
             commits.append(Commit(
                 range: lineRange,
-                replacement: indent + command + " = " + newTimestamp))
+                replacement: indent + IntentParser.commandPrefix + "time"))
         }
         return commits
     }
@@ -1246,15 +1240,26 @@ nonisolated enum IntentExecution {
                 DotCommand(name: ".time", description: "stamp the current time", category: .utilities),
             ],
             deepLinkHeads: ["\(IntentParser.commandPrefix)time"],
-            action: { trimmed, _, _ in
-                trimmed.lowercased() == IntentParser.commandPrefix + "time"
-                    ? .rewriteLine(TimeIntent.commit(trimmed))
-                    : nil
+            action: { trimmed, line, _ in
+                let lower = trimmed.lowercased()
+                guard lower == IntentParser.commandPrefix + "time"
+                    || lower.hasPrefix(IntentParser.commandPrefix + "time =")
+                else { return nil }
+                // The clock is a render-only ghost now: bare `.time` is left
+                // alone (return just lands a newline), and a stored stamp
+                // from an older build is stripped on touch rather than
+                // rewritten every minute.
+                if let normalized = TimeIntent.normalized(line) {
+                    return .rewriteLine(normalized)
+                }
+                return .nothing
             },
             preview: { trimmed, _, _ in
-                trimmed.lowercased() == IntentParser.commandPrefix + "time"
-                    ? "⏎ .time = \(TimeIntent.format(Date()))"
-                    : nil
+                let lower = trimmed.lowercased()
+                guard lower == IntentParser.commandPrefix + "time"
+                    || lower.hasPrefix(IntentParser.commandPrefix + "time =")
+                else { return nil }
+                return "⏎ .time shows the live time"
             }
         ),
         exactSpec(

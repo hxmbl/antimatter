@@ -641,7 +641,7 @@ struct PaneEditor: NSViewRepresentable {
             minuteBoundaryTimer = timer
         }
 
-        /// Runs `.time` reevaluation and reschedules for the next minute.
+        /// Runs `.time` housekeeping and reschedules for the next minute.
         private func runTimeReevaluation(_ textView: NSTextView) {
             defer {
                 if IntentExecution.containsTimeExpressions(textView.string) {
@@ -652,10 +652,12 @@ struct PaneEditor: NSViewRepresentable {
                 }
             }
             guard !autoRewritesSuppressed else { return }
-            let timeCommits = IntentExecution.staleTimeCommits(in: textView.string)
-            if !timeCommits.isEmpty {
-                applyCommits(timeCommits, to: textView)
-            }
+            // Older builds stamped the time into the note; strip that once.
+            // After that the clock is render-only: the minute tick just
+            // redraws the ghost, and the document — its undo stack, its
+            // modifiedAt, its sync dirty state — is never touched by time.
+            applyCommits(IntentExecution.timeNormalizationCommits(in: textView.string), to: textView)
+            textView.setNeedsDisplay(textView.bounds)
         }
 
         /// Returns true when the intent consumed the return key.
