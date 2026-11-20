@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import CloudKit
 import UserNotifications
 
 // MARK: - App entry point
@@ -175,6 +176,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = StatsCenter.shared
         CurrencyCenter.shared.activate()
         LocalBridge.shared.start()
+        // Silent pushes from the Note subscription only arrive when the app
+        // is registered for remote notifications.
+        NSApplication.shared.registerForRemoteNotifications()
+        Task { @MainActor in
+            await CloudKitSync.shared.registerSubscriptionIfNeeded()
+            await CloudKitSync.shared.pull()
+        }
+    }
+
+    /// Silent push from the Note CKQuerySubscription: another device pushed
+    /// a change, so pull it in now instead of waiting for the next pane-show.
+    func application(_ application: NSApplication, didReceiveRemoteNotification userInfo: [String: Any]) {
+        guard CKNotification(fromRemoteNotificationDictionary: userInfo) is CKQueryNotification else { return }
         Task { @MainActor in
             await CloudKitSync.shared.pull()
         }

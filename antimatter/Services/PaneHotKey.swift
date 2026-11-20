@@ -197,6 +197,11 @@ final class PaneHotKey {
             let dockPanes = manager.panes.filter { !($0 is NSPanel) }
             if let window = dockPanes.last {
                 window.makeKeyAndOrderFront(nil)
+                // The menu-bar path pulls on show from showPanel(); the dock
+                // path shows its window directly, so hook it here.
+                Task { @MainActor in
+                    await CloudKitSync.shared.pullOnShow()
+                }
             } else {
                 openWindow?()
             }

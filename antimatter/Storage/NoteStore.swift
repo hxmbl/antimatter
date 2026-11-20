@@ -24,6 +24,27 @@ final class NoteStore: ObservableObject {
     @Published var saveError: Error?
     @Published var saveErrorToken: Int = 0
 
+    /// Notes edited locally since the last successful push, and ids trashed
+    /// since then. Per-note dirty tracking is what lets a push send only
+    /// what changed instead of re-uploading every note on every flush — and
+    /// it is how a pull tells "changed locally" when judging a genuine
+    /// conflict (`CloudKitSync.merge`).
+    private(set) var pendingPushIDs: Set<UUID> = []
+    private(set) var pendingDeleteIDs: Set<UUID> = []
+
+    func markPendingPush(for id: UUID) { pendingPushIDs.insert(id) }
+    func clearPendingPush(for id: UUID) { pendingPushIDs.remove(id) }
+
+    /// Clears dirty flags after a successful push. A note re-edited while
+    /// its push was in flight keeps its flag: the pushed stamp no longer
+    /// matches the live note, so the newer edit still owes iCloud a record.
+    func markPushed(_ pushed: [(id: UUID, modifiedAt: Date)], deleted: Set<UUID>) {
+        for entry in pushed where notes.first(where: { $0.id == entry.id })?.modifiedAt == entry.modifiedAt {
+            pendingPushIDs.remove(entry.id)
+        }
+        pendingDeleteIDs.subtract(deleted)
+    }
+
     private let fileURL: URL
     private let syncEnabled: Bool
     private var saveTask: Task<Void, Never>?
@@ -54,6 +75,7 @@ final class NoteStore: ObservableObject {
                 notes.insert(newValue, at: 0)
                 activeNoteID = newValue.id
             }
+            pendingPushIDs.insert(newValue.id)
             scheduleSave()
         }
     }
@@ -111,6 +133,7 @@ final class NoteStore: ObservableObject {
         let note = Note(text: text)
         notes.insert(note, at: 0)
         activeNoteID = note.id
+        pendingPushIDs.insert(note.id)
         scheduleSave()
         return note
     }
@@ -126,6 +149,7 @@ final class NoteStore: ObservableObject {
             note.text.isEmpty && !note.isSlot && (note.id != activeID || !keepActive)
         }
         guard notes.contains(where: prune) else { return }
+        pendingPushIDs.subtract(notes.filter(prune).map(\.id))
         notes.removeAll(where: prune)
         if !notes.contains(where: { $0.id == activeNoteID }) {
             activeNoteID = notes.first?.id ?? create().id
@@ -139,6 +163,8 @@ final class NoteStore: ObservableObject {
         var deleted = removed
         deleted.modifiedAt = Date()
         trash.append(deleted)
+        pendingPushIDs.remove(note.id)
+        pendingDeleteIDs.insert(note.id)
         // Cap trash at 200 entries to prevent unbounded memory growth.
         if trash.count > 200 {
             trash.removeFirst(trash.count - 200)
@@ -155,6 +181,8 @@ final class NoteStore: ObservableObject {
         let restored = trash.remove(at: idx)
         notes.insert(restored, at: 0)
         activeNoteID = restored.id
+        pendingDeleteIDs.remove(restored.id)
+        pendingPushIDs.insert(restored.id)
         scheduleSave()
     }
 
@@ -167,6 +195,7 @@ final class NoteStore: ObservableObject {
         guard (0...8).contains(index) else { return }
         if let existing = notes.first(where: { $0.isSlot && $0.slotIndex == index }) {
             notes.removeAll { $0.id == existing.id }
+            pendingPushIDs.remove(existing.id)
         } else if let existing = trash.first(where: { $0.isSlot && $0.slotIndex == index }) {
             trash.removeAll { $0.id == existing.id }
         }
@@ -175,6 +204,7 @@ final class NoteStore: ObservableObject {
         slotNote.slotIndex = index
         if let idx = notes.firstIndex(where: { $0.id == note.id }) {
             notes[idx] = slotNote
+            pendingPushIDs.insert(note.id)
         }
         // The `removeAll` above drops the note that previously held this slot,
         // and that can be the *active* one — pinning slot 2 onto a different
@@ -270,10 +300,13 @@ final class NoteStore: ObservableObject {
 
     func syncIfNeeded() {
         guard syncEnabled, CloudKitSync.shared.isEnabled else { return }
-        let toSync = notes
-        let void = trash
-        Task { @MainActor in
-            await CloudKitSync.shared.sync(notes: toSync, trash: void)
+        let dirtyNotes = notes.filter { pendingPushIDs.contains($0.id) }
+        let deletions = pendingDeleteIDs
+        guard !dirtyNotes.isEmpty || !deletions.isEmpty else { return }
+        let stamps = dirtyNotes.map { (id: $0.id, modifiedAt: $0.modifiedAt) }
+        Task { @MainActor [weak self] in
+            let pushed = await CloudKitSync.shared.sync(notes: dirtyNotes, deleting: Array(deletions))
+            if pushed { self?.markPushed(stamps, deleted: deletions) }
         }
     }
 

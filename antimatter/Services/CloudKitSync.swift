@@ -45,6 +45,33 @@ final class CloudKitSync: ObservableObject {
     private let database: CKDatabase?
     private var encryptionKey: SymmetricKey?
 
+    /// The client-stamped `modifiedAt` of the version of each note this
+    /// device last pushed to or applied from iCloud. A fetched record whose
+    /// `modifiedAt` differs from the remembered stamp carries changes this
+    /// device has not seen; equality means the record holds nothing new.
+    /// Persisted so a relaunch doesn't make every record look changed.
+    private var lastSyncedModifiedAt: [UUID: Date] = CloudKitSync.loadLastSynced()
+
+    /// Wall-clock of the last pull started from `pullOnShow`, which the
+    /// hotkey can trigger many times a minute; each pull is a network fetch.
+    private var lastPullAt: Date?
+
+    private static func loadLastSynced() -> [UUID: Date] {
+        let raw = UserDefaults.standard.dictionary(forKey: "sync.lastSyncedModifiedAt") ?? [:]
+        var out: [UUID: Date] = [:]
+        for (key, value) in raw {
+            if let id = UUID(uuidString: key), let date = value as? Date {
+                out[id] = date
+            }
+        }
+        return out
+    }
+
+    private func saveLastSynced() {
+        let raw = lastSyncedModifiedAt.reduce(into: [String: Date]()) { $0[$1.key.uuidString] = $1.value }
+        UserDefaults.standard.set(raw, forKey: "sync.lastSyncedModifiedAt")
+    }
+
     /// Reads signed entitlements directly so an unprovisioned build degrades
     /// to a surfaced error instead of crashing.
     private static func iCloudContainerIsSignedIn() -> Bool {
@@ -199,12 +226,17 @@ final class CloudKitSync: ObservableObject {
         }
     }
 
-    /// Pushes all notes and deletions in one pass.
-    func sync(notes: [Note], trash: [Note]) async {
-        guard isEnabled else { return }
+    /// Pushes the given notes and deletions in one pass. `notes` is the
+    /// caller's dirty subset, not the whole store — an untouched note is
+    /// never re-uploaded. Returns true only when every record landed, so the
+    /// caller clears its dirty tracking; on failure nothing is cleared and
+    /// the next flush retries.
+    @discardableResult
+    func sync(notes: [Note], deleting deletedIDs: [UUID]) async -> Bool {
+        guard isEnabled else { return false }
         guard let database else {
             syncStatus = .error("iCloud unavailable")
-            return
+            return false
         }
         syncStatus = .syncing
 
@@ -212,12 +244,17 @@ final class CloudKitSync: ObservableObject {
             let encryptedNotes: [(id: UUID, createdAt: Date, modifiedAt: Date, isSlot: Bool, slotIndex: Int, title: String, encryptedText: Data?)] = try notes.map { note in
                 (note.id, note.createdAt, note.modifiedAt, note.isSlot, note.slotIndex, note.title, try encrypt(note.text))
             }
-            let noteIDsToDelete = trash.map(\.id)
-            try await Self.pushNotes(encryptedNotes, deleting: noteIDsToDelete, database: database)
+            try await Self.pushNotes(encryptedNotes, deleting: deletedIDs, database: database)
             lastSyncDate = Date()
             syncStatus = .idle
+            for note in notes {
+                lastSyncedModifiedAt[note.id] = note.modifiedAt
+            }
+            saveLastSynced()
+            return true
         } catch {
             syncStatus = .error(error.localizedDescription)
+            return false
         }
     }
 
@@ -308,10 +345,62 @@ final class CloudKitSync: ObservableObject {
         }
     }
 
+    /// What a pull should do with one remotely fetched note.
+    enum RemoteMerge: Equatable {
+        /// No local copy and not deleted here: insert it.
+        case insert
+        /// A version this device has not synced and the local copy is clean:
+        /// apply the remote version over it.
+        case apply
+        /// Both sides changed since the last sync: the server copy wins the
+        /// live slot and the local version is kept as a conflict copy.
+        case conflict
+        /// Nothing to do (already synced, or the local trash/push wins).
+        case skip
+    }
+
+    /// The merge decision for one fetched note, pure for tests.
+    ///
+    /// Ordering comes from the server, never from comparing two devices'
+    /// clocks: a record the server already holds is by definition newer than
+    /// an unpushed local edit. So when both sides changed since the last
+    /// sync, the remote version takes the live slot and the local version is
+    /// preserved as a conflict copy — divergence is never silently lost, and
+    /// no decision ever depends on whether two client clocks agree.
+    nonisolated static func merge(
+        remoteModifiedAt: Date,
+        localModifiedAt: Date?,
+        trashed: Bool,
+        dirty: Bool,
+        lastSynced: Date?
+    ) -> RemoteMerge {
+        // The local trash wins deletions: a note trashed here must not be
+        // resurrected by a pull, and its remote record is deleted on push.
+        if trashed { return .skip }
+        guard let localModifiedAt else { return .insert }
+        if let lastSynced {
+            // Bookkept note: equality means this device has already seen
+            // exactly this version, whatever any clock says.
+            if remoteModifiedAt == lastSynced { return .skip }
+            return dirty ? .conflict : .apply
+        }
+        // No sync bookkeeping yet (install upgraded from a version without
+        // stamps): fall back to the legacy modifiedAt comparison. This
+        // comparison is between the client stamp in the record and the local
+        // note, not between two live client clocks, and only ever runs once
+        // per note before the stamp is written.
+        if remoteModifiedAt > localModifiedAt {
+            return dirty ? .conflict : .apply
+        }
+        return .skip
+    }
+
     /// The pull half of sync: fetches iCloud notes and merges them into the
-    /// store. Local wins on tie, newer `modifiedAt` wins on conflict;
-    /// anything iCloud has that we don't is added — unless the note is in
-    /// the local trash, in which case the local deletion wins.
+    /// store. Anything iCloud has that we don't is added; a version this
+    /// device has not synced applies over a clean local copy; a genuine
+    /// divergence (both sides changed since the last sync) resolves to the
+    /// server copy in the live slot plus the local version filed as a
+    /// conflict copy; the local trash wins deletions.
     func pull() async {
         guard isEnabled else { return }
         let remote = await fetchNotes()
@@ -319,26 +408,64 @@ final class CloudKitSync: ObservableObject {
         let store = NoteStore.shared
         let trashedIDs = Set(store.trash.map(\.id))
         var merged = store.notes
+        var conflictCopies: [Note] = []
+        var changed = false
         for incoming in remote {
-            let note = Note(
-                id: incoming.id, text: incoming.text,
-                createdAt: incoming.createdAt, modifiedAt: incoming.modifiedAt,
-                isSlot: incoming.isSlot, slotIndex: incoming.slotIndex)
-            if let idx = merged.firstIndex(where: { $0.id == incoming.id }) {
-                if incoming.modifiedAt > merged[idx].modifiedAt {
+            let idx = merged.firstIndex(where: { $0.id == incoming.id })
+            let decision = Self.merge(
+                remoteModifiedAt: incoming.modifiedAt,
+                localModifiedAt: idx.map { merged[$0].modifiedAt },
+                trashed: trashedIDs.contains(incoming.id),
+                dirty: store.pendingPushIDs.contains(incoming.id),
+                lastSynced: lastSyncedModifiedAt[incoming.id]
+            )
+            switch decision {
+            case .skip:
+                continue
+            case .insert, .apply, .conflict:
+                let note = Note(
+                    id: incoming.id, text: incoming.text,
+                    createdAt: incoming.createdAt, modifiedAt: incoming.modifiedAt,
+                    isSlot: incoming.isSlot, slotIndex: incoming.slotIndex)
+                if let idx {
+                    if decision == .conflict {
+                        let local = merged[idx]
+                        // The losing side of a genuine divergence, kept as its
+                        // own note instead of evaporating. A fresh id means it
+                        // syncs as an independent note on the next push, and a
+                        // "Conflict copy" first line makes it visible in the
+                        // switcher instead of lurking as a duplicate.
+                        conflictCopies.append(Note(
+                            text: "Conflict copy\n" + local.text,
+                            createdAt: local.createdAt, modifiedAt: Date()))
+                    }
                     merged[idx] = note
+                } else {
+                    merged.insert(note, at: 0)
                 }
-            } else if !trashedIDs.contains(incoming.id) {
-                merged.insert(note, at: 0)
+                // The applied version is now exactly what the server holds,
+                // so any local dirty flag for the old version is settled.
+                store.clearPendingPush(for: incoming.id)
+                lastSyncedModifiedAt[incoming.id] = incoming.modifiedAt
+                changed = true
             }
         }
+        for copy in conflictCopies {
+            merged.insert(copy, at: 0)
+            store.markPendingPush(for: copy.id)
+        }
+        guard changed else { return }
         store.notes = merged
+        saveLastSynced()
         // A merge replaces the whole stack, so re-assert the invariant the rest
         // of the app depends on: `activeNoteID` names a note that is in `notes`.
         // Without this a merge can leave the pointer dangling, and every later
         // keystroke would target a note that no longer exists.
         store.repairActiveNotePointer()
         store.flush()
+        // A conflict copy is a brand-new local note; push it now rather than
+        // waiting for the next local edit to wake the sync pass.
+        if !conflictCopies.isEmpty { store.syncIfNeeded() }
     }
 
     func deleteNote(_ noteID: UUID) async throws {
@@ -370,7 +497,48 @@ final class CloudKitSync: ObservableObject {
         UserDefaults.standard.set(isEnabled, forKey: "sync.enabled")
         if isEnabled {
             syncStatus = .idle
+            Task { @MainActor in
+                await registerSubscriptionIfNeeded()
+                await pull()
+            }
         }
+    }
+
+    /// The silent-push subscription id for remote Note changes.
+    private static let subscriptionID = "antimatter.note-changes"
+
+    /// Registers the CKQuerySubscription once per install, so a push from
+    /// another device wakes a pull here instead of waiting for the next
+    /// pane-show. Silent (`shouldSendContentAvailable`, no alert UI): sync
+    /// must never surface a system notification.
+    func registerSubscriptionIfNeeded() async {
+        guard isEnabled, let database else { return }
+        guard !UserDefaults.standard.bool(forKey: "sync.subscriptionRegistered") else { return }
+        let subscription = CKQuerySubscription(
+            recordType: "Note",
+            predicate: NSPredicate(value: true),
+            subscriptionID: Self.subscriptionID,
+            options: [.firesOnRecordCreation, .firesOnRecordUpdate, .firesOnRecordDeletion]
+        )
+        let info = CKSubscription.NotificationInfo()
+        info.shouldSendContentAvailable = true
+        subscription.notificationInfo = info
+        do {
+            try await database.save(subscription)
+            UserDefaults.standard.set(true, forKey: "sync.subscriptionRegistered")
+        } catch {
+            DebugLog.log("Failed to register sync subscription: \(error.localizedDescription)")
+        }
+    }
+
+    /// Pull on pane-show, throttled: the hotkey can fire many times a
+    /// minute and each pull is a network fetch, so shows within the window
+    /// share one pull.
+    func pullOnShow() async {
+        guard isEnabled else { return }
+        if let lastPullAt, Date().timeIntervalSince(lastPullAt) < 15 { return }
+        lastPullAt = Date()
+        await pull()
     }
 }
 
