@@ -2,8 +2,11 @@ import AppKit
 import Foundation
 
 
-/// Renders Markdown styling to an NSTextView. Selection changes never alter
-/// the document's glyph attributes, so caret movement cannot reflow glyphs.
+/// Renders Markdown styling to an NSTextView. Syntax markers collapse
+/// everywhere except the caret's own line, where they stay visible for
+/// editing. The reveal never raises a line's height — revealed markers are
+/// capped at the line's content size — so caret movement cannot reflow or
+/// jitter any other line.
 final class MarkdownHighlighter {
     /// Heading spacing shared by the renderer and the typing attributes, so a
     /// character typed into a heading already carries the paragraph style the
@@ -12,6 +15,10 @@ final class MarkdownHighlighter {
     static let headingSpacingAfter: CGFloat = 3
 
     private var source = ""
+    /// The line whose syntax markers the last render revealed, as a newline
+    /// count before the caret. `refresh` re-renders when this changes even
+    /// though the text itself is untouched.
+    private var revealedLineIndex: Int?
     /// The appearance the last render was done for. `refresh` skips work when the
     /// text has not changed, but code-block colours are picked from the live
     /// `NSApp.effectiveAppearance` — so a light/dark switch whose theme happens to
@@ -42,6 +49,14 @@ final class MarkdownHighlighter {
         let elements = Markdown.parse(text)
         let headings = elements.compactMap { Heading(element: $0) }
         self.source = text
+
+        // The caret's own line keeps its syntax visible. Both the line's
+        // range (which markers reveal) and its index (whether `refresh`
+        // needs a re-render) come from the same caret position.
+        let nsText = text as NSString
+        let caretLocation = max(0, min(textView.selectedRange().location, nsText.length))
+        let caretLineRange = nsText.lineRange(for: NSRange(location: caretLocation, length: 0))
+        revealedLineIndex = Self.lineIndex(of: caretLocation, in: nsText)
 
         // Table cells need monospaced face for column alignment.
         let cellRanges = elements.compactMap { element -> NSRange? in
@@ -143,12 +158,29 @@ final class MarkdownHighlighter {
             case .listItem(let level):
                 storage.addAttribute(.paragraphStyle, value: Self.paragraphStyle(headIndent: CGFloat(16 * level), firstLineHeadIndent: 0), range: element.range)
             case .hidden, .escape:
-                // Keep the source and its character indexes intact while
-                // making syntax-only characters visually disappear. This is
-                // deliberately unconditional: caret movement never changes
-                // layout attributes and cannot trigger reflow artifacts.
-                storage.addAttribute(.font, value: NSFont.systemFont(ofSize: 1), range: element.range)
-                storage.addAttribute(.foregroundColor, value: NSColor.clear, range: element.range)
+                if NSIntersectionRange(element.range, caretLineRange).length > 0 {
+                    // The caret's own line keeps its syntax visible: that is
+                    // the text being edited, and the user needs to see the
+                    // characters their keystrokes land between. The reveal is
+                    // layout-tame by construction — the marker font never
+                    // exceeds the line's content font, so the line's height
+                    // cannot change and no other line can move. In a table
+                    // the monospaced face keeps the row's columns as close
+                    // as reveal allows. (A line holding only syntax, such as
+                    // a heading marker with no title yet, still grows when
+                    // revealed; that line is the one being edited.)
+                    let inTable = cellRanges.contains { NSLocationInRange(element.range.location, $0) }
+                    let revealFont = inTable
+                        ? NSFont.monospacedSystemFont(ofSize: baseSize, weight: .regular)
+                        : NSFont.systemFont(ofSize: baseSize)
+                    storage.addAttribute(.font, value: revealFont, range: element.range)
+                    storage.addAttribute(.foregroundColor, value: PaneStyle.secondaryTextNSColor, range: element.range)
+                } else {
+                    // Keep the source and its character indexes intact while
+                    // making syntax-only characters visually disappear.
+                    storage.addAttribute(.font, value: NSFont.systemFont(ofSize: 1), range: element.range)
+                    storage.addAttribute(.foregroundColor, value: NSColor.clear, range: element.range)
+                }
             }
         }
         
@@ -182,16 +214,30 @@ final class MarkdownHighlighter {
         textView.selectedRanges = selectedRanges
     }
 
-    /// Re-renders after a text edit. Selection-only changes are intentionally
-    /// ignored because syntax attributes are stable across caret movement.
+    /// Re-renders after a text edit or a caret move that crosses a line
+    /// boundary (the reveal moves with the caret's line).
     func refresh(_ textView: NSTextView) {
         // Unchanged text is normally nothing to do — but code-block colours come
-        // from the live appearance, so a light/dark switch has to force a
-        // re-render even when the text is untouched.
-        guard textView.string != source || Self.isDarkAppearance != renderedForDarkAppearance else {
-            return
-        }
+        // from the live appearance, and a caret move to another line changes
+        // which line's markers are revealed, so both force a re-render even
+        // when the text is untouched.
+        let caretLine = Self.lineIndex(of: textView.selectedRange().location, in: textView.string as NSString)
+        guard textView.string != source
+            || Self.isDarkAppearance != renderedForDarkAppearance
+            || caretLine != revealedLineIndex
+        else { return }
         render(textView)
+    }
+
+    /// Line numbers as newline counts before the location: cheap, stable
+    /// across renders of the same text, and all the reveal check needs.
+    private static func lineIndex(of location: Int, in text: NSString) -> Int {
+        let clamped = max(0, min(location, text.length))
+        var index = 0
+        for i in 0..<clamped where text.character(at: i) == 0x0A {
+            index += 1
+        }
+        return index
     }
 
 
@@ -391,7 +437,7 @@ final class MarkdownHighlighter {
 extension Markdown {
     /// Full render for callers without a persistent highlighter.
     ///
-    /// Syntax-only markers remain hidden regardless of selection.
+    /// Syntax-only markers collapse everywhere except the caret's own line.
     static func highlight(_ textView: NSTextView) {
         MarkdownHighlighter().render(textView)
     }

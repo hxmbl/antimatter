@@ -453,6 +453,21 @@ struct PaneEditor: NSViewRepresentable {
             if completionPanel.isShown {
                 syncCompletion(textView)
             }
+            // Caret-line reveal: crossing a line boundary moves which line
+            // shows its syntax markers. The viewport is captured and
+            // re-anchored exactly like the typing path (STRM-591), so no
+            // other line visibly moves; `refresh` itself early-outs when the
+            // caret stayed on the same line.
+            let scrollView = textView.enclosingScrollView
+            let wasNearBottom = isNearBottom(textView)
+            let topVisibleIndex = topVisibleCharacterIndex(textView)
+            highlighter.refresh(textView)
+            restoreScrollPosition(
+                textView: textView,
+                scrollView: scrollView,
+                wasNearBottom: wasNearBottom,
+                topVisibleIndex: topVisibleIndex
+            )
         }
 
         /// Automatic punctuation substitutions are deliberately disabled so
