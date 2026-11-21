@@ -3,7 +3,7 @@ import Foundation
 /// The app's marketing version and build number, read off the bundle.
 /// Backs `.version` and the stats report.
 enum AppVersion {
-    static var text: String {
+    nonisolated static var text: String {
         let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
         switch (short, build) {

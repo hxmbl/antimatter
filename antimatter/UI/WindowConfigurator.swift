@@ -199,8 +199,7 @@ enum PaneWindowStyler {
     static func applyToPane() {
         switch PaneStyle.displayMode {
         case .dock:
-            // Restyle every open pane so a Settings change touches the ⌘N
-            // windows too, not just the primary one.
+            // Restyle every pane window a Settings change could touch.
             for window in NSApplication.shared.windows where WindowManager.isPane(window) {
                 applyLive(to: window)
             }

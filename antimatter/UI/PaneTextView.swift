@@ -378,10 +378,28 @@ final class PaneTextView: NSTextView {
         )
     }
 
+    /// What a ghost draws: a fixed value resolved from the note, or the
+    /// live wall-clock time for a `.time` line — formatted at draw time, so
+    /// the minute tick only has to redraw and the note is never rewritten
+    /// to keep a stamp current.
+    private enum GhostValue: Equatable {
+        case fixed(String)
+        case timeOfDay
+    }
+
+    private static func text(for value: GhostValue) -> String {
+        switch value {
+        case .fixed(let text): return text
+        case .timeOfDay: return TimeIntent.format(Date())
+        }
+    }
+
     /// The ghost values currently cached, and how many whole-note resolves have
     /// happened. `draw(_:)` runs on every caret frame and blink tick, so the
     /// cache is what keeps typing off an O(note) resolve per frame.
-    var ghostCacheForTesting: [(lineRange: NSRange, text: String)] { ghostCache }
+    var ghostCacheForTesting: [(lineRange: NSRange, text: String)] {
+        ghostCache.map { ($0.lineRange, Self.text(for: $0.value)) }
+    }
     private(set) var ghostResolveCountForTesting = 0
 
     /// Resolve and cache, as `drawVariableGhosts` does before positioning.
@@ -389,7 +407,7 @@ final class PaneTextView: NSTextView {
     func resolveGhostsForTesting() -> [(lineRange: NSRange, text: String)] {
         guard let storage = textStorage else { return [] }
         cachedGhosts(for: storage.string)
-        return ghostCache
+        return ghostCache.map { ($0.lineRange, Self.text(for: $0.value)) }
     }
 
     /// One spring step, bypassing the display link.
@@ -695,9 +713,10 @@ final class PaneTextView: NSTextView {
         return bounds
     }
 
-    /// The `text` the ghost cache was built from, and the resolved ghost values
-    /// for it. Both are pure functions of the note text, so they survive a
-    /// repaint but not an edit.
+    /// The `text` the ghost cache was built from, and the resolved ghosts for
+    /// it. The cache holds each ghost's *kind*: fixed values are pure functions
+    /// of the note text, and a `.time` ghost only needs its range — the clock
+    /// is formatted at draw time, so the minute tick redraws without a re-resolve.
     ///
     /// `draw(_:)` runs on every `CADisplayLink` frame of a caret hop and on
     /// every blink tick, so resolving here unconditionally meant a whole-note
@@ -706,10 +725,10 @@ final class PaneTextView: NSTextView {
     /// `didChangeText` alone because a reload assigns `.string =` directly,
     /// which posts no notification.
     private var ghostCacheKey: String?
-    private var ghostCache: [(lineRange: NSRange, text: String)] = []
+    private var ghostCache: [(lineRange: NSRange, value: GhostValue)] = []
 
     @discardableResult
-    private func cachedGhosts(for source: String) -> [(lineRange: NSRange, text: String)] {
+    private func cachedGhosts(for source: String) -> [(lineRange: NSRange, value: GhostValue)] {
         if source != ghostCacheKey {
             ghostCache = Self.resolveGhosts(in: source)
             ghostCacheKey = source
@@ -718,10 +737,10 @@ final class PaneTextView: NSTextView {
         return ghostCache
     }
 
-    private static func resolveGhosts(in source: String) -> [(lineRange: NSRange, text: String)] {
+    private static func resolveGhosts(in source: String) -> [(lineRange: NSRange, value: GhostValue)] {
         let variables = VariableTable.scan(source)
         let ns = source as NSString
-        var resolved: [(lineRange: NSRange, text: String)] = []
+        var resolved: [(lineRange: NSRange, value: GhostValue)] = []
         for span in ExpressionEvaluator.interpolationSpans(in: source) {
             let lineRange = ns.lineRange(for: span.range)
             let line = ns.substring(with: lineRange).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -729,7 +748,23 @@ final class PaneTextView: NSTextView {
                   let value = ExpressionEvaluator.evaluateValue(span.inner, variables: variables, buffer: source)
                     ?? IntentExecution.commandDryRun(span.inner, buffer: source).map(SparkValue.number),
                   value.isFinite else { continue }
-            resolved.append((lineRange, IntentParser.format(value)))
+            resolved.append((lineRange, .fixed(IntentParser.format(value))))
+        }
+        // Committed `.time` lines (bare, or an older build's `.time = stamp`
+        // awaiting normalization) ghost the live clock.
+        for fullRange in VariableTable.lineRanges(ns) {
+            var contentRange = fullRange
+            if contentRange.length > 0, ns.character(at: NSMaxRange(contentRange) - 1) == unichar(10) {
+                contentRange.length -= 1
+            }
+            guard contentRange.length > 0 else { continue }
+            let trimmed = ns.substring(with: contentRange)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard trimmed == IntentParser.commandPrefix + "time"
+                || trimmed.hasPrefix(IntentParser.commandPrefix + "time =")
+            else { continue }
+            resolved.append((fullRange, .timeOfDay))
         }
         return resolved
     }
@@ -753,10 +788,11 @@ final class PaneTextView: NSTextView {
                 .font: NSFont.monospacedSystemFont(ofSize: PaneStyle.fontSize - 1, weight: .regular),
                 .foregroundColor: PaneStyle.secondaryTextNSColor.withAlphaComponent(0.72)
             ]
-            let size = (ghost.text as NSString).size(withAttributes: attributes)
+            let ghostText = Self.text(for: ghost.value)
+            let size = (ghostText as NSString).size(withAttributes: attributes)
             let rect = NSRect(origin: origin, size: size)
             guard dirtyRect.intersects(rect) else { continue }
-            (ghost.text as NSString).draw(in: rect, withAttributes: attributes)
+            (ghostText as NSString).draw(in: rect, withAttributes: attributes)
         }
     }
 

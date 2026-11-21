@@ -5,31 +5,21 @@ import Foundation
 enum DeepLinkRouter {
 
     /// Commands that external callers (deep links, the loopback bridge) may
-    /// execute. Destructive or disruptive commands — delete, clear, quit,
-    /// export — are excluded to prevent silent data loss from any local process.
+    /// execute — derived from the command registry, so this allowlist cannot
+    /// drift from what the app parses, teaches and previews. Each registry
+    /// family declares its own `deepLinkHeads`; destructive or disruptive
+    /// commands — delete, clear, quit, export, translate — declare none, which
+    /// prevents silent data loss from any local process.
     ///
     /// `.exit` used to be listed here while `.quit` was not, even though the two
-    /// are exact synonyms (`IntentExecution.action` treats them identically), so
-    /// the stated policy was trivially bypassable: any local process could send
-    /// `antimatter://command?line=.exit` and quit the app. Neither is allowed now.
+    /// are exact synonyms, so the stated policy was trivially bypassable: any
+    /// local process could send `antimatter://command?line=.exit` and quit the
+    /// app. Neither is allowed now, and the exclusion lives next to the
+    /// command's own declaration.
     ///
     /// Matching is on the *whole* command, not a bare prefix: a prefix test let
     /// `.timerx`, `.replaceall` and friends through the same door.
-    private nonisolated static let safeCommands: Set<String> = {
-        let prefix = IntentParser.commandPrefix
-        return [
-            "\(prefix)timer", "\(prefix)pomodoro", "\(prefix)stopwatch",
-            "\(prefix)stopwatch cancel", "\(prefix)remind",
-            "\(prefix)reminder cancel", "\(prefix)cancel",
-            "\(prefix)new", "\(prefix)help", "\(prefix)stats",
-            "\(prefix)time", "\(prefix)date",
-            "\(prefix)sum", "\(prefix)avg", "\(prefix)count",
-            "\(prefix)math", "\(prefix)currency",
-            "\(prefix)debug", "\(prefix)settings",
-            "\(prefix)find", "\(prefix)replace",
-            "\(prefix)switch",
-        ]
-    }()
+    private nonisolated static let safeCommands: Set<String> = IntentExecution.deepLinkSafeHeads
 
     /// Returns true when `line` is a dot-command safe for external callers.
     nonisolated static func isSafeCommand(_ line: String) -> Bool {

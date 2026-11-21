@@ -129,6 +129,11 @@ final class MenuBarController: NSObject {
         NSApp.activate(ignoringOtherApps: true)
         panel.orderFrontRegardless()
         panel.makeKey()
+        // Showing the pane is the moment stale notes hurt, so pull on show;
+        // `pullOnShow` throttles the fetch itself.
+        Task { @MainActor in
+            await CloudKitSync.shared.pullOnShow()
+        }
     }
 
     private var screenForStatusItem: NSScreen? {

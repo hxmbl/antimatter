@@ -9,10 +9,8 @@ final class PasteStream: ObservableObject {
 
     @Published private(set) var isStreaming = false
 
-    /// The note copies are appended to. `.paste` used to hard-code
-    /// `NoteStore.shared`, so a ⌘N window streamed into the *shared* window's
-    /// note instead of the one on screen. Pass the window-local store; `nil`
-    /// (the default) resolves to `.shared` for callers that have none.
+    /// The note copies are appended to. Pass the pane's store; `nil` (the
+    /// default) resolves to `.shared` for callers that have none.
     private var targetStore: NoteStore = .shared
 
     private var pollTask: Task<Void, Never>?

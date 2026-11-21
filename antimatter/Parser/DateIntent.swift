@@ -44,8 +44,11 @@ nonisolated enum DateIntent {
     }
 }
 
-/// `.time` stamps the current wall-clock time onto a line: pressing return on
-/// `.time` rewrites it to `.time = 2:31 PM`. Deterministic for tests via `now`.
+/// `.time` keeps a live clock on its line: the note stores bare `.time` and
+/// the pane draws the current wall-clock time beside it as a render-only
+/// ghost (like the variable ghosts), so the document is never rewritten to
+/// stay current. Older builds stamped `.time = 2:31 PM` into the note and
+/// rewrote it every minute; `normalized` strips that stored stamp on touch.
 nonisolated enum TimeIntent {
     /// The exact stamp used: `h:mm a` in en_US_POSIX so AM/PM tokens never
     /// depend on the host locale, but in the user's own time zone.
@@ -57,10 +60,13 @@ nonisolated enum TimeIntent {
         return formatter.string(from: date)
     }
 
-    static func commit(_ rawLine: String, now: Date = Date()) -> String {
+    /// The stored form of a `.time` line: bare `.time`, indent preserved.
+    /// nil when the line is already bare `.time` — nothing to commit.
+    static func normalized(_ rawLine: String) -> String? {
         let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.lowercased() != IntentParser.commandPrefix + "time" else { return nil }
         let indent = String(rawLine.prefix(while: { $0 == " " || $0 == "\t" }))
-        return indent + trimmed + " = " + format(now)
+        return indent + IntentParser.commandPrefix + "time"
     }
 
     /// Numeric form for `$()` substitution: the clock time as a decimal

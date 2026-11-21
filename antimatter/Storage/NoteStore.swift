@@ -24,6 +24,35 @@ final class NoteStore: ObservableObject {
     @Published var saveError: Error?
     @Published var saveErrorToken: Int = 0
 
+    /// Notes edited locally since the last successful push, and ids trashed
+    /// since then. Per-note dirty tracking is what lets a push send only
+    /// what changed instead of re-uploading every note on every flush — and
+    /// it is how a pull tells "changed locally" when judging a genuine
+    /// conflict (`CloudKitSync.merge`). Both sets are persisted with the
+    /// snapshot so a relaunch keeps them: an unpushed edit that lost its
+    /// flag would let a pull of a diverged remote version apply over the
+    /// local text, and a pending deletion would stop being retried.
+    private(set) var pendingPushIDs: Set<UUID> = []
+    private(set) var pendingDeleteIDs: Set<UUID> = []
+
+    func markPendingPush(for id: UUID) { pendingPushIDs.insert(id) }
+    func clearPendingPush(for id: UUID) { pendingPushIDs.remove(id) }
+
+    /// Clears dirty flags after a successful push. A note re-edited while
+    /// its push was in flight keeps its flag: the pushed stamp no longer
+    /// matches the live note, so the newer edit still owes iCloud a record.
+    func markPushed(_ pushed: [(id: UUID, modifiedAt: Date)], deleted: Set<UUID>) {
+        for entry in pushed where notes.first(where: { $0.id == entry.id })?.modifiedAt == entry.modifiedAt {
+            pendingPushIDs.remove(entry.id)
+        }
+        pendingDeleteIDs.subtract(deleted)
+        // Persist the cleared flags now rather than leaving the pre-clear
+        // snapshot on disk: a relaunch before any edit wakes sync would
+        // otherwise restore the flags and re-push a push that already
+        // landed.
+        scheduleSave()
+    }
+
     private let fileURL: URL
     private let syncEnabled: Bool
     private var saveTask: Task<Void, Never>?
@@ -54,6 +83,7 @@ final class NoteStore: ObservableObject {
                 notes.insert(newValue, at: 0)
                 activeNoteID = newValue.id
             }
+            pendingPushIDs.insert(newValue.id)
             scheduleSave()
         }
     }
@@ -96,7 +126,50 @@ final class NoteStore: ObservableObject {
                 activeNoteID = notes[0].id
             }
         }
+        importLegacyWindowStores()
         isInitialized = true
+    }
+
+    /// Leftovers of the retired ⌘N extra-window feature: each extra window
+    /// wrote its own `window-<uuid>.json` next to `notes.json`. Fold their
+    /// notes and trash into the single store once, renaming each consumed
+    /// file aside (never deleting it) so a bad merge can still be recovered
+    /// by hand.
+    private func importLegacyWindowStores() {
+        let directory = fileURL.deletingLastPathComponent()
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else { return }
+        var importedNotes: [Note] = []
+        var importedTrash: [Note] = []
+        for entry in entries.sorted() where entry.hasPrefix("window-") && entry.hasSuffix(".json") {
+            let url = directory.appendingPathComponent(entry)
+            guard let data = Persistence.readData(from: url) else { continue }
+            let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data)
+            let windowNotes = snapshot?.notes ?? (try? JSONDecoder().decode([Note].self, from: data)) ?? []
+            for var note in windowNotes where !note.text.isEmpty {
+                let slotTaken = { (candidate: Note) in
+                    candidate.isSlot && candidate.slotIndex == note.slotIndex
+                }
+                if note.isSlot && (notes.contains(where: slotTaken) || importedNotes.contains(where: slotTaken)) {
+                    // A slot can only be pinned once; the note survives the
+                    // collision as an ordinary one.
+                    note.isSlot = false
+                    note.slotIndex = -1
+                }
+                importedNotes.append(note)
+            }
+            importedTrash.append(contentsOf: (snapshot?.trash ?? []).filter { !$0.text.isEmpty })
+            // Rename aside, never delete.
+            let retired = url.appendingPathExtension("migrated")
+            try? FileManager.default.removeItem(at: retired)
+            try? FileManager.default.moveItem(at: url, to: retired)
+        }
+        guard !importedNotes.isEmpty || !importedTrash.isEmpty else { return }
+        notes.append(contentsOf: importedNotes)
+        trash.append(contentsOf: importedTrash)
+        for note in importedNotes {
+            pendingPushIDs.insert(note.id)
+        }
+        flush()
     }
 
     nonisolated static func defaultFileURL() -> URL {
@@ -111,6 +184,7 @@ final class NoteStore: ObservableObject {
         let note = Note(text: text)
         notes.insert(note, at: 0)
         activeNoteID = note.id
+        pendingPushIDs.insert(note.id)
         scheduleSave()
         return note
     }
@@ -126,6 +200,7 @@ final class NoteStore: ObservableObject {
             note.text.isEmpty && !note.isSlot && (note.id != activeID || !keepActive)
         }
         guard notes.contains(where: prune) else { return }
+        pendingPushIDs.subtract(notes.filter(prune).map(\.id))
         notes.removeAll(where: prune)
         if !notes.contains(where: { $0.id == activeNoteID }) {
             activeNoteID = notes.first?.id ?? create().id
@@ -139,6 +214,8 @@ final class NoteStore: ObservableObject {
         var deleted = removed
         deleted.modifiedAt = Date()
         trash.append(deleted)
+        pendingPushIDs.remove(note.id)
+        pendingDeleteIDs.insert(note.id)
         // Cap trash at 200 entries to prevent unbounded memory growth.
         if trash.count > 200 {
             trash.removeFirst(trash.count - 200)
@@ -155,6 +232,8 @@ final class NoteStore: ObservableObject {
         let restored = trash.remove(at: idx)
         notes.insert(restored, at: 0)
         activeNoteID = restored.id
+        pendingDeleteIDs.remove(restored.id)
+        pendingPushIDs.insert(restored.id)
         scheduleSave()
     }
 
@@ -167,6 +246,7 @@ final class NoteStore: ObservableObject {
         guard (0...8).contains(index) else { return }
         if let existing = notes.first(where: { $0.isSlot && $0.slotIndex == index }) {
             notes.removeAll { $0.id == existing.id }
+            pendingPushIDs.remove(existing.id)
         } else if let existing = trash.first(where: { $0.isSlot && $0.slotIndex == index }) {
             trash.removeAll { $0.id == existing.id }
         }
@@ -175,6 +255,7 @@ final class NoteStore: ObservableObject {
         slotNote.slotIndex = index
         if let idx = notes.firstIndex(where: { $0.id == note.id }) {
             notes[idx] = slotNote
+            pendingPushIDs.insert(note.id)
         }
         // The `removeAll` above drops the note that previously held this slot,
         // and that can be the *active* one — pinning slot 2 onto a different
@@ -223,6 +304,12 @@ final class NoteStore: ObservableObject {
         var notes: [Note]
         var trash: [Note]
         var activeNoteID: UUID?
+        /// Retry tracking, persisted so an unpushed edit and a pending
+        /// deletion survive a relaunch (see `pendingPushIDs` /
+        /// `pendingDeleteIDs` on the store). Absent in snapshots written
+        /// before the tracking was persisted — the behavior they had.
+        var pendingPushIDs: Set<UUID>?
+        var pendingDeleteIDs: Set<UUID>?
     }
 
     private func textDidChange() {
@@ -237,7 +324,13 @@ final class NoteStore: ObservableObject {
     func flush() {
         saveTask?.cancel()
         saveTask = nil
-        let snapshot = Snapshot(notes: notes, trash: trash, activeNoteID: activeNoteID)
+        let snapshot = Snapshot(
+            notes: notes,
+            trash: trash,
+            activeNoteID: activeNoteID,
+            pendingPushIDs: pendingPushIDs,
+            pendingDeleteIDs: pendingDeleteIDs
+        )
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         let url = fileURL
         if StorageLocation.isIsolatedRun {
@@ -270,10 +363,13 @@ final class NoteStore: ObservableObject {
 
     func syncIfNeeded() {
         guard syncEnabled, CloudKitSync.shared.isEnabled else { return }
-        let toSync = notes
-        let void = trash
-        Task { @MainActor in
-            await CloudKitSync.shared.sync(notes: toSync, trash: void)
+        let dirtyNotes = notes.filter { pendingPushIDs.contains($0.id) }
+        let deletions = pendingDeleteIDs
+        guard !dirtyNotes.isEmpty || !deletions.isEmpty else { return }
+        let stamps = dirtyNotes.map { (id: $0.id, modifiedAt: $0.modifiedAt) }
+        Task { @MainActor [weak self] in
+            let pushed = await CloudKitSync.shared.sync(notes: dirtyNotes, deleting: Array(deletions))
+            if pushed { self?.markPushed(stamps, deleted: deletions) }
         }
     }
 
@@ -292,6 +388,28 @@ final class NoteStore: ObservableObject {
             trash = snapshot.trash
             if let id = snapshot.activeNoteID, notes.contains(where: { $0.id == id }) {
                 activeNoteID = id
+            }
+            if let snapshotPendingPushIDs = snapshot.pendingPushIDs,
+               let snapshotPendingDeleteIDs = snapshot.pendingDeleteIDs {
+                // New-format snapshot: the persisted flags are authoritative.
+                pendingPushIDs = snapshotPendingPushIDs
+                pendingDeleteIDs = snapshotPendingDeleteIDs
+            } else {
+                // Old snapshot, written before the retry flags were
+                // persisted: reconcile from the stamps this device last
+                // pushed or applied. A note whose `modifiedAt` differs from
+                // its remembered stamp — or that was never synced — still
+                // owes iCloud a record; marking it pending makes
+                // `syncIfNeeded` retry it instead of skipping the note
+                // until it is edited again. Trashed notes are treated as
+                // pending deletions: records already deleted on the server
+                // are a no-op, while ones whose deletion never landed get
+                // deleted now.
+                pendingPushIDs = CloudKitSync.unsyncedNotes(
+                    notes: notes,
+                    lastSynced: CloudKitSync.shared.lastSyncedModifiedAt
+                )
+                pendingDeleteIDs = Set(trash.map(\.id))
             }
         } else if let legacy = try? JSONDecoder().decode([Note].self, from: data) {
             // Pre-Void build wrote a bare [Note] array; keep that data.

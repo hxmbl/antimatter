@@ -529,7 +529,7 @@ struct MarkdownHighlightTests {
         #expect(bodyFont == NSFont.boldSystemFont(ofSize: PaneStyle.fontSize))
     }
 
-    @Test func caretMovementDoesNotChangeSyntaxAttributes() {
+    @Test func caretLineRevealsItsSyntaxMarkers() {
         let textView = NSTextView()
         textView.string = "# Title\nplain"
         textView.selectedRange = NSRange(location: 2, length: 0)
@@ -539,20 +539,21 @@ struct MarkdownHighlightTests {
             return
         }
 
-        let initialFont = storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
-        let initialColor = storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
-        #expect(initialFont?.pointSize == 1)
-        #expect(initialColor == NSColor.clear)
+        // The `#` on the caret's line is revealed, at a size that cannot
+        // raise the line: never larger than the line's content font.
+        let markerFont = storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+        let markerColor = storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+        #expect(markerFont == NSFont.systemFont(ofSize: PaneStyle.fontSize))
+        #expect(markerColor == PaneStyle.secondaryTextNSColor)
         let headingFont = storage.attribute(.font, at: 2, effectiveRange: nil) as? NSFont
         #expect(headingFont == NSFont.boldSystemFont(ofSize: Markdown.headingFontSize(level: 1, base: PaneStyle.fontSize)))
+        #expect(markerFont!.pointSize <= headingFont!.pointSize)
 
-        // Moving the caret off the line re-renders it.
+        // Moving the caret off the line collapses the marker again.
         textView.selectedRange = NSRange(location: 10, length: 0)
         Markdown.highlight(textView)
-        let finalFont = storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
-        let finalColor = storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
-        #expect(finalFont == initialFont)
-        #expect(finalColor == initialColor)
+        #expect((storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize == 1)
+        #expect(storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == NSColor.clear)
     }
 
     @Test func inlineMarkersStayStableAcrossLines() {
@@ -565,10 +566,14 @@ struct MarkdownHighlightTests {
             return
         }
 
+        // Markers on a line away from the caret stay collapsed.
         let line1Marker = storage.attribute(.font, at: 4, effectiveRange: nil) as? NSFont
         #expect(line1Marker?.pointSize == 1)
+        // Markers on the caret's line are revealed for editing, at the content
+        // font size so the reveal never raises the line height.
         let line2Marker = storage.attribute(.font, at: 24, effectiveRange: nil) as? NSFont
-        #expect(line2Marker?.pointSize == 1)
+        #expect(line2Marker == NSFont.systemFont(ofSize: PaneStyle.fontSize))
+        #expect(storage.attribute(.foregroundColor, at: 24, effectiveRange: nil) as? NSColor == PaneStyle.secondaryTextNSColor)
     }
 
     @Test func taskBodyStrikesAndTheBulletKeepsItsTint() {
@@ -661,27 +666,32 @@ struct MarkdownHighlighterTests {
         #expect(textView.typingAttributes as NSDictionary == typingAttributes as NSDictionary)
     }
 
-    @Test func selectionChangesKeepSyntaxHiddenWithoutChangingTheDocument() {
+    @Test func selectionChangesMoveTheRevealWithoutChangingTheDocument() {
         let textView = NSTextView()
         let highlighter = MarkdownHighlighter()
         textView.string = "**x**\naway"
+        textView.selectedRange = NSRange(location: 1, length: 0)
         highlighter.render(textView)
         guard let storage = textView.textStorage else {
             Issue.record("no text storage")
             return
         }
 
-        // Caret movement does not change hidden-marker attributes.
+        // The caret's line reveals its markers.
+        #expect(storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont == NSFont.systemFont(ofSize: PaneStyle.fontSize))
+        #expect(storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == PaneStyle.secondaryTextNSColor)
+
+        // Caret moves to line 2: line 1 collapses again.
         textView.selectedRange = NSRange(location: 7, length: 0)
         highlighter.refresh(textView)
         #expect((storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize == 1)
         #expect(storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == NSColor.clear)
 
-        // Moving back remains stable and does not expose the markers.
+        // Moving back reveals them once more. The source never changes.
         textView.selectedRange = NSRange(location: 1, length: 0)
         highlighter.refresh(textView)
-        #expect((storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize == 1)
-        #expect(storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == NSColor.clear)
+        #expect(storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont == NSFont.systemFont(ofSize: PaneStyle.fontSize))
+        #expect(textView.string == "**x**\naway")
     }
 
     @Test func refreshAfterATextEditFallsBackToAFullRender() {
@@ -699,20 +709,46 @@ struct MarkdownHighlighterTests {
         #expect(storage.attribute(.font, at: 9, effectiveRange: nil) as? NSFont == NSFont.boldSystemFont(ofSize: PaneStyle.fontSize))
     }
 
-    @Test func repeatedRefreshWithoutChangeLeavesStylingStable() {
+    @Test func repeatedRefreshWithinOneLineLeavesStylingStable() {
         let textView = NSTextView()
         let highlighter = MarkdownHighlighter()
         textView.string = "# Title\nbody"
+        textView.selectedRange = NSRange(location: 0, length: 0)
         highlighter.render(textView)
         guard let storage = textView.textStorage else {
             Issue.record("no text storage")
             return
         }
 
+        // Moving the caret within the same line is not a re-render.
+        let revealedFont = storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
         textView.selectedRange = NSRange(location: 2, length: 0)
         highlighter.refresh(textView)
         highlighter.refresh(textView)
-        #expect(storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont == NSFont.systemFont(ofSize: 1))
-        #expect(storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == NSColor.clear)
+        #expect(storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont == revealedFont)
+        #expect(storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == PaneStyle.secondaryTextNSColor)
+    }
+
+    /// A table row's columns hang on monospaced advances; revealed markers
+    /// on the caret's row keep the monospaced face so the row drifts as
+    /// little as reveal allows.
+    @Test func caretLineRevealInATableKeepsTheMonospacedFace() {
+        let textView = NSTextView()
+        let highlighter = MarkdownHighlighter()
+        textView.string = "| a | b |\n|---|---|\n| **c** | d |"
+        // Line 3 holds the data row; each of the first two lines is 10 UTF-16
+        // units including its newline.
+        textView.selectedRange = NSRange(location: 24, length: 0)
+        highlighter.render(textView)
+        guard let storage = textView.textStorage else {
+            Issue.record("no text storage")
+            return
+        }
+
+        // `**` on the caret's data row: revealed, monospaced.
+        let markerLocation = (textView.string as NSString).range(of: "**c").location
+        let markerFont = storage.attribute(.font, at: markerLocation, effectiveRange: nil) as? NSFont
+        #expect(markerFont == NSFont.monospacedSystemFont(ofSize: PaneStyle.fontSize, weight: .regular))
+        #expect(storage.attribute(.foregroundColor, at: markerLocation, effectiveRange: nil) as? NSColor == PaneStyle.secondaryTextNSColor)
     }
 }

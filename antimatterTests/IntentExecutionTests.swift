@@ -363,7 +363,7 @@ struct LivePreviewTests {
     }
 
     @Test func aggregatesPreviewOnlyWithNumbers() {
-        #expect(IntentExecution.preview(forLine: ".sum", in: "12\n34\n.sum") == "⏎ .sum = 46")
+        #expect(IntentExecution.preview(forLine: ".sum", in: "12\n34\n.sum") == "⏎ .sum = 46 · 2 numbers")
         #expect(IntentExecution.preview(forLine: ".sum", in: "just words") == nil)
     }
 
@@ -580,52 +580,55 @@ struct TimeReevaluationTests {
         #expect(!IntentExecution.containsTimeExpressions("time"))
     }
 
-    @Test func staleTimeCommitsUpdatesCommittedTimeLines() {
-        let now = Date()
-        let earlier = now.addingTimeInterval(-120)
-        let text = ".time = \(TimeIntent.format(earlier))"
-        let commits = IntentExecution.staleTimeCommits(in: text, now: now)
+    /// The clock is render-only now: instead of rewriting `.time = <stamp>`
+    /// to the current minute, normalization strips the stored stamp to bare
+    /// `.time` once, and the ghost keeps the line live.
+    @Test func timeNormalizationStripsStoredStamps() {
+        let text = ".time = \(TimeIntent.format(Date().addingTimeInterval(-120)))"
+        let commits = IntentExecution.timeNormalizationCommits(in: text)
         #expect(commits.count == 1)
-        #expect(commits.first?.replacement == ".time = \(TimeIntent.format(now))")
+        #expect(commits.first?.replacement == ".time")
     }
 
-    @Test func staleTimeCommitsIgnoresUncommittedTimeLines() {
-        let text = ".time"
-        let commits = IntentExecution.staleTimeCommits(in: text)
-        #expect(commits.isEmpty, "Uncommitted .time should not generate commits")
+    @Test func timeNormalizationIgnoresBareTimeLines() {
+        #expect(IntentExecution.timeNormalizationCommits(in: ".time").isEmpty,
+                "A bare .time is already normalized")
     }
 
-    @Test func staleTimeCommitsIgnoresNonTimeLines() {
-        let text = ".timer 5\n.sum\n384 * 27 = 10368"
-        let commits = IntentExecution.staleTimeCommits(in: text)
-        #expect(commits.isEmpty, "Non-.time lines should not generate time commits")
+    @Test func timeNormalizationIgnoresNonTimeLines() {
+        let text = ".timer 5\n.sum\n384 * 27 = 10368\n:time = 4"
+        #expect(IntentExecution.timeNormalizationCommits(in: text).isEmpty,
+                "Non-.time lines should not generate normalization commits")
     }
 
-    @Test func staleTimeCommitsPreservesIndentation() {
-        let now = Date()
-        let text = "  .time = \(TimeIntent.format(now.addingTimeInterval(-120)))"
-        let commits = IntentExecution.staleTimeCommits(in: text, now: now)
+    @Test func timeNormalizationPreservesIndentation() {
+        let text = "  .time = \(TimeIntent.format(Date().addingTimeInterval(-120)))"
+        let commits = IntentExecution.timeNormalizationCommits(in: text)
         #expect(commits.count == 1)
-        #expect(commits.first?.replacement.hasPrefix("  .time = ") == true)
+        #expect(commits.first?.replacement == "  .time")
     }
 
-    @Test func staleTimeCommitsHandlesMultipleTimeLines() {
-        let now = Date()
-        let stamp = TimeIntent.format(now.addingTimeInterval(-120))
+    @Test func timeNormalizationHandlesMultipleTimeLines() {
+        let stamp = TimeIntent.format(Date().addingTimeInterval(-120))
         let text = ".time = \(stamp)\nsome text\n.time = \(stamp)"
-        let commits = IntentExecution.staleTimeCommits(in: text, now: now)
-        #expect(commits.count == 2)
+        #expect(IntentExecution.timeNormalizationCommits(in: text).count == 2)
     }
 
-    @Test func staleTimeCommitsHandlesMixedContent() {
-        let now = Date()
-        let stamp = TimeIntent.format(now.addingTimeInterval(-120))
+    @Test func timeNormalizationHandlesMixedContent() {
+        let stamp = TimeIntent.format(Date().addingTimeInterval(-120))
         let text = ".timer 5\n.time = \(stamp)\n384 * 27 = 10368\n.time = \(stamp)"
-        let commits = IntentExecution.staleTimeCommits(in: text, now: now)
+        let commits = IntentExecution.timeNormalizationCommits(in: text)
         #expect(commits.count == 2)
         for commit in commits {
-            #expect(commit.replacement.hasPrefix(".time = "))
+            #expect(commit.replacement == ".time")
         }
+    }
+
+    @Test func normalizedNotesStayUntouchedByTheClock() {
+        // The regression this replaces: a committed `.time` rewrote the note
+        // every minute. After normalization there is nothing left to commit,
+        // whatever the clock says.
+        #expect(IntentExecution.timeNormalizationCommits(in: ".time\nnotes").isEmpty)
     }
 }
 
@@ -635,7 +638,7 @@ struct TimeReevaluationTests {
 struct InlineAggregateAndTimeTests {
 
     @Test func inlineSumWinsOverTheNote() {
-        #expect(IntentExecution.preview(forLine: ".sum 10 20 30", in: "999") == "⏎ .sum 10 20 30 = 60")
+        #expect(IntentExecution.preview(forLine: ".sum 10 20 30", in: "999") == "⏎ .sum 10 20 30 = 60 · 3 numbers")
         let commit = IntentExecution.aggregateCommit(
             .sum, keyword: ".sum 10 20 30",
             in: "999\n.sum 10 20 30",
@@ -644,22 +647,22 @@ struct InlineAggregateAndTimeTests {
     }
 
     @Test func inlineAvgAndCountWorkTheSameWay() {
-        #expect(IntentExecution.preview(forLine: ".avg 10 20 30", in: "999") == "⏎ .avg 10 20 30 = 20")
-        #expect(IntentExecution.preview(forLine: ".count 10 20 30", in: "999") == "⏎ .count 10 20 30 = 3")
-        #expect(IntentExecution.preview(forLine: ".total 10 20 30", in: "999") == "⏎ .total 10 20 30 = 60")
-        #expect(IntentExecution.preview(forLine: ".average 10 20 30", in: "999") == "⏎ .average 10 20 30 = 20")
+        #expect(IntentExecution.preview(forLine: ".avg 10 20 30", in: "999") == "⏎ .avg 10 20 30 = 20 · 3 numbers")
+        #expect(IntentExecution.preview(forLine: ".count 10 20 30", in: "999") == "⏎ .count 10 20 30 = 3 · 3 numbers")
+        #expect(IntentExecution.preview(forLine: ".total 10 20 30", in: "999") == "⏎ .total 10 20 30 = 60 · 3 numbers")
+        #expect(IntentExecution.preview(forLine: ".average 10 20 30", in: "999") == "⏎ .average 10 20 30 = 20 · 3 numbers")
     }
 
     @Test func bareAggregatesStillReadTheWholeNote() {
-        #expect(IntentExecution.preview(forLine: ".sum", in: "5\n10\n.sum") == "⏎ .sum = 15")
-        #expect(IntentExecution.preview(forLine: ".count", in: "5\n10\n.count") == "⏎ .count = 2")
+        #expect(IntentExecution.preview(forLine: ".sum", in: "5\n10\n.sum") == "⏎ .sum = 15 · 2 numbers")
+        #expect(IntentExecution.preview(forLine: ".count", in: "5\n10\n.count") == "⏎ .count = 2 · 2 numbers")
     }
 
     @Test func inlineArgumentsStayTiedToTheCommand() {
         // `sum` without the dot is prose even with numbers after it.
         #expect(IntentExecution.action(forLine: "sum 10 20", in: "sum 10 20") == .nothing)
         // Numbers elsewhere in a note don't leak into explicit arguments.
-        #expect(IntentExecution.preview(forLine: ".sum", in: "10\n.sum") == "⏎ .sum = 10")
+        #expect(IntentExecution.preview(forLine: ".sum", in: "10\n.sum") == "⏎ .sum = 10 · 1 number")
     }
 
     @Test func nonNumericArgumentsHint() {
@@ -670,20 +673,22 @@ struct InlineAggregateAndTimeTests {
         #expect(message.contains("No numbers"))
     }
 
-    @Test func timeCommandRewritesTheLine() {
-        guard case .rewriteLine(let replacement) = IntentExecution.action(forLine: ".time", in: "") else {
-            Issue.record(".time should rewrite the line")
-            return
-        }
-        #expect(replacement.hasPrefix(".time = "))
-        #expect(replacement.range(of: #":\d{2} (AM|PM)$"#, options: .regularExpression) != nil)
+    @Test func bareTimeLineIsLeftAlone() {
+        // The live clock is a render-only ghost; return just lands a newline.
+        #expect(IntentExecution.action(forLine: ".time", in: "") == .nothing)
     }
 
-    @Test func timeFormatAndIndentSurvive() {
+    @Test func storedStampIsNormalizedOnTouch() {
+        #expect(IntentExecution.action(forLine: ".time = 2:31 PM", in: "") == .rewriteLine(".time"))
+        #expect(IntentExecution.action(forLine: "  .time = 2:31 PM", in: "") == .rewriteLine("  .time"))
+    }
+
+    @Test func timeFormatAndNormalizationSurvive() {
         let fixed = Date(timeIntervalSince1970: 0)
         let stamp = TimeIntent.format(fixed)
         #expect(stamp.range(of: #"^\d{1,2}:\d{2} (AM|PM)$"#, options: .regularExpression) != nil)
-        #expect(TimeIntent.commit("  .time", now: fixed).hasPrefix("  .time = "))
+        #expect(TimeIntent.normalized("  .time = \(stamp)") == "  .time")
+        #expect(TimeIntent.normalized(".time") == nil)
     }
 
     @Test func timeAppearsInDiscovery() {
@@ -790,5 +795,141 @@ struct InlineTranslationTests {
         #expect(IntentExecution.preview(forLine: "Bonjour .translate")?.contains("translates") == true)
         #expect(IntentExecution.helpText.contains(".translate"))
         #expect(IntentExecution.dotCommands.contains { $0.name == ".translate" })
+    }
+}
+
+/// Tests for the single command registry: dispatch and preview read from the
+/// same declaration as completion, help and the deep-link allowlist, and
+/// command heads match whole words only.
+struct CommandRegistryTests {
+
+    // MARK: Word-boundary heads (the .timerx bug)
+
+    @Test func timerLookalikeGetsTheUnknownCommandHint() {
+        // `.timerx` used to enter the timer family's `hasPrefix(".timer")`
+        // gate and answer with the timer usage hint.
+        #expect(IntentExecution.action(forLine: ".timerx", in: "") == .hint("Not a command — try `.help`"))
+    }
+
+    @Test func stopwatchLookalikeGetsTheUnknownCommandHint() {
+        #expect(IntentExecution.action(forLine: ".stopwatchx", in: "") == .hint("Not a command — try `.help`"))
+    }
+
+    @Test func reminderLookalikeGetsTheUnknownCommandHint() {
+        // The gate was `hasPrefix(".remind")`, so `.remindxyz` got the
+        // reminder usage hint — and `.remindme in 10 mins stretch` could
+        // even start a reminder.
+        #expect(IntentExecution.action(forLine: ".remindxyz", in: "") == .hint("Not a command — try `.help`"))
+        if case .startReminder = IntentExecution.action(forLine: ".remindme in 10 mins stretch", in: "") {
+            Issue.record("a .remind lookalike must never start a reminder")
+        }
+    }
+
+    @Test func lookalikesPreviewNothing() {
+        #expect(IntentExecution.preview(forLine: ".timerx") == nil)
+        #expect(IntentExecution.preview(forLine: ".stopwatchx") == nil)
+    }
+
+    // MARK: Real commands still dispatch and preview
+
+    @Test func timerFamilyStillDispatches() {
+        if case .startTimer = IntentExecution.action(forLine: ".timer 5", in: "") {} else {
+            Issue.record(".timer 5 should start a timer")
+        }
+        #expect(IntentExecution.action(forLine: ".timer cancel all", in: "") == .cancelAllTimers)
+        #expect(IntentExecution.action(forLine: ".timer list", in: "") == .listTimers)
+        #expect(IntentExecution.preview(forLine: ".timer 5") == "⏎ starts a timer")
+        #expect(IntentExecution.preview(forLine: ".timer list") == "⏎ lists running timers")
+        #expect(IntentExecution.preview(forLine: ".timer cancel all") == "⏎ cancels all running timers")
+    }
+
+    @Test func stopwatchAndReminderFamiliesStillDispatch() {
+        #expect(IntentExecution.action(forLine: ".stopwatch", in: "") == .startStopwatch(""))
+        #expect(IntentExecution.action(forLine: ".stopwatch cancel all", in: "") == .cancelStopwatches)
+        #expect(IntentExecution.action(forLine: ".stopwatch list", in: "") == .listStopwatches)
+        #expect(IntentExecution.action(forLine: ".reminder cancel all", in: "") == .cancelAllReminders)
+        #expect(IntentExecution.action(forLine: ".remind list", in: "") == .listReminders)
+        #expect(IntentExecution.preview(forLine: ".stopwatch") == "⏎ starts a stopwatch")
+        #expect(IntentExecution.preview(forLine: ".reminder list") == "⏎ lists upcoming reminders")
+    }
+
+    @Test func singleWordCommandsStillDispatch() {
+        #expect(IntentExecution.action(forLine: ".new", in: "") == .newNote)
+        #expect(IntentExecution.action(forLine: ".clear", in: "") == .clearNote)
+        #expect(IntentExecution.action(forLine: ".switch", in: "") == .showNoteSwitcher)
+        #expect(IntentExecution.action(forLine: ".delete", in: "") == .deleteNote)
+        #expect(IntentExecution.action(forLine: ".help", in: "") == .showHelp)
+        #expect(IntentExecution.action(forLine: ".view", in: "") == .showView)
+        #expect(IntentExecution.action(forLine: ".settings", in: "") == .showSettings)
+        #expect(IntentExecution.action(forLine: ".debug", in: "") == .showDebug)
+        #expect(IntentExecution.action(forLine: ".stats", in: "") == .showStats)
+        #expect(IntentExecution.action(forLine: ".vars", in: "") == .showVariables)
+        #expect(IntentExecution.action(forLine: ".exit", in: "") == .quit)
+        #expect(IntentExecution.action(forLine: ".quit", in: "") == .quit)
+        #expect(IntentExecution.action(forLine: ".find", in: "") == .showFindPanel)
+        #expect(IntentExecution.action(forLine: ".paste", in: "") == .startPasteStream)
+    }
+
+    @Test func exportAndReplaceStillDispatch() {
+        #expect(IntentExecution.action(forLine: ".export obsidian", in: "") == .export(.obsidian))
+        #expect(IntentExecution.action(forLine: ".export", in: "") == .hint("Export where? — `.export notes`, `.export obsidian`, `.export json`, or `.export csv`"))
+        #expect(IntentExecution.action(forLine: ".replace foo → bar", in: "") == .replaceAll(find: "foo", replacement: "bar"))
+        #expect(IntentExecution.action(forLine: ".replace", in: "") == .hint("Not a command — try `.help`"))
+        #expect(IntentExecution.preview(forLine: ".export json") == "⏎ exports the note to JSON")
+    }
+
+    // MARK: One registry drives every surface
+
+    @Test func completionVocabularyIsDerivedFromTheRegistry() {
+        #expect(IntentExecution.dotCommands.count == 38)
+        #expect(IntentExecution.dotCommands == IntentExecution.commandSpecs.flatMap(\.completions))
+    }
+
+    @Test func everySingleWordCommandDispatches() {
+        // A command completion teaches must never land on the generic
+        // unknown-command hint. Multi-word entries need their arguments;
+        // bare `.replace` intentionally stays unknown (see
+        // exportAndReplaceStillDispatch), as before.
+        let unknown: IntentExecution.LineAction = .hint("Not a command — try `.help`")
+        let intentionallyUnknown: Set<String> = [".replace"]
+        for command in IntentExecution.dotCommands
+            where !command.name.contains(" ") && !intentionallyUnknown.contains(command.name) {
+            #expect(IntentExecution.action(forLine: command.name, in: "") != unknown,
+                    "\(command.name) should dispatch")
+        }
+    }
+
+    @Test func helpTextCoversEveryCommand() {
+        for command in IntentExecution.dotCommands {
+            #expect(IntentExecution.helpText.contains(command.name),
+                    "\(command.name) should appear in .help")
+        }
+    }
+
+    // MARK: Deep-link allowlist is derived, and unchanged
+
+    @Test func deepLinkHeadsMatchTheLegacyAllowlist() {
+        #expect(IntentExecution.deepLinkSafeHeads == [
+            ".timer", ".pomodoro", ".stopwatch", ".stopwatch cancel",
+            ".remind", ".reminder cancel", ".cancel",
+            ".new", ".help", ".stats", ".time", ".date",
+            ".sum", ".avg", ".count", ".math", ".currency",
+            ".debug", ".settings", ".find", ".replace", ".switch",
+        ])
+    }
+
+    @Test func deepLinkSafetyStillHolds() {
+        #expect(DeepLinkRouter.isSafeCommand(".timer 25 soup"))
+        #expect(DeepLinkRouter.isSafeCommand(".stopwatch cancel all"))
+        #expect(!DeepLinkRouter.isSafeCommand(".exit"))
+        #expect(!DeepLinkRouter.isSafeCommand(".quit"))
+        #expect(!DeepLinkRouter.isSafeCommand(".clear"))
+        #expect(!DeepLinkRouter.isSafeCommand(".delete"))
+        #expect(!DeepLinkRouter.isSafeCommand(".export json"))
+        // Aliases were never allowlisted; that is unchanged.
+        #expect(!DeepLinkRouter.isSafeCommand(".total"))
+        #expect(!DeepLinkRouter.isSafeCommand(".average"))
+        // Whole-word matching keeps lookalikes out.
+        #expect(!DeepLinkRouter.isSafeCommand(".timerx"))
     }
 }

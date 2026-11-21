@@ -642,17 +642,6 @@ struct WindowConfiguratorTests {
 @MainActor
 struct PaneWindowTests {
 
-    /// ⌘N gives every extra window a slot-scoped frame-autosave name, which is
-    /// what keeps the saved rect readable instead of growing an entry per
-    /// window ever opened.
-    @Test func frameAutosaveNamesAreSlotScopedAndUnique() {
-        #expect(WindowManager.maxWindowSlots > 0)
-        #expect(WindowManager.frameAutosaveName(for: 0) == "\(PaneStyle.frameAutosaveName).0")
-        let names = (0..<WindowManager.maxWindowSlots).map { WindowManager.frameAutosaveName(for: $0) }
-        #expect(Set(names).count == names.count)
-        #expect(names.allSatisfy { $0.hasPrefix(PaneStyle.frameAutosaveName) })
-    }
-
     @Test func paneLookupIgnoresNonPaneWindows() {
         let pane = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 420, height: 520),
@@ -681,15 +670,6 @@ struct PaneWindowTests {
         #expect(WindowManager.isPane(identifierless) == false)
     }
 
-    /// The free slot must always land inside the bounded range, so the saved
-    /// frame set can never grow past `maxWindowSlots`.
-    @Test func theFreeSlotIsAlwaysInRange() {
-        for _ in 0..<5 {
-            let slot = WindowManager.freeSlot()
-            #expect(slot >= 0)
-            #expect(slot < WindowManager.maxWindowSlots)
-        }
-    }
 }
 
 /// Settings offers Dock / Menu Bar tags; a tag that drifts from

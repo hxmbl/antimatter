@@ -453,6 +453,21 @@ struct PaneEditor: NSViewRepresentable {
             if completionPanel.isShown {
                 syncCompletion(textView)
             }
+            // Caret-line reveal: crossing a line boundary moves which line
+            // shows its syntax markers. The viewport is captured and
+            // re-anchored exactly like the typing path (STRM-591), so no
+            // other line visibly moves; `refresh` itself early-outs when the
+            // caret stayed on the same line.
+            let scrollView = textView.enclosingScrollView
+            let wasNearBottom = isNearBottom(textView)
+            let topVisibleIndex = topVisibleCharacterIndex(textView)
+            highlighter.refresh(textView)
+            restoreScrollPosition(
+                textView: textView,
+                scrollView: scrollView,
+                wasNearBottom: wasNearBottom,
+                topVisibleIndex: topVisibleIndex
+            )
         }
 
         /// Automatic punctuation substitutions are deliberately disabled so
@@ -641,7 +656,7 @@ struct PaneEditor: NSViewRepresentable {
             minuteBoundaryTimer = timer
         }
 
-        /// Runs `.time` reevaluation and reschedules for the next minute.
+        /// Runs `.time` housekeeping and reschedules for the next minute.
         private func runTimeReevaluation(_ textView: NSTextView) {
             defer {
                 if IntentExecution.containsTimeExpressions(textView.string) {
@@ -652,10 +667,12 @@ struct PaneEditor: NSViewRepresentable {
                 }
             }
             guard !autoRewritesSuppressed else { return }
-            let timeCommits = IntentExecution.staleTimeCommits(in: textView.string)
-            if !timeCommits.isEmpty {
-                applyCommits(timeCommits, to: textView)
-            }
+            // Older builds stamped the time into the note; strip that once.
+            // After that the clock is render-only: the minute tick just
+            // redraws the ghost, and the document — its undo stack, its
+            // modifiedAt, its sync dirty state — is never touched by time.
+            applyCommits(IntentExecution.timeNormalizationCommits(in: textView.string), to: textView)
+            textView.setNeedsDisplay(textView.bounds)
         }
 
         /// Returns true when the intent consumed the return key.

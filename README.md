@@ -50,10 +50,14 @@ The `docs/` folder covers the note-processing engine:
 - **Aggregates** — `.sum`, `.avg`, `.count` scan the note's numbers (prose ignored) and rewrite to `.sum = 46`. Recompute as the note changes. Type arguments after the command to aggregate those instead — numbers or an expression: `.sum 10 20 30` → 60, `.sum 1..10` → 55, `.sum :items`, `.sum 2 * 3` → 6. Filter with `where`/`if` (bound to `it`): `.sum where it > 10`, `.count 1..50 if it % 2 == 0`.
 - **Dates & units, offline** — return on `2026-08-22` appends its weekday; `days until …` counts down; `12 kg -> lb` converts. Built-in table, no network.
 - **Currency & crypto, opt-in** — flip *Settings → Notes → Live currency & crypto conversion* and `100 USD → EUR` converts with live rates; `1 BTC → USD` works too. Off by default so the note never touches the network until you ask. Rates refresh at most once an hour (Coinbase, fiat + crypto).
-- **Markdown that knows how to disappear** — Notion-style syntax collapsing: headings, block quotes, fenced code, lists, task lists, tables, bold/italic/inline code/strikethrough, links, bare URLs, `\` escapes. Syntax collapses away from the caret and reappears on its line.
+- **Markdown that knows how to disappear** — Notion-style syntax collapsing: headings, block quotes, fenced code, lists, task lists, tables, bold/italic/inline code/strikethrough, links, bare URLs, `\` escapes. Syntax collapses away from the caret and reappears on its line, at a size that never raises the line, so caret movement never shifts another line.
 - **Capture** — `.paste` streams clipboard copies into the note until you dismiss it. Drop an image on the pane for on-device OCR (Apple Vision, fully local).
 - **A smooth, quiet caret** — glides between positions on a faint, fading spline (like the iPhone's text cursor) instead of teleporting; still the same accessible insertion point underneath.
 - **Typing that stays literal** — punctuation is never silently rewritten while you type. URLs with `utm_*`, `fbclid`, `gclid` & friends lose their tracking parameters only when rendered as links.
+
+### One window, one store
+
+Antimatter has exactly one window. The retired ⌘N extra-window path is gone; on first launch after upgrading, each old per-window store (`window-*.json`) is folded into the main notes file, with the originals renamed aside (`*.json.migrated`), never deleted.
 
 ### Time
 

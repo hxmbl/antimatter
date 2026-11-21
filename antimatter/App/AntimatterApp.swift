@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import CloudKit
 import UserNotifications
 
 // MARK: - App entry point
@@ -34,8 +35,6 @@ struct AntimatterApp: App {
         .windowBackgroundDragBehavior(.enabled)
         .commands {
             CommandGroup(after: .newItem) {
-                Button("New Window") { WindowManager.shared.createNewWindow() }
-                    .keyboardShortcut("n", modifiers: .command)
                 Button("Close Window") { WindowManager.shared.closeKeyWindow() }
                     .keyboardShortcut("w", modifiers: .command)
                 Button("Reveal Notes in Finder") {
@@ -175,6 +174,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = StatsCenter.shared
         CurrencyCenter.shared.activate()
         LocalBridge.shared.start()
+        // Silent pushes from the Note subscription only arrive when the app
+        // is registered for remote notifications.
+        NSApplication.shared.registerForRemoteNotifications()
+        Task { @MainActor in
+            await CloudKitSync.shared.registerSubscriptionIfNeeded()
+            await CloudKitSync.shared.pull()
+        }
+    }
+
+    /// Silent push from the Note CKQuerySubscription: another device pushed
+    /// a change, so pull it in now instead of waiting for the next pane-show.
+    func application(_ application: NSApplication, didReceiveRemoteNotification userInfo: [String: Any]) {
+        guard CKNotification(fromRemoteNotificationDictionary: userInfo) is CKQueryNotification else { return }
         Task { @MainActor in
             await CloudKitSync.shared.pull()
         }
@@ -187,17 +199,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // `NoteStore.shared` is not the whole story: ⌘N windows each own a
-        // private store (`WindowManager.createNewWindow`), and those were only
-        // ever flushed from `NSWindow.willCloseNotification` — which AppKit posts
-        // when a window is *closed*, not for windows simply abandoned at
-        // termination. Typing in an extra window and quitting inside the 350 ms
-        // debounce lost those keystrokes.
+        // Quitting inside the 350 ms save debounce must not lose the last
+        // keystrokes: prune and flush the single store synchronously.
         NoteStore.shared.pruneEmptyNotes(keepActive: false)
         NoteStore.shared.flush()
-        for store in WindowManager.shared.liveStores where store !== NoteStore.shared {
-            store.flush()
-        }
         StatsCenter.shared.flush()
     }
 
