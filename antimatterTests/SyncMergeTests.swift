@@ -1,3 +1,4 @@
+import CloudKit
 import Foundation
 import Testing
 @testable import antimatter
@@ -124,5 +125,116 @@ struct SyncDirtyTrackingTests {
         store.activeNote = edited
         store.markPushed([(id: note.id, modifiedAt: note.modifiedAt)], deleted: [])
         #expect(store.pendingPushIDs.contains(note.id))
+    }
+
+    @Test func unsyncedEditsKeepTheirPendingFlagAcrossRelaunch() {
+        // A push is attempted and fails; nothing clears the flag, so the
+        // relaunch below still has an unpushed edit that owes iCloud a
+        // record. (Before the flags were persisted, the flag died here and a
+        // pull of a diverged remote version would apply over the edit.)
+        let url = tempURL()
+        let store = NoteStore(fileURL: url)
+        let note = store.create(text: "alpha")
+        store.flush()
+
+        let reloaded = NoteStore(fileURL: url)
+        #expect(reloaded.pendingPushIDs.contains(note.id))
+    }
+
+    @Test func unsyncedDeletionsKeepTheirPendingFlagAcrossRelaunch() {
+        let url = tempURL()
+        let store = NoteStore(fileURL: url)
+        let note = store.create(text: "alpha")
+        store.delete(note)
+        store.flush()
+
+        let reloaded = NoteStore(fileURL: url)
+        #expect(reloaded.pendingDeleteIDs.contains(note.id))
+    }
+
+    @Test func pushedFlagsStayClearedAcrossRelaunch() {
+        let url = tempURL()
+        let store = NoteStore(fileURL: url)
+        let note = store.create(text: "alpha")
+        store.flush()
+        store.markPushed([(id: note.id, modifiedAt: note.modifiedAt)], deleted: [])
+        store.flush()
+
+        let reloaded = NoteStore(fileURL: url)
+        #expect(!reloaded.pendingPushIDs.contains(note.id))
+    }
+}
+
+// MARK: - Sync push failure semantics
+
+/// The failure paths of `CloudKitSync.sync`: a CloudKit write that fails must
+/// not be acknowledged as successful, or the caller (`NoteStore.markPushed`)
+/// clears the retry queue and the change is lost.
+private final class FakeNoteRecordStore: @unchecked Sendable, NoteRecordStore {
+    var saveError: Error?
+    var deleteResults: [(CKRecord.ID, Result<CKRecord, Error>)] = []
+    private(set) var deletedRecordIDs: [CKRecord.ID] = []
+
+    func save(_ record: CKRecord) async throws -> CKRecord {
+        if let saveError { throw saveError }
+        return record
+    }
+
+    func deleteRecord(withID recordID: CKRecord.ID) async throws {
+        deletedRecordIDs.append(recordID)
+    }
+
+    func records(matching query: CKQuery) async throws -> [(CKRecord.ID, Result<CKRecord, Error>)] {
+        deleteResults
+    }
+}
+
+@MainActor
+struct SyncPushFailureTests {
+
+    private func disableSync() -> (cloud: CloudKitSync, wasEnabled: Bool) {
+        let cloud = CloudKitSync.shared
+        let wasEnabled = cloud.isEnabled
+        cloud.isEnabled = true
+        return (cloud, wasEnabled)
+    }
+
+    @Test func failedDeleteFailsThePushInsteadOfAcknowledgingIt() async {
+        let (cloud, wasEnabled) = disableSync()
+        defer { cloud.isEnabled = wasEnabled }
+
+        let noteID = UUID()
+        let recordID = CKRecord.ID(recordName: noteID.uuidString)
+        let fake = FakeNoteRecordStore()
+        fake.deleteResults = [(recordID, .failure(NSError(domain: "test", code: 1)))]
+
+        let pushed = await cloud.sync(notes: [], deleting: [noteID], store: fake)
+        #expect(!pushed)
+    }
+
+    @Test func successfulDeleteIsAcknowledged() async {
+        let (cloud, wasEnabled) = disableSync()
+        defer { cloud.isEnabled = wasEnabled }
+
+        let noteID = UUID()
+        let recordID = CKRecord.ID(recordName: noteID.uuidString)
+        let fake = FakeNoteRecordStore()
+        fake.deleteResults = [(recordID, .success(CKRecord(recordType: "Note", recordID: recordID)))]
+
+        let pushed = await cloud.sync(notes: [], deleting: [noteID], store: fake)
+        #expect(pushed)
+        #expect(fake.deletedRecordIDs == [recordID])
+    }
+
+    @Test func failedSaveFailsThePush() async {
+        let (cloud, wasEnabled) = disableSync()
+        defer { cloud.isEnabled = wasEnabled }
+
+        let fake = FakeNoteRecordStore()
+        fake.saveError = NSError(domain: "test", code: 1)
+        let note = Note(id: UUID(), text: "alpha")
+
+        let pushed = await cloud.sync(notes: [note], deleting: [], store: fake)
+        #expect(!pushed)
     }
 }

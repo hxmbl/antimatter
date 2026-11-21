@@ -28,7 +28,10 @@ final class NoteStore: ObservableObject {
     /// since then. Per-note dirty tracking is what lets a push send only
     /// what changed instead of re-uploading every note on every flush — and
     /// it is how a pull tells "changed locally" when judging a genuine
-    /// conflict (`CloudKitSync.merge`).
+    /// conflict (`CloudKitSync.merge`). Both sets are persisted with the
+    /// snapshot so a relaunch keeps them: an unpushed edit that lost its
+    /// flag would let a pull of a diverged remote version apply over the
+    /// local text, and a pending deletion would stop being retried.
     private(set) var pendingPushIDs: Set<UUID> = []
     private(set) var pendingDeleteIDs: Set<UUID> = []
 
@@ -43,6 +46,11 @@ final class NoteStore: ObservableObject {
             pendingPushIDs.remove(entry.id)
         }
         pendingDeleteIDs.subtract(deleted)
+        // Persist the cleared flags now rather than leaving the pre-clear
+        // snapshot on disk: a relaunch before any edit wakes sync would
+        // otherwise restore the flags and re-push a push that already
+        // landed.
+        scheduleSave()
     }
 
     private let fileURL: URL
@@ -296,6 +304,12 @@ final class NoteStore: ObservableObject {
         var notes: [Note]
         var trash: [Note]
         var activeNoteID: UUID?
+        /// Retry tracking, persisted so an unpushed edit and a pending
+        /// deletion survive a relaunch (see `pendingPushIDs` /
+        /// `pendingDeleteIDs` on the store). Absent in snapshots written
+        /// before the tracking was persisted — the behavior they had.
+        var pendingPushIDs: Set<UUID>?
+        var pendingDeleteIDs: Set<UUID>?
     }
 
     private func textDidChange() {
@@ -310,7 +324,13 @@ final class NoteStore: ObservableObject {
     func flush() {
         saveTask?.cancel()
         saveTask = nil
-        let snapshot = Snapshot(notes: notes, trash: trash, activeNoteID: activeNoteID)
+        let snapshot = Snapshot(
+            notes: notes,
+            trash: trash,
+            activeNoteID: activeNoteID,
+            pendingPushIDs: pendingPushIDs,
+            pendingDeleteIDs: pendingDeleteIDs
+        )
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         let url = fileURL
         if StorageLocation.isIsolatedRun {
@@ -369,6 +389,13 @@ final class NoteStore: ObservableObject {
             if let id = snapshot.activeNoteID, notes.contains(where: { $0.id == id }) {
                 activeNoteID = id
             }
+            // Restore the retry tracking. If the flags died with the
+            // process, `syncIfNeeded`'s `dirty` check went false on relaunch
+            // and `CloudKitSync.merge` then applies a diverged remote
+            // version over the still-unsynced local edit; pending deletions
+            // simply stopped being retried.
+            pendingPushIDs = snapshot.pendingPushIDs ?? []
+            pendingDeleteIDs = snapshot.pendingDeleteIDs ?? []
         } else if let legacy = try? JSONDecoder().decode([Note].self, from: data) {
             // Pre-Void build wrote a bare [Note] array; keep that data.
             notes = legacy

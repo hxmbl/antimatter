@@ -29,6 +29,36 @@ struct SyncNote: Identifiable, Equatable {
 
 /// E2E-encrypted iCloud sync via CloudKit. Notes are encrypted on-device
 /// before upload using AES-GCM.
+/// The CloudKit operations the push path needs, abstracted so its failure
+/// semantics can be exercised against a fake store in tests.
+protocol NoteRecordStore: Sendable {
+    func save(_ record: CKRecord) async throws -> CKRecord
+    func deleteRecord(withID recordID: CKRecord.ID) async throws
+    func records(matching query: CKQuery) async throws -> [(CKRecord.ID, Result<CKRecord, Error>)]
+}
+
+/// `CKDatabase` adapter for `pushNotes`.
+private struct CKDatabaseRecordStore: NoteRecordStore {
+    private let database: CKDatabase
+
+    init(_ database: CKDatabase) {
+        self.database = database
+    }
+
+    func save(_ record: CKRecord) async throws -> CKRecord {
+        try await database.save(record)
+    }
+
+    func deleteRecord(withID recordID: CKRecord.ID) async throws {
+        try await database.deleteRecord(withID: recordID)
+    }
+
+    func records(matching query: CKQuery) async throws -> [(CKRecord.ID, Result<CKRecord, Error>)] {
+        let (matchResults, _) = try await database.records(matching: query)
+        return matchResults
+    }
+}
+
 @MainActor
 final class CloudKitSync: ObservableObject {
     static let shared = CloudKitSync()
@@ -238,13 +268,21 @@ final class CloudKitSync: ObservableObject {
             syncStatus = .error("iCloud unavailable")
             return false
         }
+        return await sync(notes: notes, deleting: deletedIDs, store: CKDatabaseRecordStore(database))
+    }
+
+    /// The push half of `sync(notes:deleting:)`, injected with the store so
+    /// the failure paths can be tested against a fake.
+    @discardableResult
+    func sync(notes: [Note], deleting deletedIDs: [UUID], store: any NoteRecordStore) async -> Bool {
+        guard isEnabled else { return false }
         syncStatus = .syncing
 
         do {
             let encryptedNotes: [(id: UUID, createdAt: Date, modifiedAt: Date, isSlot: Bool, slotIndex: Int, title: String, encryptedText: Data?)] = try notes.map { note in
                 (note.id, note.createdAt, note.modifiedAt, note.isSlot, note.slotIndex, note.title, try encrypt(note.text))
             }
-            try await Self.pushNotes(encryptedNotes, deleting: deletedIDs, database: database)
+            try await Self.pushNotes(encryptedNotes, deleting: deletedIDs, store: store)
             lastSyncDate = Date()
             syncStatus = .idle
             for note in notes {
@@ -259,10 +297,10 @@ final class CloudKitSync: ObservableObject {
     }
 
     /// Performs the actual CloudKit I/O off the main thread.
-    private nonisolated static func pushNotes(
+    nonisolated static func pushNotes(
         _ notes: [(id: UUID, createdAt: Date, modifiedAt: Date, isSlot: Bool, slotIndex: Int, title: String, encryptedText: Data?)],
         deleting trashIDs: [UUID],
-        database: CKDatabase
+        store: any NoteRecordStore
     ) async throws {
         try await withThrowingTaskGroup(of: Void.self) { group in
             for note in notes {
@@ -278,20 +316,34 @@ final class CloudKitSync: ObservableObject {
                     if let encryptedData = note.encryptedText {
                         record["encryptedText"] = encryptedData as CKRecordValue
                     }
-                    try await database.save(record)
+                    try await store.save(record)
                 }
             }
             for noteID in trashIDs {
                 group.addTask {
                     let predicate = NSPredicate(format: "noteID == %@", noteID.uuidString)
                     let query = CKQuery(recordType: "Note", predicate: predicate)
-                    let (matchResults, _) = try await database.records(matching: query)
+                    let matchResults = try await store.records(matching: query)
                     for (_, result) in matchResults {
-                        guard case .success(let record) = result else { continue }
-                        try await database.deleteRecord(withID: record.recordID)
+                        switch result {
+                        case .success(let record):
+                            try await store.deleteRecord(withID: record.recordID)
+                        case .failure(let error):
+                            // A record that could not be deleted must fail
+                            // the push: skipping it lets `sync()` report
+                            // success and clear the retry queue while the
+                            // record still sits in iCloud.
+                            throw error
+                        }
                     }
                 }
             }
+            // `withThrowingTaskGroup` rethrows only when its body throws;
+            // child task errors are observed by awaiting `waitForAll()`,
+            // which rethrows the first one. Without this, a failed save or
+            // delete inside the group is reported as success by `sync()`
+            // and the caller clears the retry queue anyway.
+            try await group.waitForAll()
         }
     }
 
