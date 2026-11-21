@@ -80,7 +80,7 @@ final class CloudKitSync: ObservableObject {
     /// `modifiedAt` differs from the remembered stamp carries changes this
     /// device has not seen; equality means the record holds nothing new.
     /// Persisted so a relaunch doesn't make every record look changed.
-    private var lastSyncedModifiedAt: [UUID: Date] = CloudKitSync.loadLastSynced()
+    var lastSyncedModifiedAt: [UUID: Date] = CloudKitSync.loadLastSynced()
 
     /// Wall-clock of the last pull started from `pullOnShow`, which the
     /// hotkey can trigger many times a minute; each pull is a network fetch.
@@ -445,6 +445,17 @@ final class CloudKitSync: ObservableObject {
             return dirty ? .conflict : .apply
         }
         return .skip
+    }
+
+    /// Notes among `notes` that still owe iCloud a record, derived from
+    /// the stamps this device last pushed to or applied from iCloud: a
+    /// note whose `modifiedAt` differs from its remembered stamp — or that
+    /// has no remembered stamp (never synced) — is one. Bootstrap
+    /// reconciliation (`NoteStore.load`) uses this for snapshots written
+    /// before the retry flags were persisted: they carry no flags, but the
+    /// stamps were persisted even earlier, so the gaps can still be found.
+    static func unsyncedNotes(notes: [Note], lastSynced: [UUID: Date]) -> Set<UUID> {
+        Set(notes.filter { lastSynced[$0.id] != $0.modifiedAt }.map(\.id))
     }
 
     /// The pull half of sync: fetches iCloud notes and merges them into the

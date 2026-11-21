@@ -389,13 +389,28 @@ final class NoteStore: ObservableObject {
             if let id = snapshot.activeNoteID, notes.contains(where: { $0.id == id }) {
                 activeNoteID = id
             }
-            // Restore the retry tracking. If the flags died with the
-            // process, `syncIfNeeded`'s `dirty` check went false on relaunch
-            // and `CloudKitSync.merge` then applies a diverged remote
-            // version over the still-unsynced local edit; pending deletions
-            // simply stopped being retried.
-            pendingPushIDs = snapshot.pendingPushIDs ?? []
-            pendingDeleteIDs = snapshot.pendingDeleteIDs ?? []
+            if let snapshotPendingPushIDs = snapshot.pendingPushIDs,
+               let snapshotPendingDeleteIDs = snapshot.pendingDeleteIDs {
+                // New-format snapshot: the persisted flags are authoritative.
+                pendingPushIDs = snapshotPendingPushIDs
+                pendingDeleteIDs = snapshotPendingDeleteIDs
+            } else {
+                // Old snapshot, written before the retry flags were
+                // persisted: reconcile from the stamps this device last
+                // pushed or applied. A note whose `modifiedAt` differs from
+                // its remembered stamp — or that was never synced — still
+                // owes iCloud a record; marking it pending makes
+                // `syncIfNeeded` retry it instead of skipping the note
+                // until it is edited again. Trashed notes are treated as
+                // pending deletions: records already deleted on the server
+                // are a no-op, while ones whose deletion never landed get
+                // deleted now.
+                pendingPushIDs = CloudKitSync.unsyncedNotes(
+                    notes: notes,
+                    lastSynced: CloudKitSync.shared.lastSyncedModifiedAt
+                )
+                pendingDeleteIDs = Set(trash.map(\.id))
+            }
         } else if let legacy = try? JSONDecoder().decode([Note].self, from: data) {
             // Pre-Void build wrote a bare [Note] array; keep that data.
             notes = legacy

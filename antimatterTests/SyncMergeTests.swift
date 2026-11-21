@@ -238,3 +238,62 @@ struct SyncPushFailureTests {
         #expect(!pushed)
     }
 }
+
+// MARK: - Upgrade reconciliation
+
+/// Snapshots written before the retry flags were persisted carry none, so
+/// bootstrap derives the flags from the last-synced stamps: a note that
+/// still differs from its remembered stamp (or was never synced) is marked
+/// pending, and its deletion retried, instead of being skipped until the
+/// note is edited again.
+@MainActor
+struct SyncUpgradeReconciliationTests {
+
+    private func tempURL() -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("antimatter-tests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("notes.json")
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        return url
+    }
+
+    @Test func unsyncedPreUpgradeNotesGetReconciledOnLoad() throws {
+        let url = tempURL()
+        let note = Note(id: UUID(), text: "alpha", modifiedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        let snapshot = NoteStore.Snapshot(notes: [note], trash: [], activeNoteID: note.id)
+        try JSONEncoder().encode(snapshot).write(to: url)
+
+        // The stamp map predates the flags: this device last synced this
+        // note 60s before its current edit — like a failed pre-upgrade
+        // push.
+        let stamps = CloudKitSync.shared.lastSyncedModifiedAt
+        CloudKitSync.shared.lastSyncedModifiedAt[note.id] = note.modifiedAt.addingTimeInterval(-60)
+        defer { CloudKitSync.shared.lastSyncedModifiedAt = stamps }
+
+        let store = NoteStore(fileURL: url)
+        #expect(store.pendingPushIDs.contains(note.id))
+    }
+
+    @Test func trashedNotesGetDeletionTrackingOnLoad() throws {
+        let url = tempURL()
+        let trashed = Note(id: UUID(), text: "alpha")
+        let snapshot = NoteStore.Snapshot(notes: [], trash: [trashed], activeNoteID: nil)
+        try JSONEncoder().encode(snapshot).write(to: url)
+
+        let store = NoteStore(fileURL: url)
+        #expect(store.pendingDeleteIDs.contains(trashed.id))
+    }
+
+    @Test func unsyncedNotesDerivedFromStamps() {
+        let edited = Note(id: UUID(), text: "alpha", modifiedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        let clean = Note(id: UUID(), text: "beta", modifiedAt: Date(timeIntervalSince1970: 1_700_000_100))
+        let neverSynced = Note(id: UUID(), text: "gamma")
+        let lastSynced = [edited.id: edited.modifiedAt.addingTimeInterval(-60), clean.id: clean.modifiedAt]
+        // Edited since the remembered stamp: still owed to iCloud.
+        #expect(CloudKitSync.unsyncedNotes(notes: [edited], lastSynced: lastSynced) == Set([edited.id]))
+        // Already at the remembered stamp: synced.
+        #expect(CloudKitSync.unsyncedNotes(notes: [clean], lastSynced: lastSynced) == Set<UUID>())
+        // Never synced (no remembered stamp): owed.
+        #expect(CloudKitSync.unsyncedNotes(notes: [neverSynced], lastSynced: lastSynced) == Set([neverSynced.id]))
+    }
+}
